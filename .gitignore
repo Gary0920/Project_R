@@ -1,0 +1,36 @@
+node_modules/
+dist/
+build/
+frontend/release/
+reference/
+.DS_Store
+Thumbs.db
+*.log
+.env
+.env.local
+.scratch/
+.obsidian/
+.claude/settings.local.json
+.claude/skills/
+_release/
+test.md
+*.zip
+*.7z
+*.rar
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.db
+
+# Backend runtime files
+backend/vector_store/
+backend/generated_files/
+backend/logs/
+backend/models_cache/
+backend/workspace_data/
+backend/knowledge_base/.agents/
+backend/knowledge_base/.claude/
+backend/knowledge_base/raw/

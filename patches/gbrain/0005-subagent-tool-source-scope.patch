@@ -1,0 +1,94 @@
+diff --git a/src/core/minions/types.ts b/src/core/minions/types.ts
+--- a/src/core/minions/types.ts
++++ b/src/core/minions/types.ts
+@@
+   brain_id?: string;
++  /**
++   * Source boundary for brain tool calls. Remote submit_agent jobs populate
++   * this from the OAuth client's bound_source_id so subagent search/get_page/
++   * put_page calls stay inside the submitted source instead of falling back
++   * to the host default source.
++   */
++  source_id?: string;
+   /**
+    * Trusted-workspace allow-list for put_page (v0.23 dream cycle).
+diff --git a/src/core/minions/tools/brain-allowlist.ts b/src/core/minions/tools/brain-allowlist.ts
+--- a/src/core/minions/tools/brain-allowlist.ts
++++ b/src/core/minions/tools/brain-allowlist.ts
+@@
+   brainId?: string;
++  /**
++   * Source boundary for every brain operation dispatched by this subagent.
++   * Defaults to 'default' for legacy local jobs; remote submit_agent jobs
++   * should pass their OAuth-bound source here.
++   */
++  sourceId?: string;
+   /**
+    * Trusted-workspace allow-list (v0.23). When set, put_page is bounded
+@@
+   signal?: AbortSignal;
+   brainId?: string;
++  sourceId?: string;
+   allowedSlugPrefixes?: readonly string[];
+ }
+@@
+-    sourceId: 'default',         // v0.34 D4: required; subagent tools default to host source
++    sourceId: deps.sourceId ?? 'default', // v0.34 D4: required; legacy subagent tools default to host source
+@@
+           signal: ctx.signal,
+           brainId: opts.brainId,
++          sourceId: opts.sourceId,
+           allowedSlugPrefixes: opts.allowedSlugPrefixes,
+         });
+diff --git a/src/core/minions/handlers/subagent.ts b/src/core/minions/handlers/subagent.ts
+--- a/src/core/minions/handlers/subagent.ts
++++ b/src/core/minions/handlers/subagent.ts
+@@
+       subagentId: ctx.id,
+       engine,
+       config,
+       brainId: data.brain_id,
++      sourceId: typeof data.source_id === 'string' && data.source_id.trim()
++        ? data.source_id.trim()
++        : undefined,
+       allowedSlugPrefixes: data.allowed_slug_prefixes,
+     });
+diff --git a/test/brain-allowlist.serial.test.ts b/test/brain-allowlist.serial.test.ts
+--- a/test/brain-allowlist.serial.test.ts
++++ b/test/brain-allowlist.serial.test.ts
+@@
+   test('execute() on put_page with valid namespace slug succeeds', async () => {
+     const tools = buildBrainTools({ subagentId: 42, engine, config });
+     const putPage = tools.find(t => t.name === 'brain_put_page');
+     const ctx: ToolCtx = { engine, jobId: 1, remote: true };
+@@
+     expect(res).toBeTruthy();
+   });
++
++  test('execute() scopes brain tools to the submitted source id', async () => {
++    await engine.executeRaw(
++      `INSERT INTO sources (id, name, config)
++       VALUES ('company-wiki', 'Company Wiki', '{}'::jsonb)
++       ON CONFLICT (id) DO NOTHING`,
++    );
++    await engine.putPage(
++      'rules/scoped-source-check',
++      { type: 'note', title: 'Default Source', compiled_truth: 'default body', frontmatter: {} },
++      { sourceId: 'default' },
++    );
++    await engine.putPage(
++      'rules/scoped-source-check',
++      { type: 'note', title: 'Company Wiki Source', compiled_truth: 'company-wiki body', frontmatter: {} },
++      { sourceId: 'company-wiki' },
++    );
++
++    const tools = buildBrainTools({ subagentId: 42, engine, config, sourceId: 'company-wiki' });
++    const getPage = tools.find(t => t.name === 'brain_get_page');
++    const ctx: ToolCtx = { engine, jobId: 1, remote: true };
++    const result = await getPage!.execute({ slug: 'rules/scoped-source-check' }, ctx) as any;
++
++    expect(result.title).toBe('Company Wiki Source');
++    expect(result.content ?? result.compiled_truth).toContain('company-wiki body');
++  });
+ 
+   test('execute() on put_page with out-of-namespace slug throws permission_denied', async () => {

@@ -1,0 +1,25 @@
+diff --git a/src/core/ai/recipes/ollama.ts b/src/core/ai/recipes/ollama.ts
+index 0f355cd..ed9650b 100644
+--- a/src/core/ai/recipes/ollama.ts
++++ b/src/core/ai/recipes/ollama.ts
+@@ -15,11 +15,17 @@ export const ollama: Recipe = {
+     embedding: {
+       models: ['nomic-embed-text', 'mxbai-embed-large', 'all-minilm'],
+       default_dims: 768, // nomic-embed-text native dim
++      // Ollama recipe ships multiple fixed-dimension embedding models.
++      // These are native output sizes, not Matryoshka truncation settings.
++      dims_options: [384, 768, 1024],
++      // Local Ollama embedding models have much tighter request windows than
++      // hosted providers. Use a conservative CJK-safe estimate so long
++      // standards/PDF-derived pages are split into tiny embedding batches.
++      max_batch_tokens: 128,
++      chars_per_token: 1,
++      safety_factor: 1,
+       cost_per_1m_tokens_usd: 0,
+       price_last_verified: '2026-04-20',
+-      // Ollama's batch capacity depends on the locally loaded model + the
+-      // OLLAMA_NUM_PARALLEL config; no static cap to declare. v0.32 (#779).
+-      no_batch_cap: true,
+     },
+   },
+   setup_hint: 'Install Ollama from https://ollama.ai, then `ollama pull nomic-embed-text` and `ollama serve`.',

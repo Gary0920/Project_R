@@ -1,0 +1,230 @@
+diff --git a/src/core/ai/gateway.ts b/src/core/ai/gateway.ts
+--- a/src/core/ai/gateway.ts
++++ b/src/core/ai/gateway.ts
+@@
+-import { embed as aiEmbed, embedMany, generateObject, generateText } from 'ai';
++import { embed as aiEmbed, embedMany, generateObject, generateText, jsonSchema } from 'ai';
+@@
+ export interface ChatOpts {
+@@
+   cacheSystem?: boolean;
+ }
+ 
++function buildChatToolsForAiSdk(toolDefs: ChatToolDef[] | undefined): Record<string, any> {
++  return (toolDefs ?? []).reduce((acc, t) => {
++    acc[t.name] = {
++      description: t.description,
++      inputSchema: jsonSchema(t.inputSchema as any) as any,
++    };
++    return acc;
++  }, {} as Record<string, any>);
++}
++
++/**
++ * @internal exported for tests; not part of the public gateway API.
++ */
++export function __buildChatToolsForTests(toolDefs: ChatToolDef[] | undefined): Record<string, any> {
++  return buildChatToolsForAiSdk(toolDefs);
++}
++
++function isAiSdkToolResultOutput(value: unknown): boolean {
++  if (!value || typeof value !== 'object') return false;
++  const type = (value as { type?: unknown }).type;
++  return type === 'text' ||
++    type === 'json' ||
++    type === 'execution-denied' ||
++    type === 'error-text' ||
++    type === 'error-json' ||
++    type === 'content';
++}
++
++function toJsonValue(value: unknown): any {
++  if (value === undefined) return null;
++  try {
++    return JSON.parse(JSON.stringify(value));
++  } catch {
++    return String(value);
++  }
++}
++
++function toAiSdkToolResultOutput(output: unknown, isError?: boolean): any {
++  if (isAiSdkToolResultOutput(output)) return output;
++  if (isError) {
++    return typeof output === 'string'
++      ? { type: 'error-text', value: output }
++      : { type: 'error-json', value: toJsonValue(output) };
++  }
++  return typeof output === 'string'
++    ? { type: 'text', value: output }
++    : { type: 'json', value: toJsonValue(output) };
++}
++
++function toAiSdkToolResultPart(block: Extract<ChatBlock, { type: 'tool-result' }>): any {
++  return {
++    type: 'tool-result',
++    toolCallId: block.toolCallId,
++    toolName: block.toolName,
++    output: toAiSdkToolResultOutput(block.output, block.isError),
++  };
++}
++
++function buildModelMessagesForAiSdk(messages: ChatMessage[]): any[] {
++  return messages.map(message => {
++    if (!Array.isArray(message.content)) return message;
++
++    const blocks = message.content;
++    const toolResults = blocks.filter(
++      (block): block is Extract<ChatBlock, { type: 'tool-result' }> => block.type === 'tool-result',
++    );
++
++    if (message.role === 'tool' || (toolResults.length > 0 && toolResults.length === blocks.length)) {
++      return {
++        role: 'tool',
++        content: toolResults.map(toAiSdkToolResultPart),
++      };
++    }
++
++    if (message.role === 'assistant') {
++      return {
++        role: 'assistant',
++        content: blocks.map(block =>
++          block.type === 'tool-result'
++            ? toAiSdkToolResultPart(block)
++            : block,
++        ),
++      };
++    }
++
++    if (message.role === 'system') {
++      return {
++        role: 'system',
++        content: blocks
++          .filter((block): block is Extract<ChatBlock, { type: 'text' }> => block.type === 'text')
++          .map(block => block.text)
++          .join('\n'),
++      };
++    }
++
++    return {
++      role: 'user',
++      content: blocks
++        .filter((block): block is Extract<ChatBlock, { type: 'text' }> => block.type === 'text')
++        .map(block => ({ type: 'text', text: block.text })),
++    };
++  });
++}
++
++/**
++ * @internal exported for tests; not part of the public gateway API.
++ */
++export function __buildModelMessagesForTests(messages: ChatMessage[]): any[] {
++  return buildModelMessagesForAiSdk(messages);
++}
++
+ async function resolveChatProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
+@@
+-  const tools = (opts.tools ?? []).reduce((acc, t) => {
+-    acc[t.name] = {
+-      description: t.description,
+-      inputSchema: { jsonSchema: t.inputSchema } as any,
+-    };
+-    return acc;
+-  }, {} as Record<string, any>);
++  const tools = buildChatToolsForAiSdk(opts.tools);
+@@
+-      messages: opts.messages as any,
++      messages: buildModelMessagesForAiSdk(opts.messages) as any,
+@@
+-    // Feed all tool results back as a single user message.
+-    const userMessageIdx = messageIdx++;
+-    void userMessageIdx;
+-    messages.push({ role: 'user', content: toolResultBlocks });
++    // Feed all tool results back as a single tool message.
++    const toolMessageIdx = messageIdx++;
++    void toolMessageIdx;
++    messages.push({ role: 'tool', content: toolResultBlocks });
+diff --git a/test/ai/gateway-tool-loop.test.ts b/test/ai/gateway-tool-loop.test.ts
+--- a/test/ai/gateway-tool-loop.test.ts
++++ b/test/ai/gateway-tool-loop.test.ts
+@@
+ import {
+   toolLoop,
+   __setChatTransportForTests,
++  __buildChatToolsForTests,
++  __buildModelMessagesForTests,
+   configureGateway,
+   resetGateway,
+   type ChatBlock,
+   type ToolHandler,
+ } from '../../src/core/ai/gateway.ts';
++import { asSchema } from 'ai';
+@@
+   afterEach(() => {
+     __setChatTransportForTests(null);
+     resetGateway();
+   });
+ 
++  it('wraps provider-neutral JSON Schema tools in AI SDK jsonSchema()', async () => {
++    const tools = __buildChatToolsForTests([
++      {
++        name: 'search',
++        description: 'search the brain',
++        inputSchema: {
++          type: 'object',
++          properties: { query: { type: 'string' } },
++          required: ['query'],
++          additionalProperties: false,
++        },
++      },
++    ]);
++
++    const schema = asSchema(tools.search.inputSchema);
++    expect(await schema.jsonSchema).toEqual({
++      type: 'object',
++      properties: { query: { type: 'string' } },
++      required: ['query'],
++      additionalProperties: false,
++    });
++  });
++
++  it('converts provider-neutral tool results to AI SDK tool messages', async () => {
++    const messages = __buildModelMessagesForTests([
++      {
++        role: 'user',
++        content: 'find foo',
++      },
++      {
++        role: 'assistant',
++        content: [
++          { type: 'tool-call', toolCallId: 'tc-1', toolName: 'brain_search', input: { query: 'foo' } },
++        ],
++      },
++      {
++        role: 'tool',
++        content: [
++          { type: 'tool-result', toolCallId: 'tc-1', toolName: 'brain_search', output: { hits: ['foo'] } },
++          { type: 'tool-result', toolCallId: 'tc-2', toolName: 'brain_get_page', output: 'not found', isError: true },
++        ],
++      },
++    ]);
++
++    expect(messages[2]).toEqual({
++      role: 'tool',
++      content: [
++        {
++          type: 'tool-result',
++          toolCallId: 'tc-1',
++          toolName: 'brain_search',
++          output: { type: 'json', value: { hits: ['foo'] } },
++        },
++        {
++          type: 'tool-result',
++          toolCallId: 'tc-2',
++          toolName: 'brain_get_page',
++          output: { type: 'error-text', value: 'not found' },
++        },
++      ],
++    });
++  });
++
+   it('exits cleanly on end stop_reason with no tools', async () => {

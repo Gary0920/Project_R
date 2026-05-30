@@ -1,0 +1,30 @@
+appId: com.projectr.desktop
+productName: Project_R
+asar: true
+npmRebuild: false
+electronDist: node_modules/electron/dist
+
+directories:
+  output: release
+
+files:
+  - dist/**
+  - resources/**
+  - package.json
+
+win:
+  icon: resources/project-r.ico
+  signAndEditExecutable: false
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: "${productName}-Setup-${version}.${ext}"
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+
+publish: null

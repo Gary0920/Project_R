@@ -1,0 +1,226 @@
+[
+  {
+    "id": "as1288_safety_glass",
+    "description": "Chinese safety glass question should rank AS 1288 above meeting noise.",
+    "query": "安全玻璃有哪些要求",
+    "expected_query_variants": [
+      "安全玻璃有哪些要求",
+      "safety glass human impact AS 1288"
+    ],
+    "expected_top_file_contains": "standards/as-1288",
+    "expected_top_title_contains": "AS 1288",
+    "expected_top_content_terms": [
+      "安全玻璃",
+      "Safety glass"
+    ],
+    "mock_results_by_query": {
+      "安全玻璃有哪些要求": [
+        {
+          "slug": "meetings/张学辉发起的视频会议_0515",
+          "source_id": "company-wiki",
+          "title": "张学辉发起的视频会议_0515",
+          "chunk_text": "会议讨论了客户接待和样品准备。",
+          "score": 0.9143770629932932
+        }
+      ],
+      "safety glass human impact AS 1288": [
+        {
+          "slug": "standards/as-1288-2006-glass-in-buildings-selection-and-installation",
+          "source_id": "company-wiki",
+          "title": "AS 1288-2006 Glass in buildings - Selection and installation",
+          "chunk_text": "中文：安全玻璃应根据人体撞击风险和安装位置选择。 English: Safety glass shall be selected based on human impact risk and installation location.",
+          "score": 0.9182115218171069
+        }
+      ]
+    }
+  },
+  {
+    "id": "as2047_water_penetration",
+    "description": "Chinese water penetration question should rank AS 2047 first.",
+    "query": "窗户防水等级有哪些要求",
+    "expected_query_variants": [
+      "窗户防水等级有哪些要求",
+      "water penetration resistance AS 2047"
+    ],
+    "expected_top_file_contains": "standards/as_2047",
+    "expected_top_title_contains": "AS_2047",
+    "expected_top_content_terms": [
+      "防水",
+      "water penetration"
+    ],
+    "mock_results_by_query": {
+      "窗户防水等级有哪些要求": [
+        {
+          "slug": "meetings/张学辉发起的视频会议_0515",
+          "source_id": "company-wiki",
+          "title": "张学辉发起的视频会议_0515",
+          "chunk_text": "会议记录包含客户现场反馈。",
+          "score": 0.9104089213228268
+        }
+      ],
+      "water penetration resistance AS 2047": [
+        {
+          "slug": "standards/as_2047-2014_windows_and_external_glazed_doors_in_buildings",
+          "source_id": "company-wiki",
+          "title": "AS_2047-2014_Windows_and_external_glazed_doors_in_buildings",
+          "chunk_text": "中文：外窗和外门需要满足水密性测试要求。 English: Windows and external glazed doors require water penetration resistance testing.",
+          "score": 0.9245191084052172
+        }
+      ]
+    }
+  },
+  {
+    "id": "as1288_heat_soak",
+    "description": "Heat soak question should rank AS 1288 first.",
+    "query": "热浸测试适用于什么玻璃",
+    "expected_query_variants": [
+      "热浸测试适用于什么玻璃",
+      "Heat Soak Test"
+    ],
+    "expected_top_file_contains": "standards/as-1288",
+    "expected_top_title_contains": "AS 1288",
+    "expected_top_content_terms": [
+      "热浸",
+      "Heat Soak"
+    ],
+    "mock_results_by_query": {
+      "热浸测试适用于什么玻璃": [
+        {
+          "slug": "standards/as_2047-2014_windows_and_external_glazed_doors_in_buildings",
+          "source_id": "company-wiki",
+          "title": "AS_2047-2014_Windows_and_external_glazed_doors_in_buildings",
+          "chunk_text": "门窗性能等级信息。",
+          "score": 0.6736172770734011
+        }
+      ],
+      "Heat Soak Test": [
+        {
+          "slug": "standards/as-1288-2006-glass-in-buildings-selection-and-installation",
+          "source_id": "company-wiki",
+          "title": "AS 1288-2006 Glass in buildings - Selection and installation",
+          "chunk_text": "中文：热浸测试用于降低钢化玻璃自爆风险。 English: Heat Soak Test reduces spontaneous breakage risk in toughened glass.",
+          "score": 0.875030170754865
+        }
+      ]
+    }
+  },
+  {
+    "id": "vmu_customer_visit",
+    "description": "VMU customer visit question should rank the dedicated VMU reception process first.",
+    "query": "VMU客户参观接待流程是什么",
+    "expected_query_variants": [
+      "VMU客户参观接待流程是什么",
+      "VMU客户参观接待流程"
+    ],
+    "expected_top_file_contains": "rules/vmu客户参观接待流程",
+    "expected_top_title_contains": "VMU客户参观接待流程",
+    "expected_top_content_terms": [
+      "客户参观",
+      "接待流程"
+    ],
+    "mock_results_by_query": {
+      "VMU客户参观接待流程是什么": [
+        {
+          "slug": "rules/vmu客户参观接待流程",
+          "source_id": "company-wiki",
+          "title": "VMU客户参观接待流程",
+          "chunk_text": "中文：VMU 客户参观接待流程包括预约、准备、现场接待和复盘。",
+          "score": 0.953635246240409
+        },
+        {
+          "slug": "rules/vmu-标准作业流程",
+          "source_id": "company-wiki",
+          "title": "VMU 标准作业流程",
+          "chunk_text": "VMU 标准作业流程。",
+          "score": 0.9335232079039134
+        }
+      ],
+      "VMU客户参观接待流程": [
+        {
+          "slug": "rules/vmu客户参观接待流程",
+          "source_id": "company-wiki",
+          "title": "VMU客户参观接待流程",
+          "chunk_text": "中文：VMU 客户参观接待流程包括预约、准备、现场接待和复盘。",
+          "score": 0.956
+        }
+      ]
+    }
+  },
+  {
+    "id": "meeting_0515_actions",
+    "description": "Meeting question should rank the 0515 meeting note first.",
+    "query": "张学辉 0515 会议有哪些行动项",
+    "expected_query_variants": [
+      "张学辉 0515 会议有哪些行动项"
+    ],
+    "expected_top_file_contains": "meetings/张学辉发起的视频会议_0515",
+    "expected_top_title_contains": "张学辉发起的视频会议_0515",
+    "expected_top_content_terms": [
+      "会议",
+      "行动项"
+    ],
+    "mock_results_by_query": {
+      "张学辉 0515 会议有哪些行动项": [
+        {
+          "slug": "meetings/张学辉发起的视频会议_0515",
+          "source_id": "company-wiki",
+          "title": "张学辉发起的视频会议_0515",
+          "chunk_text": "会议行动项包括资料准备、客户跟进和内部复盘。",
+          "score": 0.9401
+        }
+      ]
+    }
+  },
+  {
+    "id": "written_principle",
+    "description": "Company rule question should rank the written-principle rule first.",
+    "query": "书面化原则是什么",
+    "expected_query_variants": [
+      "书面化原则是什么",
+      "书面化原则",
+      "书面化原则 留痕 written record principle"
+    ],
+    "expected_top_file_contains": "rules/书面化原则",
+    "expected_top_title_contains": "书面化原则",
+    "expected_top_content_terms": [
+      "书面化",
+      "留痕"
+    ],
+    "mock_results_by_query": {
+      "书面化原则是什么": [
+        {
+          "slug": "meetings/张学辉发起的视频会议_0515",
+          "source_id": "company-wiki",
+          "title": "张学辉发起的视频会议_0515",
+          "chunk_text": "会议记录里也提到了口头确认和后续沟通。",
+          "score": 0.92
+        }
+      ],
+      "书面化原则": [
+        {
+          "slug": "rules/书面化原则",
+          "source_id": "company-wiki",
+          "title": "书面化原则",
+          "chunk_text": "重要事项需要书面化并留痕，避免只依赖口头沟通。",
+          "score": 0.906
+        }
+      ],
+      "书面化原则 留痕 written record principle": [
+        {
+          "slug": "rules/vmu-标准作业流程",
+          "source_id": "company-wiki",
+          "title": "VMU 标准作业流程",
+          "chunk_text": "VMU 标准作业流程也包含记录和确认要求。",
+          "score": 0.94
+        },
+        {
+          "slug": "rules/书面化原则",
+          "source_id": "company-wiki",
+          "title": "书面化原则",
+          "chunk_text": "重要事项需要书面化并留痕，避免只依赖口头沟通。",
+          "score": 0.932
+        }
+      ]
+    }
+  }
+]
