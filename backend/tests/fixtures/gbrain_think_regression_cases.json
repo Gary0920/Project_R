@@ -1,0 +1,17 @@
+[
+  {
+    "id": "written_principle_think",
+    "description": "GBrain think should answer the written-principle question with a company-wiki citation.",
+    "query": "书面化原则是什么",
+    "source_id": "company-wiki",
+    "expected_model_contains": "deepseek",
+    "expected_answer_terms_any": [
+      "书面化",
+      "书面形式",
+      "书面记录"
+    ],
+    "expected_citation_contains": "rules/书面化原则",
+    "min_citations": 1,
+    "max_warnings": 0
+  }
+]

@@ -1,0 +1,296 @@
+diff --git a/src/core/think/gather.ts b/src/core/think/gather.ts
+--- a/src/core/think/gather.ts
++++ b/src/core/think/gather.ts
+@@
+   questionEmbedding?: Float32Array;
+   /** When set, MCP-bound calls forward this allow-list to takes_search. Local CLI leaves unset. */
+   takesHoldersAllowList?: string[];
++  /** Scalar source scope from MCP auth/source context. */
++  sourceId?: string;
++  /** Federated source scope from MCP OAuth auth context. Wins over sourceId. */
++  allowedSources?: string[];
+ }
+@@
+   // Sanitize the question for any path that includes it in an LLM prompt.
+   // (Direct DB search is fine — those are parameterized queries.)
+   const sanitizedQuestion = sanitizeQueryForPrompt(opts.question);
++  const sourceScope: { sourceId?: string; sourceIds?: string[] } =
++    opts.allowedSources && opts.allowedSources.length > 0
++      ? { sourceIds: opts.allowedSources }
++      : opts.sourceId
++        ? { sourceId: opts.sourceId }
++        : {};
+ 
+   // Stream 1: hybrid page search (existing primitive).
+   const pagesPromise = hybridSearch(engine, opts.question, {
+     limit: gatherLimit,
+     expansion: false,  // think provides its own anchor + graph context; no need for re-expansion
++    ...sourceScope,
+   }).catch((e) => {
+@@
+   const takesKwPromise = engine.searchTakes(opts.question, {
+     limit: takesLimit,
+     takesHoldersAllowList: opts.takesHoldersAllowList,
++    ...sourceScope,
+   }).catch((e) => {
+@@
+     ? engine.searchTakesVector(opts.questionEmbedding, {
+         limit: takesLimit,
+         takesHoldersAllowList: opts.takesHoldersAllowList,
++        ...sourceScope,
+       }).catch((e) => {
+@@
+   // Stream 4: graph walk (anchor only).
+   const graphPromise: Promise<string[]> = opts.anchor
+-    ? engine.traversePaths(opts.anchor, { depth: graphDepth, direction: 'both' })
++    ? engine.traversePaths(opts.anchor, { depth: graphDepth, direction: 'both', ...sourceScope })
+         .then(paths => {
+diff --git a/src/core/think/index.ts b/src/core/think/index.ts
+--- a/src/core/think/index.ts
++++ b/src/core/think/index.ts
+@@
+   const gather = await runGather(engine, {
+     question: opts.question,
+     anchor: opts.anchor,
+     questionEmbedding,
+     takesHoldersAllowList: opts.takesHoldersAllowList,
++    sourceId: opts.sourceId,
++    allowedSources: opts.allowedSources,
+   });
+diff --git a/src/core/pglite-engine.ts b/src/core/pglite-engine.ts
+--- a/src/core/pglite-engine.ts
++++ b/src/core/pglite-engine.ts
+@@
+   async searchTakes(
+     query: string,
+-    opts: { limit?: number; takesHoldersAllowList?: string[] } = {},
++    opts: SearchOpts & { takesHoldersAllowList?: string[] } = {},
+   ): Promise<TakeHit[]> {
+     const limit = clampSearchLimit(opts.limit, 30, 100);
++    const sourceIds = opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : null;
++    const sourceId = sourceIds ? null : opts.sourceId ?? null;
+     const { rows } = await this.db.query(
+@@
+        WHERE t.active
+          AND t.claim % $1
+          AND ($2::text[] IS NULL OR t.holder = ANY($2::text[]))
++         AND (
++           ($3::text[] IS NOT NULL AND p.source_id = ANY($3::text[]))
++           OR ($3::text[] IS NULL AND $4::text IS NOT NULL AND p.source_id = $4::text)
++           OR ($3::text[] IS NULL AND $4::text IS NULL)
++         )
+        ORDER BY score DESC, t.weight DESC
+-       LIMIT $3`,
+-      [query, opts.takesHoldersAllowList ?? null, limit]
++       LIMIT $5`,
++      [query, opts.takesHoldersAllowList ?? null, sourceIds, sourceId, limit]
+     );
+@@
+   async searchTakesVector(
+     embedding: Float32Array,
+-    opts: { limit?: number; takesHoldersAllowList?: string[] } = {},
++    opts: SearchOpts & { takesHoldersAllowList?: string[] } = {},
+   ): Promise<TakeHit[]> {
+     const limit = clampSearchLimit(opts.limit, 30, 100);
++    const sourceIds = opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : null;
++    const sourceId = sourceIds ? null : opts.sourceId ?? null;
+     const vec = `[${Array.from(embedding).join(',')}]`;
+@@
+        WHERE t.active
+          AND t.embedding IS NOT NULL
+          AND ($2::text[] IS NULL OR t.holder = ANY($2::text[]))
++         AND (
++           ($3::text[] IS NOT NULL AND p.source_id = ANY($3::text[]))
++           OR ($3::text[] IS NULL AND $4::text IS NOT NULL AND p.source_id = $4::text)
++           OR ($3::text[] IS NULL AND $4::text IS NULL)
++         )
+        ORDER BY t.embedding <=> $1::vector
+-       LIMIT $3`,
+-      [vec, opts.takesHoldersAllowList ?? null, limit]
++       LIMIT $5`,
++      [vec, opts.takesHoldersAllowList ?? null, sourceIds, sourceId, limit]
+     );
+diff --git a/src/core/postgres-engine.ts b/src/core/postgres-engine.ts
+--- a/src/core/postgres-engine.ts
++++ b/src/core/postgres-engine.ts
+@@
+   async searchTakes(query: string, opts: SearchOpts & { takesHoldersAllowList?: string[] } = {}): Promise<TakeHit[]> {
+     const sql = this.sql;
+     const limit = clampSearchLimit(opts.limit, 30, 100);
++    const sourceIds = opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : null;
++    const sourceId = sourceIds ? null : opts.sourceId ?? null;
+     const rows = await sql`
+@@
+           ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
+           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
+         )
++        AND (
++          (${sourceIds}::text[] IS NOT NULL AND p.source_id = ANY(${sourceIds}::text[]))
++          OR (${sourceIds}::text[] IS NULL AND ${sourceId}::text IS NOT NULL AND p.source_id = ${sourceId})
++          OR (${sourceIds}::text[] IS NULL AND ${sourceId}::text IS NULL)
++        )
+       ORDER BY score DESC, t.weight DESC
+@@
+   ): Promise<TakeHit[]> {
+     const sql = this.sql;
+     const limit = clampSearchLimit(opts.limit, 30, 100);
++    const sourceIds = opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : null;
++    const sourceId = sourceIds ? null : opts.sourceId ?? null;
+     const vec = `[${Array.from(embedding).join(',')}]`;
+@@
+           ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
+           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
+         )
++        AND (
++          (${sourceIds}::text[] IS NOT NULL AND p.source_id = ANY(${sourceIds}::text[]))
++          OR (${sourceIds}::text[] IS NULL AND ${sourceId}::text IS NOT NULL AND p.source_id = ${sourceId})
++          OR (${sourceIds}::text[] IS NULL AND ${sourceId}::text IS NULL)
++        )
+       ORDER BY t.embedding <=> ${vec}::vector
+diff --git a/test/takes-engine.test.ts b/test/takes-engine.test.ts
+--- a/test/takes-engine.test.ts
++++ b/test/takes-engine.test.ts
+@@
+ let engine: PGLiteEngine;
+ let alicePageId: number;
+ let acmePageId: number;
++let scopedAlphaPageId: number;
++let scopedBetaPageId: number;
++
++function testEmbedding(activeIndex: number): Float32Array {
++  const vec = new Float32Array(1536);
++  vec[activeIndex] = 1;
++  return vec;
++}
++
++function vectorLiteral(activeIndex: number): string {
++  return `[${Array.from(testEmbedding(activeIndex)).join(',')}]`;
++}
+@@
+   });
+   alicePageId = alice.id;
+   acmePageId = acme.id;
++  await engine.executeRaw(
++    `INSERT INTO sources (id, name, config)
++     VALUES ('scope-alpha', 'scope-alpha', '{}'::jsonb),
++            ('scope-beta', 'scope-beta', '{}'::jsonb)
++     ON CONFLICT (id) DO NOTHING`,
++  );
++  const scopedAlpha = await engine.putPage('people/source-scope-fixture', {
++    title: 'Scoped Alpha',
++    type: 'person' as const,
++    compiled_truth: 'Scoped alpha page.',
++  }, { sourceId: 'scope-alpha' });
++  const scopedBeta = await engine.putPage('people/source-scope-fixture', {
++    title: 'Scoped Beta',
++    type: 'person' as const,
++    compiled_truth: 'Scoped beta page.',
++  }, { sourceId: 'scope-beta' });
++  scopedAlphaPageId = scopedAlpha.id;
++  scopedBetaPageId = scopedBeta.id;
++  await engine.addTakesBatch([
++    { page_id: scopedAlphaPageId, row_num: 1, claim: 'Source scoped founder alpha', kind: 'take', holder: 'world', weight: 0.8 },
++    { page_id: scopedBetaPageId, row_num: 1, claim: 'Source scoped founder beta', kind: 'take', holder: 'world', weight: 0.8 },
++  ]);
++  await engine.executeRaw(
++    `UPDATE takes SET embedding = $1::vector WHERE page_id = $2`,
++    [vectorLiteral(0), scopedAlphaPageId],
++  );
++  await engine.executeRaw(
++    `UPDATE takes SET embedding = $1::vector WHERE page_id = $2`,
++    [vectorLiteral(1), scopedBetaPageId],
++  );
+ });
+@@
+   test('searchTakes honors takesHoldersAllowList', async () => {
+     const worldHits = await engine.searchTakes('founder', { takesHoldersAllowList: ['world'] });
+     expect(worldHits.every(h => h.holder === 'world')).toBe(true);
+   });
++
++  test('searchTakes honors scalar sourceId', async () => {
++    const hits = await engine.searchTakes('source scoped founder', { sourceId: 'scope-alpha' });
++
++    expect(hits.some(h => h.claim === 'Source scoped founder alpha')).toBe(true);
++    expect(hits.some(h => h.claim === 'Source scoped founder beta')).toBe(false);
++  });
++
++  test('searchTakes honors federated sourceIds', async () => {
++    const hits = await engine.searchTakes('source scoped founder', { sourceIds: ['scope-beta'] });
++
++    expect(hits.some(h => h.claim === 'Source scoped founder beta')).toBe(true);
++    expect(hits.some(h => h.claim === 'Source scoped founder alpha')).toBe(false);
++  });
++
++  test('searchTakesVector honors scalar sourceId', async () => {
++    const hits = await engine.searchTakesVector(testEmbedding(0), { sourceId: 'scope-alpha' });
++
++    expect(hits.some(h => h.claim === 'Source scoped founder alpha')).toBe(true);
++    expect(hits.some(h => h.claim === 'Source scoped founder beta')).toBe(false);
++  });
++
++  test('searchTakesVector honors federated sourceIds', async () => {
++    const hits = await engine.searchTakesVector(testEmbedding(1), { sourceIds: ['scope-beta'] });
++
++    expect(hits.some(h => h.claim === 'Source scoped founder beta')).toBe(true);
++    expect(hits.some(h => h.claim === 'Source scoped founder alpha')).toBe(false);
++  });
+ });
+diff --git a/test/think-pipeline.serial.test.ts b/test/think-pipeline.serial.test.ts
+--- a/test/think-pipeline.serial.test.ts
++++ b/test/think-pipeline.serial.test.ts
+@@
+ let engine: PGLiteEngine;
+ let alicePageId: number;
++let scopedThinkAlphaPageId: number;
++let scopedThinkBetaPageId: number;
+@@
+   await engine.addTakesBatch([
+     { page_id: alicePageId, row_num: 1, claim: 'CEO of Acme', kind: 'fact', holder: 'world', weight: 1.0 },
+     { page_id: alicePageId, row_num: 2, claim: 'Strong technical founder', kind: 'take', holder: 'garry', weight: 0.85 },
+     { page_id: alicePageId, row_num: 3, claim: 'Will reach $50B', kind: 'bet', holder: 'garry', weight: 0.6 },
+   ]);
++  await engine.executeRaw(
++    `INSERT INTO sources (id, name, config)
++     VALUES ('think-scope-alpha', 'think-scope-alpha', '{}'::jsonb),
++            ('think-scope-beta', 'think-scope-beta', '{}'::jsonb)
++     ON CONFLICT (id) DO NOTHING`,
++  );
++  const scopedThinkAlpha = await engine.putPage('people/think-source-scope-fixture', {
++    title: 'Think Scoped Alpha', type: 'person', compiled_truth: 'Think scoped alpha page.',
++  }, { sourceId: 'think-scope-alpha' });
++  const scopedThinkBeta = await engine.putPage('people/think-source-scope-fixture', {
++    title: 'Think Scoped Beta', type: 'person', compiled_truth: 'Think scoped beta page.',
++  }, { sourceId: 'think-scope-beta' });
++  scopedThinkAlphaPageId = scopedThinkAlpha.id;
++  scopedThinkBetaPageId = scopedThinkBeta.id;
++  await engine.addTakesBatch([
++    { page_id: scopedThinkAlphaPageId, row_num: 1, claim: 'Think source scoped founder alpha', kind: 'take', holder: 'world', weight: 0.8 },
++    { page_id: scopedThinkBetaPageId, row_num: 1, claim: 'Think source scoped founder beta', kind: 'take', holder: 'world', weight: 0.8 },
++  ]);
+ });
+@@
+   test('honors takesHoldersAllowList filter', async () => {
+     const r = await runGather(engine, { question: 'founder', takesHoldersAllowList: ['world'] });
+     expect(r.takes.every(h => h.holder === 'world')).toBe(true);
+   });
++
++  test('threads scalar sourceId into take retrieval', async () => {
++    const r = await runGather(engine, {
++      question: 'think source scoped founder',
++      sourceId: 'think-scope-alpha',
++    });
++
++    expect(r.takes.some(h => h.claim === 'Think source scoped founder alpha')).toBe(true);
++    expect(r.takes.some(h => h.claim === 'Think source scoped founder beta')).toBe(false);
++  });
++
++  test('threads federated allowedSources into take retrieval', async () => {
++    const r = await runGather(engine, {
++      question: 'think source scoped founder',
++      allowedSources: ['think-scope-beta'],
++    });
++
++    expect(r.takes.some(h => h.claim === 'Think source scoped founder beta')).toBe(true);
++    expect(r.takes.some(h => h.claim === 'Think source scoped founder alpha')).toBe(false);
++  });
+ });
