@@ -8,6 +8,22 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 
+function Get-ProjectRelativePath {
+    param([string]$Path)
+
+    $root = [System.IO.Path]::GetFullPath([string]$RepoRoot)
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    if (-not $root.EndsWith([System.IO.Path]::DirectorySeparatorChar)) {
+        $root += [System.IO.Path]::DirectorySeparatorChar
+    }
+
+    if ($fullPath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $fullPath.Substring($root.Length)
+    }
+
+    return $fullPath
+}
+
 function Write-Step {
     param([string]$Message)
     Write-Host ""
@@ -31,7 +47,7 @@ function Test-IsExcludedPath {
     $excludedSegments = @(
         "\.git\", "\node_modules\", "\dist\", "\__pycache__\", "\.venv\", "\venv\",
         "\models_cache\", "\vector_store\", "\generated_files\", "\session_attachments\",
-        "\workspace_data\", "\knowledge_base\", "\references\Proma-main\"
+        "\workspace_data\", "\knowledge_base\", "\logs\", "\references\Proma-main\"
     )
 
     foreach ($segment in $excludedSegments) {
@@ -72,7 +88,7 @@ function Find-PatternInFiles {
     foreach ($file in $Files) {
         $matches = Select-String -LiteralPath $file.FullName -Pattern $Pattern -AllMatches -ErrorAction SilentlyContinue
         foreach ($match in $matches) {
-            $relative = [System.IO.Path]::GetRelativePath($RepoRoot, $file.FullName)
+            $relative = Get-ProjectRelativePath $file.FullName
             $findings += [pscustomobject]@{
                 Check = $Label
                 File = $relative
@@ -93,7 +109,10 @@ $frontendPath = Join-Path $RepoRoot "frontend\src"
 if (Test-Path $frontendPath) {
     $frontendFiles = Get-ChildItem -LiteralPath $frontendPath -Recurse -File |
         Where-Object { (Test-IsTextSourceFile $_) -and -not (Test-IsExcludedPath $_.FullName) }
-    $findings += Find-PatternInFiles -Files $frontendFiles -Pattern 'localhost|127\.0\.0\.1' -Label "frontend-hardcoded-server"
+    $frontendFindings = Find-PatternInFiles -Files $frontendFiles -Pattern 'localhost|127\.0\.0\.1' -Label "frontend-hardcoded-server"
+    $findings += $frontendFindings | Where-Object {
+        -not ($_.File -eq "frontend\src\main\main.ts" -and $_.Text -match "proxy-bypass-list")
+    }
 }
 
 $appConstants = Join-Path $RepoRoot "frontend\src\renderer\constants\app.ts"

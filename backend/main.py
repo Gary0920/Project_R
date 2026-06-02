@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api import admin, auth, chat, distillation, documents, health, notifications, prompts, rag, skills, updates, workspaces
 from core.gbrain import ensure_gbrain_environment
+from core.gbrain_maintenance_worker import start_gbrain_maintenance_worker, stop_gbrain_maintenance_worker
 from models import init_db
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -44,6 +45,14 @@ def on_startup():
     if not gbrain_environment["ok"]:
         logger.warning("GBrain environment is not fully ready: %s", gbrain_environment["errors"])
     chat.cleanup_inactive_session_attachments()
+    worker_status = start_gbrain_maintenance_worker()
+    if not worker_status.get("enabled"):
+        logger.info("GBrain maintenance worker is disabled by environment.")
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    stop_gbrain_maintenance_worker()
 
 
 @app.get("/")

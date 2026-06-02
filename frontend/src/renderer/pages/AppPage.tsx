@@ -1,21 +1,24 @@
 import { ClipboardEvent, DragEvent, KeyboardEvent, MouseEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 
-import { ApiError } from "../api/client";
+import { ApiError, type ApiClientOptions } from "../api/client";
 import {
   activateChatMessageVersion,
   archiveChatSession,
+  createSessionAttachment,
   createChatSession,
   deleteChatMessage,
   deleteSessionAttachment,
   deleteChatSession,
   editChatMessage,
+  fetchSessionAttachmentBlob,
   listChatMessages,
   listChatSessions,
   regenerateChatMessage,
   restoreDeletedChatMessages,
   searchChatSessions,
   sendChatMessage,
+  submitGBrainThinkReview,
   submitMessageFeedback,
   updateChatSession,
   uploadSessionAttachmentFile,
@@ -32,7 +35,9 @@ import {
 import { listCompanyPrompts } from "../api/prompts";
 import { listSkills } from "../api/skills";
 import { getLatestClientUpdate } from "../api/updates";
+import { fetchWorkspaceFileBlob, uploadWorkspaceFiles } from "../api/workspaces";
 import { authTokenAtom, clearAuthAtom, currentUserAtom } from "../atoms/auth-atoms";
+import { parseApiDate } from "../utils/time";
 import {
   activeMessagesAtom,
   activeSessionAtom,
@@ -52,7 +57,9 @@ import type {
   ChatSearchResultResponse,
   ChatSessionResponse,
   ChatMessageVersionResponse,
+  ChatContextTraceResponse,
   ChatSourceResponse,
+  AgentRunResponse,
   ClientUpdateInfo,
   CompanyPromptResponse,
   GeneratedFileResponse,
@@ -62,6 +69,7 @@ import type {
   SessionAttachmentResponse,
   SkillResponse,
   SkillRunResponse,
+  WorkspaceFileItemResponse,
 } from "../api/types";
 import { APP_NAME } from "../constants/app";
 import { useContextMenu, type ContextMenuItemDef } from "../components/ContextMenu";
@@ -81,6 +89,7 @@ import {
   ChevronDownIcon,
   CopyIcon,
   EditIcon,
+  GlobeIcon,
   LogoutIcon,
   MoreIcon,
   MoveIcon,
@@ -96,23 +105,37 @@ import {
   StopIcon,
   TrashIcon,
   WorkspaceIcon,
+  XmarkIcon,
 } from "../components/LineIcons";
 
 type SplitPaneKey = "left" | "right";
 type UtilityPanel = "workspace" | "prompt" | "skills" | "source";
 type RenameScope = "header" | "sidebar";
 type SettingsAdminTab = "overview" | "users" | "reviews" | "gbrain" | "templates" | "updates" | "audit";
-type ClientUpdateStep = "available" | "downloading" | "ready" | "failed";
+type ClientUpdateStep = "available" | "downloading" | "installing" | "ready" | "failed";
 type SourcePreview = {
   index: number;
   source: ChatSourceResponse;
   sessionId?: number | null;
 };
 
-type AttachmentInputSource = "picker" | "paste" | "drop";
-type PendingSessionAttachment = SessionAttachmentResponse & {
+type AttachmentInputSource = "picker" | "paste" | "drop" | "private_workspace" | "workspace_reference";
+type AttachmentSourceScope = "local_private" | "session_upload";
+type AttachmentAuthorizationStatus = "pending" | "authorized" | "uploaded";
+type PendingSessionAttachment = Omit<SessionAttachmentResponse, "session_id"> & {
+  local_id: string;
+  session_id: number | null;
   kind: "image" | "pdf" | "text" | "file";
   previewUrl?: string;
+  file?: File;
+  sha256?: string | null;
+  relative_path?: string | null;
+  private_workspace_file_id?: string | null;
+  preprocess?: PrivateWorkspacePreprocessResult | null;
+  source_scope: AttachmentSourceScope;
+  source_label: string;
+  authorization_status: AttachmentAuthorizationStatus;
+  input_source: AttachmentInputSource;
 };
 
 type ModelOption = {
@@ -130,6 +153,7 @@ const FALLBACK_CLIENT_VERSION = "0.1.0";
 const UPDATE_DOWNLOAD_DRY_RUN = import.meta.env.DEV || import.meta.env.VITE_UPDATE_DRY_RUN === "1";
 
 const SESSION_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
+const LOCAL_TEXT_ATTACHMENT_EXCERPT_CHARS = 12000;
 const PASTED_IMAGE_EXTENSION_BY_TYPE: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/png": "png",
@@ -153,6 +177,82 @@ function formatAttachmentSize(size: number) {
   if (size < 1024) return `${size}B`;
   if (size < 1024 * 1024) return `${Math.ceil(size / 1024)}KB`;
   return `${(size / 1024 / 1024).toFixed(1)}MB`;
+}
+
+function makeLocalAttachmentId() {
+  const randomPart = Math.random().toString(36).slice(2, 10);
+  return `local-${Date.now()}-${randomPart}`;
+}
+
+function pendingAttachmentKey(attachment: PendingSessionAttachment) {
+  return attachment.local_id || `server-${attachment.id}`;
+}
+
+function isLocalPrivatePendingAttachment(attachment: PendingSessionAttachment) {
+  return attachment.source_scope === "local_private";
+}
+
+function isUploadedPendingAttachment(attachment: PendingSessionAttachment): attachment is PendingSessionAttachment & { session_id: number; id: number } {
+  return attachment.authorization_status === "uploaded" && attachment.session_id !== null && attachment.id > 0;
+}
+
+function attachmentSourceLabel(attachment: { source_label?: string; source_scope?: string }) {
+  if (attachment.source_label) return attachment.source_label;
+  if (attachment.source_scope === "local_private") return "本机选择";
+  if (attachment.source_scope === "project") return "项目资料";
+  if (attachment.source_scope === "company") return "公司知识库";
+  return "会话临时上传";
+}
+
+function pendingAttachmentStatusLabel(attachment: PendingSessionAttachment) {
+  if (attachment.source_scope !== "local_private") {
+    return attachment.authorization_status === "uploaded" ? "已附加" : "可直接发送";
+  }
+  return attachment.authorization_status === "authorized" ? "已确认" : "待确认";
+}
+
+function pendingAttachmentSendFormLabel(attachment: PendingSessionAttachment, mode: string) {
+  if (mode === "chat" && attachment.preprocess?.sendForm === "excerpt") return "发送摘录";
+  if (mode === "chat" && attachment.kind === "text") return "发送摘录";
+  if (mode === "chat" && attachment.kind === "pdf" && attachment.preprocess?.extractionStatus === "pdf_text_unavailable") return "上传 PDF 原文件";
+  if (mode === "chat" && attachment.kind === "image") return "上传图片给模型";
+  if (mode === "agent") return "上传临时文件";
+  return "上传临时文件";
+}
+
+function pendingAttachmentTargetLabel(mode: string) {
+  return mode === "agent" ? "Agent 临时任务" : "Chat 会话";
+}
+
+async function hashFileSha256(file: File) {
+  if (!window.crypto?.subtle) return null;
+  try {
+    const digest = await window.crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+    return Array.from(new Uint8Array(digest))
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+  } catch {
+    return null;
+  }
+}
+
+async function readTextAttachmentExcerpt(file: File) {
+  const text = await file.text();
+  const normalized = text.trim();
+  if (normalized.length <= LOCAL_TEXT_ATTACHMENT_EXCERPT_CHARS) return normalized;
+  return `${normalized.slice(0, LOCAL_TEXT_ATTACHMENT_EXCERPT_CHARS)}\n\n[本机选择文件摘录已截断，仅发送前 ${LOCAL_TEXT_ATTACHMENT_EXCERPT_CHARS} 个字符。]`;
+}
+
+function fileFromPrivateWorkspacePayload(payload: PrivateWorkspaceFilePayload) {
+  const binary = atob(payload.base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new File([bytes], payload.fileName, {
+    type: payload.contentType || "application/octet-stream",
+    lastModified: new Date(payload.updatedAt).getTime() || Date.now(),
+  });
 }
 
 function makePastedAttachmentName(file: File, index: number) {
@@ -196,13 +296,11 @@ function formatClockTime(value: string) {
   return new Intl.DateTimeFormat("zh-CN", {
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+  }).format(parseApiDate(value));
 }
 
 function formatSidebarTime(value: string) {
-  // 后端返回的是 UTC 时间字符串（无显式时区标记），补 Z 按 UTC 解析
-  const normalized = /[Z+-]\d/.test(value) ? value : value + "Z";
-  const date = new Date(normalized);
+  const date = parseApiDate(value);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   if (diffMs < 0) return "刚刚";
@@ -224,7 +322,7 @@ function formatSidebarTime(value: string) {
 }
 
 function formatNotificationTime(value: string) {
-  const date = new Date(/[Z+-]\d/.test(value) ? value : `${value}Z`);
+  const date = parseApiDate(value);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   if (diffMs < 60_000) return "刚刚";
@@ -286,7 +384,7 @@ function groupSessionsByTime(sessions: ChatSessionResponse[]) {
   const earlier: ChatSessionResponse[] = [];
 
   for (const session of sessions) {
-    const d = new Date(session.updated_at);
+    const d = parseApiDate(session.updated_at);
     const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     if (dayStart === startOfToday) {
       today.push(session);
@@ -328,15 +426,22 @@ function getInitials(name: string | undefined | null) {
   return trimmed ? trimmed.slice(0, 1).toUpperCase() : "U";
 }
 
-function renderAvatar(avatar: string | undefined, nickname: string | undefined | null, size = 22) {
-  const isImage = avatar?.startsWith("http") || avatar?.startsWith("data:");
+function resolveAvatarUrl(baseUrl: string, avatar: string | undefined | null) {
+  if (!avatar) return "";
+  if (avatar.startsWith("http") || avatar.startsWith("data:")) return avatar;
+  if (avatar.startsWith("/")) return `${baseUrl.replace(/\/$/, "")}${avatar}`;
+  return "";
+}
+
+function renderAvatar(avatar: string | undefined, nickname: string | undefined | null, size = 22, baseUrl = "") {
+  const imageUrl = resolveAvatarUrl(baseUrl, avatar);
   return (
     <span
-      className={`message-avatar ${!isImage && !avatar ? "is-text" : ""}`}
+      className={`message-avatar ${!imageUrl && !avatar ? "is-text" : ""}`}
       style={{ width: size, height: size, fontSize: size * 0.55 }}
     >
-      {isImage ? (
-        <img src={avatar} alt="avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+      {imageUrl ? (
+        <img src={imageUrl} alt="avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
       ) : (
         avatar || getInitials(nickname)
       )}
@@ -349,6 +454,32 @@ type SlashCommandMatch = {
   end: number;
   query: string;
 };
+
+type BuiltinSlashCommand = {
+  kind: "command";
+  name: string;
+  displayName: string;
+  description: string;
+  insertText: string;
+  scope: string;
+  aliases: string[];
+};
+
+type SkillSlashCandidate =
+  | { kind: "command"; command: BuiltinSlashCommand; score: number }
+  | { kind: "skill"; skill: SkillResponse; score: number };
+
+const BUILTIN_SLASH_COMMANDS: BuiltinSlashCommand[] = [
+  {
+    kind: "command",
+    name: "query",
+    displayName: "查询知识库",
+    description: "使用 GBrain 检索公司知识库和当前项目知识库，并返回引用来源。",
+    insertText: "/query ",
+    scope: "GBrain",
+    aliases: ["query", "知识库", "查询", "gbrain", "ask"],
+  },
+];
 
 function findSlashCommand(text: string, caret: number): SlashCommandMatch | null {
   const beforeCaret = text.slice(0, caret);
@@ -393,13 +524,38 @@ function scoreSkill(skill: SkillResponse, query: string) {
   return Math.max(...fields.map((field) => fuzzyScore(String(field ?? ""), query)));
 }
 
+function scoreBuiltinSlashCommand(command: BuiltinSlashCommand, query: string) {
+  const fields = [
+    command.name,
+    command.displayName,
+    command.description,
+    command.scope,
+    ...command.aliases,
+  ];
+  return Math.max(...fields.map((field) => fuzzyScore(String(field ?? ""), query)));
+}
+
 function getSkillScopeLabel(skill: SkillResponse) {
   const path = skill.path.toLowerCase();
   if (path.includes("/personal/") || path.includes("/user/")) return "个人";
-  return "Project_R";
+  return "Skills";
 }
 
 const PROMPT_SELECTION_KEY = "project_r_session_prompt_selection";
+const SETTINGS_PREFERENCES_KEY = "project-r:settings-preferences";
+const SIDEBAR_WIDTH_KEY = "project-r:chat-sidebar-width";
+const SIDEBAR_MIN_WIDTH = 220;
+const SIDEBAR_DEFAULT_WIDTH = 268;
+const SIDEBAR_MAX_WIDTH = 420;
+const WORKSPACE_PANEL_WIDTH_KEY = "project-r:workspace-panel-width";
+const WORKSPACE_PANEL_MIN_WIDTH = 320;
+const WORKSPACE_PANEL_DEFAULT_WIDTH = 640;
+const WORKSPACE_PANEL_PREVIEW_WIDTH = 720;
+const WORKSPACE_PANEL_MAX_WIDTH = 880;
+const AUXILIARY_PANEL_WIDTH_KEY = "project-r:auxiliary-side-panel-width";
+const AUXILIARY_PANEL_MIN_WIDTH = 300;
+const AUXILIARY_PANEL_DEFAULT_WIDTH = 380;
+const AUXILIARY_PANEL_MAX_WIDTH = 720;
 const MODEL_COPY: Record<string, { label: string; description: string }> = {
   deepseek: { label: "DeepSeek", description: "文本对话、推理输出" },
   claude: { label: "Claude", description: "复杂推理与长文处理" },
@@ -446,7 +602,6 @@ const AGENT_SUGGESTION_KEYWORDS = [
   "pptx",
   "模板",
   "套用",
-  "标签打印",
   "skill",
   "流程",
   "审批",
@@ -467,6 +622,102 @@ function readPromptSelectionMap() {
     return JSON.parse(localStorage.getItem(PROMPT_SELECTION_KEY) ?? "{}") as Record<string, string>;
   } catch {
     return {};
+  }
+}
+
+function readWebSearchPreference() {
+  try {
+    const preferences = JSON.parse(localStorage.getItem(SETTINGS_PREFERENCES_KEY) ?? "{}") as { webSearchEnabled?: unknown };
+    return preferences.webSearchEnabled === true;
+  } catch {
+    return false;
+  }
+}
+
+function writeWebSearchPreference(enabled: boolean) {
+  try {
+    const preferences = JSON.parse(localStorage.getItem(SETTINGS_PREFERENCES_KEY) ?? "{}");
+    localStorage.setItem(SETTINGS_PREFERENCES_KEY, JSON.stringify({ ...preferences, webSearchEnabled: enabled }));
+  } catch {
+    localStorage.setItem(SETTINGS_PREFERENCES_KEY, JSON.stringify({ webSearchEnabled: enabled }));
+  }
+}
+
+function sidebarMaxWidth() {
+  if (typeof window === "undefined") return SIDEBAR_MAX_WIDTH;
+  return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, window.innerWidth - 640));
+}
+
+function clampSidebarWidth(value: number) {
+  return Math.min(sidebarMaxWidth(), Math.max(SIDEBAR_MIN_WIDTH, Math.round(value)));
+}
+
+function readSidebarWidth() {
+  try {
+    const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+    return Number.isFinite(stored) ? clampSidebarWidth(stored) : SIDEBAR_DEFAULT_WIDTH;
+  } catch {
+    return SIDEBAR_DEFAULT_WIDTH;
+  }
+}
+
+function writeSidebarWidth(width: number) {
+  try {
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
+  } catch {
+    // localStorage may be unavailable in restricted shells.
+  }
+}
+
+function workspacePanelMaxWidth() {
+  if (typeof window === "undefined") return WORKSPACE_PANEL_MAX_WIDTH;
+  return Math.max(WORKSPACE_PANEL_MIN_WIDTH, Math.min(WORKSPACE_PANEL_MAX_WIDTH, window.innerWidth - 420));
+}
+
+function clampWorkspacePanelWidth(value: number) {
+  return Math.min(workspacePanelMaxWidth(), Math.max(WORKSPACE_PANEL_MIN_WIDTH, Math.round(value)));
+}
+
+function readWorkspacePanelWidth() {
+  try {
+    const stored = Number(localStorage.getItem(WORKSPACE_PANEL_WIDTH_KEY));
+    return Number.isFinite(stored) ? clampWorkspacePanelWidth(stored) : clampWorkspacePanelWidth(WORKSPACE_PANEL_DEFAULT_WIDTH);
+  } catch {
+    return clampWorkspacePanelWidth(WORKSPACE_PANEL_DEFAULT_WIDTH);
+  }
+}
+
+function writeWorkspacePanelWidth(width: number) {
+  try {
+    localStorage.setItem(WORKSPACE_PANEL_WIDTH_KEY, String(width));
+  } catch {
+    // localStorage may be unavailable in restricted shells.
+  }
+}
+
+function auxiliaryPanelMaxWidth() {
+  if (typeof window === "undefined") return AUXILIARY_PANEL_MAX_WIDTH;
+  return Math.max(AUXILIARY_PANEL_MIN_WIDTH, Math.min(AUXILIARY_PANEL_MAX_WIDTH, window.innerWidth - 420));
+}
+
+function clampAuxiliaryPanelWidth(value: number) {
+  return Math.min(auxiliaryPanelMaxWidth(), Math.max(AUXILIARY_PANEL_MIN_WIDTH, Math.round(value)));
+}
+
+function readAuxiliaryPanelWidth() {
+  try {
+    const stored = Number(localStorage.getItem(AUXILIARY_PANEL_WIDTH_KEY));
+    return Number.isFinite(stored) ? clampAuxiliaryPanelWidth(stored) : clampAuxiliaryPanelWidth(AUXILIARY_PANEL_DEFAULT_WIDTH);
+  } catch {
+    return clampAuxiliaryPanelWidth(AUXILIARY_PANEL_DEFAULT_WIDTH);
+  }
+}
+
+function writeAuxiliaryPanelWidth(width: number) {
+  try {
+    localStorage.setItem(AUXILIARY_PANEL_WIDTH_KEY, String(width));
+  } catch {
+    // localStorage may be unavailable in restricted shells.
   }
 }
 
@@ -537,6 +788,9 @@ function makeLocalMessage(
     feedback_rating: null,
     feedback_comment: null,
     sources: [],
+    attachments: [],
+    agent_run: null,
+    context_trace: null,
     created_at: now,
     ...extras,
   };
@@ -601,6 +855,209 @@ async function downloadGeneratedFile(baseUrl: string, token: string | null, file
   anchor.click();
   document.body.removeChild(anchor);
   URL.revokeObjectURL(url);
+}
+
+function generatedFileKindLabel(file: GeneratedFileResponse) {
+  const mime = (file.mime_type || "").toLowerCase();
+  const name = (file.filename || "").toLowerCase();
+  if (mime.includes("word") || name.endsWith(".docx")) return "已生成 Word 文档";
+  if (mime.includes("spreadsheet") || name.endsWith(".xlsx")) return "已生成 Excel 文件";
+  if (mime.includes("presentation") || name.endsWith(".pptx")) return "已生成演示文稿";
+  if (mime.includes("pdf") || name.endsWith(".pdf")) return "已生成 PDF 文件";
+  return "已生成文件";
+}
+
+function renderGeneratedFileCard(file: GeneratedFileResponse, onDownload: (file: GeneratedFileResponse) => void) {
+  return (
+    <div className="message-file-card">
+      <div>
+        <strong>{file.filename}</strong>
+        <span>{generatedFileKindLabel(file)}</span>
+      </div>
+      <button
+        className="message-file-download"
+        onClick={() => onDownload(file)}
+        type="button"
+      >
+        下载
+      </button>
+    </div>
+  );
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
+}
+
+function isImageAttachmentResponse(attachment: SessionAttachmentResponse) {
+  return (attachment.content_type || "").toLowerCase().startsWith("image/");
+}
+
+function attachmentKindLabel(attachment: SessionAttachmentResponse) {
+  const kind = getAttachmentKind(attachment.original_name, attachment.content_type || "");
+  if (kind === "image") return "IMG";
+  if (kind === "pdf") return "PDF";
+  if (kind === "text") return "TXT";
+  return "FILE";
+}
+
+function MessageAttachments({
+  attachments,
+  apiOptions,
+}: {
+  attachments?: SessionAttachmentResponse[];
+  apiOptions: ApiClientOptions;
+}) {
+  const visibleAttachments = attachments ?? [];
+  if (!visibleAttachments.length) return null;
+  return (
+    <div className={`message-attachments ${visibleAttachments.length === 1 ? "is-single" : ""}`}>
+      {visibleAttachments.map((attachment) =>
+        isImageAttachmentResponse(attachment) ? (
+          <MessageAttachmentImage attachment={attachment} apiOptions={apiOptions} key={attachment.id} />
+        ) : (
+          <MessageAttachmentFile attachment={attachment} apiOptions={apiOptions} key={attachment.id} />
+        ),
+      )}
+    </div>
+  );
+}
+
+function MessageAttachmentImage({
+  attachment,
+  apiOptions,
+}: {
+  attachment: SessionAttachmentResponse;
+  apiOptions: ApiClientOptions;
+}) {
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let objectUrl: string | null = null;
+    setImageUrl(null);
+    setLoadFailed(false);
+    fetchSessionAttachmentBlob(apiOptions, attachment.session_id, attachment.id, controller.signal)
+      .then((blob) => {
+        objectUrl = URL.createObjectURL(blob);
+        setImageUrl(objectUrl);
+      })
+      .catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) setLoadFailed(true);
+      });
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [apiOptions.baseUrl, apiOptions.token, apiOptions.onUnauthorized, attachment.id, attachment.session_id]);
+
+  useEffect(() => {
+    if (!previewOpen) return;
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setPreviewOpen(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [previewOpen]);
+
+  return (
+    <>
+      <button
+        className={`message-attachment-image ${loadFailed ? "is-failed" : ""}`}
+        disabled={!imageUrl}
+        onClick={() => imageUrl ? setPreviewOpen(true) : undefined}
+        title={imageUrl ? `点击预览图片 · ${attachmentSourceLabel(attachment)}` : attachment.original_name}
+        type="button"
+      >
+        {imageUrl ? (
+          <>
+            <img alt={attachment.original_name} src={imageUrl} />
+            <span className="message-attachment-image-source">{attachmentSourceLabel(attachment)}</span>
+          </>
+        ) : (
+          <span>{loadFailed ? "图片加载失败" : "图片加载中"}</span>
+        )}
+      </button>
+      {previewOpen && imageUrl ? (
+        <div className="attachment-lightbox-backdrop" onClick={() => setPreviewOpen(false)} role="presentation">
+          <div className="attachment-lightbox" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+            <button className="attachment-lightbox-close" onClick={() => setPreviewOpen(false)} title="关闭预览" type="button">
+              <XmarkIcon />
+            </button>
+            <img alt={attachment.original_name} src={imageUrl} />
+            <div className="attachment-lightbox-footer">
+              <span>{attachment.original_name} · {attachmentSourceLabel(attachment)}</span>
+              <button
+                onClick={() => void fetchSessionAttachmentBlob(apiOptions, attachment.session_id, attachment.id)
+                  .then((blob) => downloadBlob(blob, attachment.original_name))
+                  .catch(() => {})}
+                type="button"
+              >
+                下载
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function MessageAttachmentFile({
+  attachment,
+  apiOptions,
+}: {
+  attachment: SessionAttachmentResponse;
+  apiOptions: ApiClientOptions;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const kind = getAttachmentKind(attachment.original_name, attachment.content_type || "");
+  const canPreview = kind === "pdf" || kind === "text";
+  const sourceLabel = attachmentSourceLabel(attachment);
+  async function handleOpenAttachment() {
+    setBusy(true);
+    setFailed(false);
+    try {
+      const blob = await fetchSessionAttachmentBlob(apiOptions, attachment.session_id, attachment.id);
+      if (canPreview) {
+        const url = URL.createObjectURL(blob);
+        window.open(url, "_blank", "noopener,noreferrer");
+        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      } else {
+        downloadBlob(blob, attachment.original_name);
+      }
+    } catch {
+      setFailed(true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <button
+      className="message-attachment-file"
+      disabled={busy}
+      onClick={() => void handleOpenAttachment()}
+      title={failed ? "附件打开失败" : canPreview ? "打开预览" : "下载附件"}
+      type="button"
+    >
+      <span className={`message-attachment-file-kind is-${kind}`}>{attachmentKindLabel(attachment)}</span>
+      <span className="message-attachment-file-main">
+        <strong>{attachment.original_name}</strong>
+        <small>{failed ? "打开失败" : `${sourceLabel} · ${formatAttachmentSize(attachment.size)} · ${canPreview ? "打开预览" : "下载"}`}</small>
+      </span>
+    </button>
+  );
 }
 
 function renderSourceRefTag(
@@ -766,16 +1223,7 @@ function renderMessageContent(
     const language = match[1]?.trim();
     const code = match[2].trim();
     nodes.push(
-      <div className="message-code-block" key={`code-${index}`}>
-        <div className="message-code-toolbar">
-          <span>{language || "可复制内容"}</span>
-          <button className="message-code-copy" onClick={() => copyText(code)} type="button">
-            <CopyIcon />
-            复制
-          </button>
-        </div>
-        <pre className="message-code"><code>{code}</code></pre>
-      </div>,
+      <MessageCodeBlock code={code} key={`code-${index}`} language={language} />,
     );
     lastIndex = pattern.lastIndex;
     index += 1;
@@ -787,16 +1235,69 @@ function renderMessageContent(
   return nodes;
 }
 
-function renderSkillRunCard(skillRun: SkillRunResponse) {
+function MessageCodeBlock({ code, language }: { code: string; language?: string }) {
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+
+  useEffect(() => {
+    if (copyState === "idle") return;
+    const timer = window.setTimeout(() => setCopyState("idle"), 1600);
+    return () => window.clearTimeout(timer);
+  }, [copyState]);
+
+  async function handleCopyCode() {
+    try {
+      await copyText(code);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+  }
+
+  return (
+    <div className="message-code-block">
+      <div className="message-code-toolbar">
+        <span>{language || "可复制内容"}</span>
+        <button
+          className={`message-code-copy ${copyState !== "idle" ? `is-${copyState}` : ""}`}
+          onClick={() => void handleCopyCode()}
+          title={copyState === "copied" ? "已复制" : copyState === "failed" ? "复制失败" : "复制"}
+          type="button"
+        >
+          {copyState === "copied" ? <span className="message-action-check">✓</span> : <CopyIcon />}
+          {copyState === "copied" ? "已复制" : copyState === "failed" ? "复制失败" : "复制"}
+        </button>
+      </div>
+      <pre className="message-code"><code>{code}</code></pre>
+    </div>
+  );
+}
+
+function renderSkillRunCard(
+  skillRun: SkillRunResponse,
+  options: {
+    showGeneratedFile?: boolean;
+    onDownloadGeneratedFile?: (file: GeneratedFileResponse) => void;
+  } = {},
+) {
   const missingFields = skillRun.missing_inputs
     .map((item) => String(item.label ?? item.name ?? "待补充字段"))
     .filter(Boolean);
+  const dispatchSteps = Array.isArray(skillRun.dispatch?.steps) ? skillRun.dispatch.steps as Array<Record<string, unknown>> : [];
   return (
     <div className="message-skill-card">
       <div className="message-skill-header">
         <strong>{skillRun.skill?.display_name ?? skillRun.skill_name}</strong>
-        <span>{skillRun.status === "completed" ? "已完成" : skillRun.status === "ready" ? "待执行" : "收集中"}</span>
+        <span>{skillRun.status === "completed" ? "已完成" : skillRun.status === "ready" ? "待执行" : skillRun.status === "failed" ? "失败" : "收集中"}</span>
       </div>
+      {dispatchSteps.length ? (
+        <div className="message-skill-dispatch">
+          {dispatchSteps.map((step, index) => (
+            <span key={`${String(step.id ?? index)}-${String(step.tool ?? "")}`}>
+              {String(step.label ?? step.tool ?? "执行步骤")}
+            </span>
+          ))}
+        </div>
+      ) : null}
       {missingFields.length ? (
         <div className="message-skill-fields">
           {missingFields.map((field) => (
@@ -804,9 +1305,161 @@ function renderSkillRunCard(skillRun: SkillRunResponse) {
           ))}
         </div>
       ) : null}
-      {skillRun.generated_file ? (
+      {options.showGeneratedFile !== false && skillRun.generated_file && options.onDownloadGeneratedFile ? (
+        renderGeneratedFileCard(skillRun.generated_file, options.onDownloadGeneratedFile)
+      ) : skillRun.generated_file ? (
         <div className="message-skill-output">{skillRun.generated_file.filename}</div>
       ) : null}
+    </div>
+  );
+}
+
+function agentRunStatusLabel(status: string) {
+  if (status === "completed") return "已完成";
+  if (status === "failed") return "失败";
+  if (status === "waiting") return "等待输入";
+  if (status === "queued") return "排队中";
+  if (status === "cancelled") return "已取消";
+  return "执行中";
+}
+
+function agentEventStatusLabel(status: string) {
+  if (status === "completed") return "完成";
+  if (status === "failed") return "失败";
+  if (status === "waiting") return "等待";
+  if (status === "queued") return "排队";
+  return "进行中";
+}
+
+function renderAgentRunCard(agentRun: AgentRunResponse) {
+  const events = agentRun.events ?? [];
+  return (
+    <div className={`message-agent-run-card is-${agentRun.status}`}>
+      <div className="message-agent-run-header">
+        <span className="message-agent-run-icon"><AgentIcon /></span>
+        <div>
+          <strong>{agentRun.title}</strong>
+          <span>{agentRunStatusLabel(agentRun.status)}</span>
+        </div>
+      </div>
+      {events.length ? (
+        <ol className="message-agent-event-list">
+          {events.map((event) => (
+            <li className={`message-agent-event is-${event.status}`} key={event.id}>
+              <span className="message-agent-event-dot" />
+              <div>
+                <div className="message-agent-event-title">
+                  <strong>{event.title}</strong>
+                  <small>{agentEventStatusLabel(event.status)}</small>
+                </div>
+                {event.detail ? <p>{event.detail}</p> : null}
+              </div>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      {agentRun.error_message ? <p className="message-agent-run-error">{agentRun.error_message}</p> : null}
+    </div>
+  );
+}
+
+function hasContextTrace(contextTrace: ChatContextTraceResponse | null | undefined) {
+  if (!contextTrace) return false;
+  return Boolean(
+    contextTrace.attachments?.length ||
+    contextTrace.knowledge?.source_count ||
+    contextTrace.prompt?.selected_prompt_id ||
+    contextTrace.prompt?.system_prompt_provided ||
+    contextTrace.skill?.skill_name ||
+    contextTrace.gbrain_think?.gap_count ||
+    contextTrace.gbrain_think?.conflict_count ||
+    contextTrace.gbrain_think?.warning_count ||
+    contextTrace.model?.model,
+  );
+}
+
+function renderContextTraceCard(
+  contextTrace: ChatContextTraceResponse | null | undefined,
+  options: { onSubmitGBrainThinkReview?: () => void; gbrainThinkReviewBusy?: boolean } = {},
+) {
+  if (!hasContextTrace(contextTrace) || !contextTrace) return null;
+  const attachments = contextTrace.attachments ?? [];
+  const sources = contextTrace.knowledge?.sources ?? [];
+  const prompt = contextTrace.prompt;
+  const model = contextTrace.model;
+  const gbrainThink = contextTrace.gbrain_think;
+  const gbrainGaps = gbrainThink?.gaps?.filter(Boolean) ?? [];
+  const gbrainConflicts = gbrainThink?.conflicts?.filter(Boolean) ?? [];
+  const gbrainWarnings = gbrainThink?.warnings?.filter(Boolean) ?? [];
+  const modelBadges = [
+    model?.model,
+    model?.thinking ? "思考" : null,
+    model?.web_search ? "联网搜索" : null,
+  ].filter(Boolean).join(" · ");
+  return (
+    <div className="message-context-trace">
+      <div className="message-context-trace-header">
+        <strong>本轮上下文</strong>
+        {modelBadges ? <span>{modelBadges}</span> : null}
+      </div>
+      <div className="message-context-trace-grid">
+        {attachments.length ? (
+          <div className="message-context-trace-section">
+            <span>附件</span>
+            {attachments.slice(0, 4).map((attachment) => (
+              <small key={`${attachment.id}-${attachment.name}`}>{attachment.name ?? `附件 ${attachment.id}`}</small>
+            ))}
+            {attachments.length > 4 ? <small>另有 {attachments.length - 4} 个附件</small> : null}
+          </div>
+        ) : null}
+        {sources.length || contextTrace.knowledge?.source_count ? (
+          <div className="message-context-trace-section">
+            <span>知识来源</span>
+            {sources.slice(0, 4).map((source) => (
+              <small key={`${source.index}-${source.file}`}>{source.section_path || source.source_title || source.file}</small>
+            ))}
+            {(contextTrace.knowledge?.source_count ?? 0) > sources.length ? (
+              <small>共 {contextTrace.knowledge?.source_count} 个来源</small>
+            ) : null}
+          </div>
+        ) : null}
+        {gbrainThink && (gbrainGaps.length || gbrainConflicts.length || gbrainWarnings.length) ? (
+          <div className="message-context-trace-section is-gbrain-think">
+            <span>
+              GBrain 推理状态
+              {options.onSubmitGBrainThinkReview ? (
+                <button
+                  className="message-context-trace-action"
+                  disabled={options.gbrainThinkReviewBusy}
+                  onClick={options.onSubmitGBrainThinkReview}
+                  type="button"
+                >
+                  {options.gbrainThinkReviewBusy ? "提交中" : "提交审核"}
+                </button>
+              ) : null}
+            </span>
+            {gbrainConflicts.map((item, index) => (
+              <small className="is-conflict" key={`gbrain-conflict-${index}`}>冲突：{item}</small>
+            ))}
+            {gbrainGaps.map((item, index) => (
+              <small className="is-gap" key={`gbrain-gap-${index}`}>缺口：{item}</small>
+            ))}
+            {gbrainWarnings.map((item, index) => (
+              <small className="is-warning" key={`gbrain-warning-${index}`}>警告：{item}</small>
+            ))}
+          </div>
+        ) : null}
+        {(prompt?.selected_prompt_id || prompt?.system_prompt_provided || contextTrace.skill?.skill_name) ? (
+          <div className="message-context-trace-section">
+            <span>提示词 / Skill</span>
+            {prompt?.selected_prompt_id ? <small>{prompt.selected_prompt_id}</small> : null}
+            {contextTrace.skill?.display_name || contextTrace.skill?.skill_name ? (
+              <small>{contextTrace.skill.display_name || contextTrace.skill.skill_name}</small>
+            ) : null}
+            {prompt?.system_prompt_provided ? <small>{prompt.system_prompt_preview || "已使用会话提示词"}</small> : null}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -823,11 +1476,13 @@ export function AppPage() {
   const [messagesBySession, setMessagesBySession] = useAtom(chatMessagesBySessionAtom);
   const [isLoading, setIsLoading] = useAtom(chatLoadingAtom);
   const [error, setError] = useAtom(chatErrorAtom);
+  const [actionNotice, setActionNotice] = useState("");
   const [draft, setDraft] = useState("");
   const [mode, setMode] = useAtom(activeModeAtom);
   const [tabs, setTabs] = useAtom(tabsAtom);
   const [activeTabId, setActiveTabId] = useAtom(activeTabIdAtom);
   const [thinkingEnabled, setThinkingEnabled] = useState(false);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(readWebSearchPreference);
   const [activeWorkspaceId, setActiveWorkspaceId] = useAtom(activeWorkspaceIdAtom);
   const [workspaces] = useAtom(workspacesAtom);
   const [notifications, setNotifications] = useAtom(notificationsAtom);
@@ -871,6 +1526,7 @@ export function AppPage() {
   const [skillPanelIndex, setSkillPanelIndex] = useState(0);
   const [slashCommand, setSlashCommand] = useState<SlashCommandMatch | null>(null);
   const [selectedSkill, setSelectedSkill] = useState<SkillResponse | null>(null);
+  const [selectedBuiltinCommand, setSelectedBuiltinCommand] = useState<BuiltinSlashCommand | null>(null);
   const [llmProviders, setLlmProviders] = useState<LLMProviderStatusResponse[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelConfigError, setModelConfigError] = useState("");
@@ -889,11 +1545,20 @@ export function AppPage() {
   const [updateProgress, setUpdateProgress] = useState<UpdateDownloadProgress | null>(null);
   const [downloadedUpdatePath, setDownloadedUpdatePath] = useState("");
   const [updateError, setUpdateError] = useState("");
+  const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
+  const [sidebarResizing, setSidebarResizing] = useState(false);
+  const [workspacePanelWidth, setWorkspacePanelWidth] = useState(readWorkspacePanelWidth);
+  const [workspacePanelResizing, setWorkspacePanelResizing] = useState(false);
+  const [auxiliaryPanelWidth, setAuxiliaryPanelWidth] = useState(readAuxiliaryPanelWidth);
+  const [auxiliaryPanelResizing, setAuxiliaryPanelResizing] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const titleInputRef = useRef<HTMLInputElement | null>(null);
   const sidebarRenameInputRef = useRef<HTMLInputElement | null>(null);
+  const sidebarRef = useRef<HTMLElement | null>(null);
+  const workspacePanelRef = useRef<HTMLElement | null>(null);
+  const auxiliaryPanelRef = useRef<HTMLElement | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
   const modelSelectRef = useRef<HTMLDivElement | null>(null);
   const notificationPanelRef = useRef<HTMLDivElement | null>(null);
@@ -913,6 +1578,14 @@ export function AppPage() {
     () => createApiOptions(serverUrl, token, clearAuth),
     [clearAuth, serverUrl, token],
   );
+  function toggleWebSearch() {
+    setWebSearchEnabled((current) => {
+      const next = !current;
+      writeWebSearchPreference(next);
+      return next;
+    });
+  }
+
   const activeSessionIsSending = activeSessionId ? Boolean(sendingSessions[activeSessionId]) : false;
   const activeWorkspace = workspaces.find((item) => item.id === activeWorkspaceId);
   const promptOptions = useMemo<PromptOption[]>(() => [
@@ -958,13 +1631,22 @@ export function AppPage() {
   }, [sessions]);
 
   const skillQuery = slashCommand?.query ?? "";
-  const filteredSkills = useMemo(() => {
-    return skills
-      .map((skill) => ({ skill, score: scoreSkill(skill, skillQuery) }))
-      .filter((item) => !skillQuery || item.score > 0)
-      .sort((a, b) => b.score - a.score || a.skill.display_name.localeCompare(b.skill.display_name, "zh-CN"))
-      .slice(0, 8)
-      .map((item) => item.skill);
+  const slashCandidates = useMemo<SkillSlashCandidate[]>(() => {
+    const builtinCandidates: SkillSlashCandidate[] = BUILTIN_SLASH_COMMANDS
+      .map((command) => ({ kind: "command" as const, command, score: scoreBuiltinSlashCommand(command, skillQuery) }))
+      .filter((item) => !skillQuery || item.score > 0);
+    const skillCandidates: SkillSlashCandidate[] = skills
+      .map((skill) => ({ kind: "skill" as const, skill, score: scoreSkill(skill, skillQuery) }))
+      .filter((item) => !skillQuery || item.score > 0);
+    return [...builtinCandidates, ...skillCandidates]
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        if (a.kind !== b.kind) return a.kind === "command" ? -1 : 1;
+        const aName = a.kind === "command" ? a.command.displayName : a.skill.display_name;
+        const bName = b.kind === "command" ? b.command.displayName : b.skill.display_name;
+        return aName.localeCompare(bName, "zh-CN");
+      })
+      .slice(0, 8);
   }, [skills, skillQuery]);
 
   function syncSlashCommand(value: string, caret: number) {
@@ -988,6 +1670,7 @@ export function AppPage() {
     const nextCaret = before.length + spacer.length;
     setDraft(nextDraft);
     setSelectedSkill(skill);
+    setSelectedBuiltinCommand(null);
     setSlashCommand(null);
     setSkillPanelVisible(false);
     window.requestAnimationFrame(() => {
@@ -997,6 +1680,33 @@ export function AppPage() {
     if (mode === "chat" && skill.outputs.length > 0) {
       setMode("agent");
     }
+  }
+
+  function insertBuiltinSlashCommand(command: BuiltinSlashCommand) {
+    const target = slashCommand ?? findSlashCommand(draft, textareaRef.current?.selectionStart ?? draft.length);
+    if (!target) return;
+    const before = draft.slice(0, target.start).replace(/[ \t]+$/, "");
+    const after = draft.slice(target.end).replace(/^[ \t]+/, "");
+    const spacer = before && after ? " " : "";
+    const nextDraft = `${before}${spacer}${after}`;
+    const nextCaret = before.length + spacer.length;
+    setDraft(nextDraft);
+    setSelectedSkill(null);
+    setSelectedBuiltinCommand(command);
+    setSlashCommand(null);
+    setSkillPanelVisible(false);
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextCaret, nextCaret);
+    });
+  }
+
+  function insertSlashCandidate(candidate: SkillSlashCandidate) {
+    if (candidate.kind === "command") {
+      insertBuiltinSlashCommand(candidate.command);
+      return;
+    }
+    insertSkill(candidate.skill);
   }
 
   async function loadNotificationList(view = notificationView) {
@@ -1039,7 +1749,7 @@ export function AppPage() {
         const response = await listNotifications(apiOptions, "unread", 5);
         const startedAt = notificationStartedAtRef.current.getTime();
         const toastTarget = response.items.find((item) => {
-          const createdAt = new Date(/[Z+-]\d/.test(item.created_at) ? item.created_at : `${item.created_at}Z`).getTime();
+          const createdAt = parseApiDate(item.created_at).getTime();
           return createdAt >= startedAt && shouldToastNotification(item);
         });
         if (toastTarget) showNotificationToast(toastTarget);
@@ -1162,7 +1872,7 @@ export function AppPage() {
 
   async function startClientUpdateDownload() {
     if (!availableUpdate) return;
-    if (!window.projectR?.updates?.download) {
+    if (!window.projectR?.updates?.download || !window.projectR?.updates?.install) {
       setUpdateStep("failed");
       setUpdateError("自动更新失败，请联系管理员获取最新版安装包。");
       return;
@@ -1195,28 +1905,152 @@ export function AppPage() {
       return;
     }
     setDownloadedUpdatePath(result.filePath);
-    setUpdateStep("ready");
-  }
-
-  async function installClientUpdate() {
-    if (!downloadedUpdatePath || !window.projectR?.updates?.install) {
-      setUpdateStep("failed");
-      setUpdateError("自动更新失败，请联系管理员获取最新版安装包。");
-      return;
-    }
-    const result = await window.projectR.updates.install({
-      filePath: downloadedUpdatePath,
+    setUpdateStep("installing");
+    setUpdateProgress({
+      version: availableUpdate.version,
+      status: "installing",
+      receivedBytes: availableUpdate.size_bytes,
+      totalBytes: availableUpdate.size_bytes,
+      percent: 100,
+      bytesPerSecond: 0,
+      filePath: result.filePath,
+      message: "正在静默安装更新，完成后会自动重启应用...",
       dryRun: UPDATE_DOWNLOAD_DRY_RUN,
     });
-    if (!result.ok) {
+    const installResult = await window.projectR.updates.install({
+      filePath: result.filePath,
+      version: availableUpdate.version,
+      dryRun: UPDATE_DOWNLOAD_DRY_RUN,
+    });
+    if (!installResult.ok) {
       setUpdateStep("failed");
       setUpdateError("自动更新失败，请联系管理员获取最新版安装包。");
       return;
     }
-    if (result.dryRun) {
+    if (installResult.dryRun) {
       setUpdateDialogOpen(false);
     }
   }
+
+  function handleSidebarResizeStart(event: MouseEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setSidebarResizing(true);
+  }
+
+  function handleWorkspacePanelResizeStart(event: MouseEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setWorkspacePanelResizing(true);
+  }
+
+  function handleAuxiliaryPanelResizeStart(event: MouseEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setAuxiliaryPanelResizing(true);
+  }
+
+  function handleWorkspaceFilePreviewOpen() {
+    const previewPanelWidth = clampWorkspacePanelWidth(WORKSPACE_PANEL_PREVIEW_WIDTH);
+    setWorkspacePanelWidth((width) => Math.max(width, previewPanelWidth));
+  }
+
+  useEffect(() => {
+    writeSidebarWidth(sidebarWidth);
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    writeWorkspacePanelWidth(workspacePanelWidth);
+  }, [workspacePanelWidth]);
+
+  useEffect(() => {
+    writeAuxiliaryPanelWidth(auxiliaryPanelWidth);
+  }, [auxiliaryPanelWidth]);
+
+  useEffect(() => {
+    function handleWindowResize() {
+      setSidebarWidth((width) => clampSidebarWidth(width));
+      setWorkspacePanelWidth((width) => clampWorkspacePanelWidth(width));
+      setAuxiliaryPanelWidth((width) => clampAuxiliaryPanelWidth(width));
+    }
+    window.addEventListener("resize", handleWindowResize);
+    return () => window.removeEventListener("resize", handleWindowResize);
+  }, []);
+
+  useEffect(() => {
+    if (!sidebarResizing) return;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    function handleMouseMove(event: globalThis.MouseEvent) {
+      const left = sidebarRef.current?.getBoundingClientRect().left ?? 0;
+      setSidebarWidth(clampSidebarWidth(event.clientX - left));
+    }
+
+    function handleMouseUp() {
+      setSidebarResizing(false);
+    }
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [sidebarResizing]);
+
+  useEffect(() => {
+    if (!workspacePanelResizing) return;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    function handleMouseMove(event: globalThis.MouseEvent) {
+      const right = workspacePanelRef.current?.getBoundingClientRect().right ?? window.innerWidth;
+      setWorkspacePanelWidth(clampWorkspacePanelWidth(right - event.clientX));
+    }
+
+    function handleMouseUp() {
+      setWorkspacePanelResizing(false);
+    }
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [workspacePanelResizing]);
+
+  useEffect(() => {
+    if (!auxiliaryPanelResizing) return;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    function handleMouseMove(event: globalThis.MouseEvent) {
+      const right = auxiliaryPanelRef.current?.getBoundingClientRect().right ?? window.innerWidth;
+      setAuxiliaryPanelWidth(clampAuxiliaryPanelWidth(right - event.clientX));
+    }
+
+    function handleMouseUp() {
+      setAuxiliaryPanelResizing(false);
+    }
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [auxiliaryPanelResizing]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -1243,10 +2077,10 @@ export function AppPage() {
 
   useEffect(() => {
     setSkillPanelIndex((index) => {
-      if (filteredSkills.length === 0) return 0;
-      return Math.min(index, filteredSkills.length - 1);
+      if (slashCandidates.length === 0) return 0;
+      return Math.min(index, slashCandidates.length - 1);
     });
-  }, [filteredSkills.length]);
+  }, [slashCandidates.length]);
 
   useEffect(() => {
     function handlePointerDown(event: globalThis.MouseEvent) {
@@ -1302,9 +2136,12 @@ export function AppPage() {
       if (progress.status === "downloading" || progress.status === "verifying") {
         setUpdateStep("downloading");
       }
+      if (progress.status === "installing") {
+        setUpdateStep("installing");
+      }
       if (progress.status === "ready") {
         setDownloadedUpdatePath(progress.filePath ?? "");
-        setUpdateStep("ready");
+        setUpdateStep("downloading");
       }
       if (progress.status === "error") {
         setUpdateStep("failed");
@@ -1523,6 +2360,26 @@ export function AppPage() {
     setActiveTabId(tabId);
   }
 
+  async function handleArchiveRestored(session: ChatSessionResponse) {
+    const workspaceId = session.workspace_id ?? activeWorkspaceId;
+    if (!workspaceId) return;
+    if (workspaceId !== activeWorkspaceId) {
+      setActiveWorkspaceId(workspaceId);
+    }
+    try {
+      const refreshedSessions = await listChatSessions(apiOptions, workspaceId);
+      setSessions(refreshedSessions);
+      const restoredSession = refreshedSessions.find((item) => item.id === session.id) ?? { ...session, is_archived: false };
+      selectSession(restoredSession);
+    } catch {
+      if (workspaceId === activeWorkspaceId) {
+        const restoredSession = { ...session, is_archived: false };
+        setSessions((current) => current.some((item) => item.id === session.id) ? current : [restoredSession, ...current]);
+        selectSession(restoredSession);
+      }
+    }
+  }
+
   function storePromptSelection(sessionId: number, promptId: string) {
     setPromptSelections((current) => {
       const next = { ...current, [String(sessionId)]: promptId };
@@ -1644,7 +2501,7 @@ export function AppPage() {
     const sessionMessages = (messagesBySession[target.session_id] ?? [])
       .filter((message) => message.id > 0)
       .sort((a, b) => {
-        const timeDiff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        const timeDiff = parseApiDate(a.created_at).getTime() - parseApiDate(b.created_at).getTime();
         return timeDiff || a.id - b.id;
       });
     const targetIndex = sessionMessages.findIndex((message) => message.id === target.id);
@@ -1723,7 +2580,7 @@ export function AppPage() {
         return {
           ...current,
           [undo.sessionId]: Array.from(byId.values()).sort((a, b) => {
-            const timeDiff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+            const timeDiff = parseApiDate(a.created_at).getTime() - parseApiDate(b.created_at).getTime();
             return timeDiff || a.id - b.id;
           }),
         };
@@ -1777,6 +2634,7 @@ export function AppPage() {
         modelProfile: regenerateModelOption.profile,
         systemPrompt: composeSystemPrompt(selectedPrompt.content, mode),
         thinking: thinkingEnabled,
+        webSearch: webSearchEnabled,
         temperature: 0.9,
       });
       const excludedIds = new Set(response.excluded_message_ids);
@@ -1833,6 +2691,7 @@ export function AppPage() {
         modelProfile: selectedModelOption?.profile ?? null,
         systemPrompt: composeSystemPrompt(selectedPrompt.content, mode),
         thinking: thinkingEnabled,
+        webSearch: webSearchEnabled,
       });
       const excludedIds = new Set(response.excluded_message_ids);
       setMessagesBySession((current) => {
@@ -1920,6 +2779,30 @@ export function AppPage() {
     }
   }
 
+  async function handleSubmitGBrainThinkReview(message: ChatMessage) {
+    if (message.id < 0) return;
+    setError(null);
+    setActionNotice("");
+    setMessageActionBusyId(message.id);
+    try {
+      const response = await submitGBrainThinkReview(apiOptions, message.session_id, message.id, {});
+      setActionNotice(
+        response.created
+          ? `已提交 GBrain 缺口/冲突审核 #${response.knowledge_review_id}。`
+          : `已更新 GBrain 缺口/冲突审核 #${response.knowledge_review_id}。`,
+      );
+    } catch (reviewError: unknown) {
+      if (reviewError instanceof ApiError && reviewError.status === 401) {
+        clearAuth();
+        window.location.hash = "#/login";
+        return;
+      }
+      setError(reviewError instanceof ApiError ? reviewError.message : "提交 GBrain 缺口/冲突审核失败。");
+    } finally {
+      setMessageActionBusyId(null);
+    }
+  }
+
   async function handlePinSession(sessionId: number) {
     const session = sessions.find((item) => item.id === sessionId);
     if (!session) return;
@@ -1967,7 +2850,10 @@ export function AppPage() {
     try {
       await archiveChatSession(apiOptions, sessionId);
       const nextSessions = sessions.filter((item) => item.id !== sessionId);
+      const archivedTabId = `chat-${sessionId}`;
+      const nextTabs = tabs.filter((tab) => tab.sessionId !== sessionId);
       setSessions(nextSessions);
+      setTabs(nextTabs);
       setMessagesBySession((prev) => {
         const next = { ...prev };
         delete next[sessionId];
@@ -1977,7 +2863,21 @@ export function AppPage() {
         left: current.left === sessionId ? null : current.left,
         right: current.right === sessionId ? null : current.right,
       }));
-      if (activeSessionId === sessionId) setActiveSessionId(nextSessions[0]?.id ?? null);
+      if (activeTabId === archivedTabId) {
+        const nextTab = nextTabs[0];
+        if (nextTab?.sessionId) {
+          setActiveTabId(nextTab.id);
+          setActiveSessionId(nextTab.sessionId);
+          if (nextTab.workspaceId && nextTab.workspaceId !== activeWorkspaceId) {
+            setActiveWorkspaceId(nextTab.workspaceId);
+          }
+        } else {
+          setActiveTabId("");
+          setActiveSessionId(nextSessions[0]?.id ?? null);
+        }
+      } else if (activeSessionId === sessionId) {
+        setActiveSessionId(nextSessions[0]?.id ?? null);
+      }
     } catch {
       setError("归档失败，请稍后重试。");
     }
@@ -2162,32 +3062,58 @@ function getRandomWord(prev?: string): string {
 
   async function handleSend() {
     const content = draft.trim();
-    if (!content || activeSessionIsSending) return;
+    if ((!content && !pendingAttachments.length) || activeSessionIsSending) return;
+    const forceKnowledgeQuery = selectedBuiltinCommand?.name === "query";
     const startedFromWorkspaceHome = !activeSessionId;
     setError(null);
     let requestSessionId: number | null = null;
     let localUserMessageId: number | null = null;
+    let uploadingForSend = false;
 
     try {
+      const sessionTitleSeed = content || pendingAttachments[0]?.original_name || "附件提问";
       const session = activeSessionId
-        ? sessions.find((item) => item.id === activeSessionId) ?? await createSessionFromInput(content)
-        : await createSessionFromInput(content, true, selectedPromptId);
+        ? sessions.find((item) => item.id === activeSessionId) ?? await createSessionFromInput(sessionTitleSeed)
+        : await createSessionFromInput(sessionTitleSeed, true, selectedPromptId);
       const sessionId = session.id;
       if (sendingSessions[sessionId]) return;
       requestSessionId = sessionId;
-      const sentAttachments = pendingAttachments.filter((attachment) => attachment.session_id === sessionId);
-      if (sentAttachments.some(isAudioVideoAttachment)) {
+      const attachmentsForSend = pendingAttachments.filter((attachment) => attachment.session_id === null || attachment.session_id === sessionId);
+      if (!content && !attachmentsForSend.length) {
+        throw new Error("请先输入消息或添加当前会话附件。");
+      }
+      const unauthorizedLocalAttachments = attachmentsForSend.filter(
+        (attachment) => isLocalPrivatePendingAttachment(attachment) && attachment.authorization_status !== "authorized",
+      );
+      if (unauthorizedLocalAttachments.length) {
+        throw new Error("请先确认本机选择文件的本次发送授权。");
+      }
+      if (attachmentsForSend.some(isAudioVideoAttachment)) {
         throw new Error("当前版本暂未接入视频/音频附件理解，请先改用图片或可提取文本的附件。");
       }
-      if (sentAttachments.some((attachment) => attachment.kind === "image") && !selectedModelOption?.supportsVision) {
+      if (attachmentsForSend.some((attachment) => attachment.kind === "image") && !selectedModelOption?.supportsVision) {
         throw new Error("当前模型不支持图片理解，请切换到 MiMo V2.5 或 MiMo V2.5 Pro 后再发送。");
+      }
+      uploadingForSend = attachmentsForSend.some((attachment) => !isUploadedPendingAttachment(attachment));
+      if (uploadingForSend) setIsUploadingAttachments(true);
+      const sentAttachments: PendingSessionAttachment[] = [];
+      for (const attachment of attachmentsForSend) {
+        sentAttachments.push(await uploadPendingAttachmentForSend(attachment, sessionId));
+      }
+      if (uploadingForSend) {
+        setIsUploadingAttachments(false);
+        uploadingForSend = false;
       }
       const attachmentIds = sentAttachments.map((attachment) => String(attachment.id));
       setDraft("");
       setSelectedSkill(null);
+      setSelectedBuiltinCommand(null);
       setSlashCommand(null);
       setSkillPanelVisible(false);
-      const localUserMessage = makeLocalMessage(sessionId, "user", content, { isOptimistic: true });
+      const localUserMessage = makeLocalMessage(sessionId, "user", content, {
+        isOptimistic: true,
+        attachments: sentAttachments.map((attachment) => ({ ...attachment, session_id: sessionId, message_id: attachment.message_id ?? null })),
+      });
       localUserMessageId = localUserMessage.id;
       setMessagesBySession((current) => ({
         ...current,
@@ -2198,7 +3124,7 @@ function getRandomWord(prev?: string): string {
       setSessionSending(sessionId, true);
 
       if (session.title === "新对话") {
-        const title = makeSessionTitle(content);
+        const title = makeSessionTitle(content || sentAttachments[0]?.original_name || "附件提问");
         updateChatSession(apiOptions, sessionId, { title })
           .then((updated) => {
             setSessions((current) => current.map((item) => item.id === sessionId ? updated : item));
@@ -2217,7 +3143,9 @@ function getRandomWord(prev?: string): string {
         selectedModelOption?.profile ?? null,
         selectedSkill?.name ?? null,
         selectedPromptId,
+        forceKnowledgeQuery,
         thinkingEnabled,
+        webSearchEnabled,
         abortController.signal,
       );
       if (
@@ -2226,10 +3154,13 @@ function getRandomWord(prev?: string): string {
       ) {
         setMode("agent");
       }
-      setPendingAttachments((current) => current.filter((attachment) => !sentAttachments.some((sent) => sent.id === attachment.id)));
-      revokeAttachmentPreviews(sentAttachments);
+      setPendingAttachments((current) =>
+        current.filter((attachment) => !attachmentsForSend.some((sent) => pendingAttachmentKey(sent) === pendingAttachmentKey(attachment))),
+      );
+      revokeAttachmentPreviews(attachmentsForSend);
       setSelectedSkill(null);
-      const agentSuggestion = shouldSuggestAgentMode(content, response, mode);
+      const agentRequest = content || sentAttachments.map((attachment) => attachment.original_name).join(" ");
+      const agentSuggestion = shouldSuggestAgentMode(agentRequest, response, mode);
       const assistantMessage = makeLocalMessage(sessionId, "assistant", "", {
         id: response.assistant_message_id,
         provider: response.provider,
@@ -2245,14 +3176,30 @@ function getRandomWord(prev?: string): string {
         sources: response.sources ?? [],
         generated_file: response.generated_file ?? null,
         skill_run: response.skill_run ?? null,
-        agent_suggestion: agentSuggestion ? { reason: agentSuggestion, request: content } : null,
+        agent_run: response.agent_run ?? null,
+        context_trace: response.context_trace ?? null,
+        agent_suggestion: agentSuggestion ? { reason: agentSuggestion, request: agentRequest } : null,
         isTyping: true,
       });
+      const serverUserAttachments = (response.user_attachments ?? sentAttachments.map((attachment) => ({ ...attachment, session_id: sessionId, message_id: response.user_message_id })))
+        .map((attachment) => {
+          const localAttachment = sentAttachments.find((item) => item.id === attachment.id);
+          return localAttachment
+            ? {
+                ...attachment,
+                source_scope: localAttachment.source_scope,
+                source_label: localAttachment.source_label,
+                authorization_status: localAttachment.authorization_status,
+              }
+            : attachment;
+        });
       setMessagesBySession((current) => ({
         ...current,
         [sessionId]: [
           ...(current[sessionId] ?? []).map((message) =>
-            message.id === localUserMessage.id ? { ...message, id: response.user_message_id, isOptimistic: false } : message,
+            message.id === localUserMessage.id
+              ? { ...message, id: response.user_message_id, isOptimistic: false, attachments: serverUserAttachments }
+              : message,
           ),
           assistantMessage,
         ],
@@ -2282,17 +3229,72 @@ function getRandomWord(prev?: string): string {
         sendAbortControllersRef.current.delete(requestSessionId);
         setSessionSending(requestSessionId, false);
       }
+      if (uploadingForSend) setIsUploadingAttachments(false);
     }
   }
 
-  function makePendingAttachment(attachment: SessionAttachmentResponse, file: File): PendingSessionAttachment {
-    const kind = getAttachmentKind(attachment.original_name || file.name, attachment.content_type || file.type);
+  async function makeLocalPendingAttachment(
+    file: File,
+    source: AttachmentInputSource,
+    privateWorkspaceRecord?: PrivateWorkspaceFilePayload,
+  ): Promise<PendingSessionAttachment> {
+    const kind = getAttachmentKind(file.name, file.type || "");
+    const localId = privateWorkspaceRecord?.id ?? makeLocalAttachmentId();
+    const sha256 = privateWorkspaceRecord?.sha256 ?? await hashFileSha256(file);
+    const createdAt = new Date().toISOString();
+    const isPrivateWorkspaceFile = Boolean(privateWorkspaceRecord);
+    const authorizationStatus: AttachmentAuthorizationStatus =
+      isPrivateWorkspaceFile && privateWorkspaceRecord?.lastAuthorizationStatus !== "authorized"
+        ? "pending"
+        : "authorized";
     let previewUrl: string | undefined;
     if (kind === "image") {
       previewUrl = URL.createObjectURL(file);
       pendingAttachmentPreviewsRef.current.add(previewUrl);
     }
-    return { ...attachment, kind, previewUrl };
+    return {
+      id: -Date.now(),
+      local_id: localId,
+      session_id: null,
+      message_id: null,
+      original_name: file.name,
+      content_type: file.type || "application/octet-stream",
+      size: file.size,
+      created_at: createdAt,
+      kind,
+      previewUrl,
+      file,
+      sha256,
+      relative_path: privateWorkspaceRecord?.relativePath ?? null,
+      private_workspace_file_id: privateWorkspaceRecord?.id ?? null,
+      preprocess: privateWorkspaceRecord?.preprocess ?? null,
+      source_scope: isPrivateWorkspaceFile ? "local_private" : "session_upload",
+      source_label: isPrivateWorkspaceFile ? "本机选择" : "会话临时上传",
+      authorization_status: authorizationStatus,
+      input_source: source,
+    };
+  }
+
+  function makeUploadedPendingAttachment(
+    attachment: SessionAttachmentResponse,
+    file: File,
+    source?: PendingSessionAttachment,
+  ): PendingSessionAttachment {
+    const kind = getAttachmentKind(attachment.original_name || file.name, attachment.content_type || file.type);
+    return {
+      ...attachment,
+      local_id: source?.local_id ?? `server-${attachment.id}`,
+      kind,
+      previewUrl: source?.previewUrl,
+      sha256: source?.sha256 ?? null,
+      relative_path: source?.relative_path ?? null,
+      private_workspace_file_id: source?.private_workspace_file_id ?? null,
+      preprocess: source?.preprocess ?? null,
+      source_scope: source?.private_workspace_file_id ? "local_private" : "session_upload",
+      source_label: source?.source_label ?? (source?.private_workspace_file_id ? "本机选择" : "会话临时上传"),
+      authorization_status: "uploaded",
+      input_source: source?.input_source ?? "picker",
+    };
   }
 
   function revokeAttachmentPreviews(attachments: PendingSessionAttachment[]) {
@@ -2342,12 +3344,12 @@ function getRandomWord(prev?: string): string {
       if (tooLarge) {
         throw new Error(`${tooLarge.name} 超过 20MB，请改用项目文件上传。`);
       }
-      const session = await resolveAttachmentSession(target);
-      for (const file of files) {
-        const attachment = await uploadSessionAttachmentFile(apiOptions, session.id, file);
-        const pendingAttachment = makePendingAttachment(attachment, file);
-        setPendingAttachments((current) => [...current, pendingAttachment]);
+      if (target?.pane) {
+        setActiveSplitPane(target.pane);
+        activateConversationPane(target.pane, target.sessionId ?? null);
       }
+      const localAttachments = await Promise.all(files.map((file) => makeLocalPendingAttachment(file, source)));
+      setPendingAttachments((current) => [...current, ...localAttachments]);
       if (source !== "picker") {
         window.requestAnimationFrame(() => textareaRef.current?.focus());
       }
@@ -2359,14 +3361,151 @@ function getRandomWord(prev?: string): string {
     }
   }
 
-  async function handleRemovePendingAttachment(attachment: PendingSessionAttachment) {
+  async function handleReferenceWorkspaceFile(item: WorkspaceFileItemResponse) {
+    if (!activeWorkspaceId || item.type === "directory") return;
+    setError(null);
+    setIsUploadingAttachments(true);
     try {
-      await deleteSessionAttachment(apiOptions, attachment.session_id, attachment.id);
-    } catch {
-      // Ignore stale attachment cleanup errors in the composer.
+      const blob = await fetchWorkspaceFileBlob(apiOptions, activeWorkspaceId, item.path);
+      if (blob.size > SESSION_ATTACHMENT_MAX_BYTES) {
+        throw new Error(`${item.name} 超过 20MB，暂不支持作为本轮引用附件发送。`);
+      }
+      const file = new File([blob], item.name, { type: blob.type || "application/octet-stream" });
+      const attachment = await makeLocalPendingAttachment(file, "workspace_reference");
+      setPendingAttachments((current) => [
+        ...current,
+        {
+          ...attachment,
+          relative_path: item.path,
+          source_label: activeWorkspace?.workspace_kind === "user" ? "个人工作台引用" : "项目资料引用",
+        },
+      ]);
+      window.requestAnimationFrame(() => textareaRef.current?.focus());
+    } catch (referenceError: unknown) {
+      setError(referenceError instanceof Error ? referenceError.message : "引用文件失败，请稍后重试。");
+    } finally {
+      setIsUploadingAttachments(false);
+    }
+  }
+
+  async function handleChoosePrivateWorkspaceFiles() {
+    if (!window.projectR?.privateWorkspace) {
+      setError("本机文件选择仅在桌面客户端可用；当前可用附件按钮作为会话临时上传处理。");
+      return;
+    }
+    setError(null);
+    setIsUploadingAttachments(true);
+    try {
+      const payloads = await window.projectR.privateWorkspace.chooseFiles();
+      if (!payloads.length) return;
+      const tooLarge = payloads.find((file) => file.size > SESSION_ATTACHMENT_MAX_BYTES);
+      if (tooLarge) {
+        throw new Error(`${tooLarge.fileName} 超过 20MB，请改用项目文件上传。`);
+      }
+      const attachments = await Promise.all(payloads.map((payload) => {
+        const file = fileFromPrivateWorkspacePayload(payload);
+        return makeLocalPendingAttachment(file, "private_workspace", payload);
+      }));
+      setPendingAttachments((current) => [...current, ...attachments]);
+      window.requestAnimationFrame(() => textareaRef.current?.focus());
+    } catch (error: unknown) {
+      setError(error instanceof Error ? error.message : "本机文件读取失败。");
+    } finally {
+      setIsUploadingAttachments(false);
+    }
+  }
+
+  async function handleRemovePendingAttachment(attachment: PendingSessionAttachment) {
+    if (isUploadedPendingAttachment(attachment)) {
+      try {
+        await deleteSessionAttachment(apiOptions, attachment.session_id, attachment.id);
+      } catch {
+        // Ignore stale attachment cleanup errors in the composer.
+      }
     }
     revokeAttachmentPreviews([attachment]);
-    setPendingAttachments((current) => current.filter((item) => item.id !== attachment.id));
+    const key = pendingAttachmentKey(attachment);
+    setPendingAttachments((current) => current.filter((item) => pendingAttachmentKey(item) !== key));
+  }
+
+  function authorizeLocalPrivateAttachments() {
+    const privateWorkspaceIds = pendingAttachments
+      .map((attachment) => attachment.private_workspace_file_id)
+      .filter((id): id is string => Boolean(id));
+    if (privateWorkspaceIds.length) {
+      window.projectR?.privateWorkspace?.setAuthorization({ ids: privateWorkspaceIds, status: "authorized" }).catch(() => {});
+    }
+    setPendingAttachments((current) =>
+      current.map((attachment) =>
+        isLocalPrivatePendingAttachment(attachment)
+          ? { ...attachment, authorization_status: "authorized" }
+          : attachment,
+      ),
+    );
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
+  }
+
+  async function uploadPendingAttachmentForSend(attachment: PendingSessionAttachment, sessionId: number) {
+    if (isUploadedPendingAttachment(attachment)) {
+      return attachment;
+    }
+    if (!attachment.file) {
+      throw new Error(`本地附件已失效，请重新选择：${attachment.original_name}`);
+    }
+    let uploaded: PendingSessionAttachment;
+    if (mode === "chat" && (attachment.kind === "text" || (attachment.kind === "pdf" && attachment.preprocess?.excerpt))) {
+      const excerpt = attachment.preprocess?.excerpt ?? await readTextAttachmentExcerpt(attachment.file);
+      const response = await createSessionAttachment(apiOptions, sessionId, {
+        filename: attachment.original_name,
+        content: excerpt || `[本机选择文件为空或无法读取：${attachment.original_name}]`,
+        content_type: "text/plain",
+        source_scope: attachment.private_workspace_file_id ? "local_private" : "session_upload",
+        source_label: attachment.private_workspace_file_id ? "本机选择" : "会话临时上传",
+        authorization_status: "uploaded",
+      });
+      uploaded = makeUploadedPendingAttachment(response, attachment.file, attachment);
+    } else {
+      const response = await uploadSessionAttachmentFile(apiOptions, sessionId, attachment.file, {
+        source_scope: attachment.private_workspace_file_id ? "local_private" : "session_upload",
+        source_label: attachment.private_workspace_file_id ? "本机选择" : "会话临时上传",
+        authorization_status: "uploaded",
+      });
+      uploaded = makeUploadedPendingAttachment(response, attachment.file, attachment);
+    }
+    if (attachment.private_workspace_file_id) {
+      window.projectR?.privateWorkspace?.setAuthorization({ ids: [attachment.private_workspace_file_id], status: "uploaded" }).catch(() => {});
+    }
+    return uploaded;
+  }
+
+  async function handleSavePendingPrivateAttachmentsToWorkspace() {
+    if (!activeWorkspaceId) {
+      setError("请先进入一个项目工作区，再保存到项目资料。");
+      return;
+    }
+    const attachments = pendingAttachments.filter(
+      (attachment) => isLocalPrivatePendingAttachment(attachment) && attachment.file,
+    );
+    if (!attachments.length) return;
+    const confirmed = window.confirm(
+      `将 ${attachments.length} 个本机选择文件复制到项目的 99-未归档文件。原文件不会移动或同步。是否继续？`,
+    );
+    if (!confirmed) return;
+    setError(null);
+    setIsUploadingAttachments(true);
+    try {
+      await uploadWorkspaceFiles(
+        apiOptions,
+        activeWorkspaceId,
+        "99-未归档文件",
+        attachments.map((attachment) => attachment.file).filter((file): file is File => Boolean(file)),
+      );
+      setUtilityPanel("workspace");
+    } catch (error: unknown) {
+      setError(error instanceof Error ? error.message : "保存到项目资料失败。");
+    } finally {
+      setIsUploadingAttachments(false);
+    }
   }
 
   function handleComposerPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
@@ -2418,18 +3557,18 @@ function getRandomWord(prev?: string): string {
     if (skillPanelVisible) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
-        if (filteredSkills.length > 0) setSkillPanelIndex((i) => (i + 1) % filteredSkills.length);
+        if (slashCandidates.length > 0) setSkillPanelIndex((i) => (i + 1) % slashCandidates.length);
         return;
       }
       if (event.key === "ArrowUp") {
         event.preventDefault();
-        if (filteredSkills.length > 0) setSkillPanelIndex((i) => (i - 1 + filteredSkills.length) % filteredSkills.length);
+        if (slashCandidates.length > 0) setSkillPanelIndex((i) => (i - 1 + slashCandidates.length) % slashCandidates.length);
         return;
       }
       if (event.key === "Enter") {
         event.preventDefault();
-        if (filteredSkills.length > 0) {
-          insertSkill(filteredSkills[skillPanelIndex]);
+        if (slashCandidates.length > 0) {
+          insertSlashCandidate(slashCandidates[skillPanelIndex]);
         }
         return;
       }
@@ -2558,12 +3697,9 @@ function getRandomWord(prev?: string): string {
         <div className={`empty-agent ${sideBySideOpen ? "is-split-mode" : ""}`}>
           <div className="empty-agent-copy">
             <span className="empty-chat-mark">R</span>
-            <h2>{activeWorkspace ? `检查「${activeWorkspace.name}」资料` : "选择项目后开始 Agent 会话"}</h2>
-            <p>Agent 会优先理解当前项目文件目录；补齐资料后，直接用自然语言说明你要整理、核对或生成的业务结果。</p>
+            <h2>{activeWorkspace ? `在「${activeWorkspace.name}」开始 Agent` : "选择项目后开始 Agent"}</h2>
+            <p>直接说明你要整理、核对或生成的业务结果。</p>
           </div>
-          {sideBySideOpen ? null : (
-            <WorkspaceFilePanel apiOptions={apiOptions} workspaceId={activeWorkspaceId} workspaceName={activeWorkspace?.name} />
-          )}
         </div>
       );
     }
@@ -2609,12 +3745,13 @@ function getRandomWord(prev?: string): string {
   function renderMessageCard(message: ChatMessage) {
     const isEditing = editingMessageId === message.id;
     const isBusy = messageActionBusyId === message.id;
+    const hasMessageBubble = Boolean(message.content.trim()) || Boolean(message.isTyping) || Boolean(message.isRegenerating);
     return (
       <article className={`message-row message-row-${message.role} ${message.status === "failed" ? "message-row-failed" : ""}`} key={message.id}>
         {message.role === "assistant" ? (
           <span className="message-avatar assistant-avatar is-text">R</span>
         ) : (
-          renderAvatar(currentUser?.avatar, currentUser?.nickname, 30)
+          renderAvatar(currentUser?.avatar, currentUser?.nickname, 30, serverUrl)
         )}
         <div className="message-body">
           <div className="message-meta">
@@ -2653,17 +3790,22 @@ function getRandomWord(prev?: string): string {
               </div>
             </div>
           ) : (
-            <div className="message-bubble">
-              {message.isRegenerating ? (
-                <InlineLoadingPlaceholder />
-              ) : (
-                renderMessageContent(message.content, message.sources ?? [], (preview) => {
-                  setSourcePreview({ ...preview, sessionId: message.session_id });
-                  setUtilityPanel("source");
-                })
-              )}
-              {message.isTyping && !message.isRegenerating ? <span className="typing-caret" /> : null}
-            </div>
+            <>
+              <MessageAttachments attachments={message.attachments} apiOptions={apiOptions} />
+              {hasMessageBubble ? (
+                <div className="message-bubble">
+                  {message.isRegenerating ? (
+                    <InlineLoadingPlaceholder />
+                  ) : (
+                    renderMessageContent(message.content, message.sources ?? [], (preview) => {
+                      setSourcePreview({ ...preview, sessionId: message.session_id });
+                      setUtilityPanel("source");
+                    })
+                  )}
+                  {message.isTyping && !message.isRegenerating ? <span className="typing-caret" /> : null}
+                </div>
+              ) : null}
+            </>
           )}
           {renderMessageVersionBar(message)}
           {message.sources?.length ? (
@@ -2686,22 +3828,23 @@ function getRandomWord(prev?: string): string {
               ))}
             </div>
           ) : null}
+          {message.role === "assistant" ? renderContextTraceCard(message.context_trace, {
+            gbrainThinkReviewBusy: messageActionBusyId === message.id,
+            onSubmitGBrainThinkReview: message.context_trace?.gbrain_think
+              ? () => void handleSubmitGBrainThinkReview(message)
+              : undefined,
+          }) : null}
           {message.generated_file ? (
-            <div className="message-file-card">
-              <div>
-                <strong>{message.generated_file.filename}</strong>
-                <span>已生成 Word 文档</span>
-              </div>
-              <button
-                className="message-file-download"
-                onClick={() => void downloadGeneratedFile(serverUrl, token, message.generated_file!)}
-                type="button"
-              >
-                下载
-              </button>
-            </div>
+            renderGeneratedFileCard(
+              message.generated_file,
+              (file) => void downloadGeneratedFile(serverUrl, token, file),
+            )
           ) : null}
-          {message.skill_run ? renderSkillRunCard(message.skill_run) : null}
+          {message.agent_run ? renderAgentRunCard(message.agent_run) : null}
+          {message.skill_run ? renderSkillRunCard(message.skill_run, {
+            showGeneratedFile: !message.generated_file,
+            onDownloadGeneratedFile: (file) => void downloadGeneratedFile(serverUrl, token, file),
+          }) : null}
           {message.agent_suggestion ? (
             <div className="message-agent-suggestion">
               <div className="message-agent-suggestion-copy">
@@ -2790,19 +3933,47 @@ function getRandomWord(prev?: string): string {
       return <div className="composer-inactive-hint">点击此侧后继续输入</div>;
     }
     const sessionIsSending = paneSessionId ? Boolean(sendingSessions[paneSessionId]) : false;
+    const localPrivateAttachments = pendingAttachments.filter(isLocalPrivatePendingAttachment);
+    const unauthorizedLocalAttachmentCount = localPrivateAttachments.filter((attachment) => attachment.authorization_status !== "authorized").length;
+    const hasUnauthorizedLocalAttachments = unauthorizedLocalAttachmentCount > 0;
+    const hasLocalPrivateImages = localPrivateAttachments.some((attachment) => attachment.kind === "image");
+    const canSendMessage = Boolean(draft.trim() || pendingAttachments.length) && !hasUnauthorizedLocalAttachments;
+    const sendButtonTitle = sessionIsSending
+      ? "停止生成 (Esc)"
+      : hasUnauthorizedLocalAttachments
+        ? "请先确认本机选择文件"
+        : "发送";
     return (
       <div className="composer-wrap">
         <div className="composer" ref={composerRef}>
+          {localPrivateAttachments.length ? (
+            <div className={`composer-attachment-consent ${hasUnauthorizedLocalAttachments ? "is-pending" : "is-authorized"}`}>
+              <div className="composer-attachment-consent-copy">
+                  <strong>本机选择文件</strong>
+                <span>
+                  {hasUnauthorizedLocalAttachments
+                    ? `${unauthorizedLocalAttachmentCount} 个文件来自本机选择，发送前需确认。Chat 模式文本默认只发送摘录；Agent 模式会把选中文件作为后端临时文件处理。${hasLocalPrivateImages ? " 图片确认后会上传给后端模型链路用于多模态理解。" : ""}`
+                    : "已确认本次发送授权；这些文件不会自动进入项目资料或公司知识库。"}
+                </span>
+              </div>
+              <button
+                disabled={!hasUnauthorizedLocalAttachments}
+                onClick={authorizeLocalPrivateAttachments}
+                type="button"
+              >
+                {hasUnauthorizedLocalAttachments ? "确认本次发送" : "已确认"}
+              </button>
+            </div>
+          ) : null}
           {pendingAttachments.length ? (
             <div className="composer-attachments">
               {pendingAttachments.map((attachment) => (
-                <button
-                  className={`composer-attachment-chip is-${attachment.kind}`}
-                  key={attachment.id}
-                  onClick={() => void handleRemovePendingAttachment(attachment)}
-                  title="移除附件"
-                  type="button"
+                <div
+                  className={`composer-attachment-chip is-${attachment.kind} is-${attachment.source_scope} ${attachment.authorization_status === "authorized" ? "is-authorized" : ""}`}
+                  key={pendingAttachmentKey(attachment)}
+                  title={attachment.original_name}
                 >
+                  <span className="composer-attachment-badge">{attachment.input_source === "workspace_reference" ? "引用" : "附件"}</span>
                   {attachment.previewUrl ? (
                     <img alt="" className="composer-attachment-thumb" src={attachment.previewUrl} />
                   ) : (
@@ -2810,14 +3981,28 @@ function getRandomWord(prev?: string): string {
                       {attachment.kind === "pdf" ? "PDF" : attachment.kind === "text" ? "TXT" : <PaperclipIcon />}
                     </span>
                   )}
-                  <span>{attachment.original_name}</span>
-                  <small>{formatAttachmentSize(attachment.size)}</small>
-                </button>
+                  <span className="composer-attachment-name">{attachment.original_name}</span>
+                  <small className="composer-attachment-meta">
+                    {attachmentSourceLabel(attachment)} · {pendingAttachmentStatusLabel(attachment)} · {pendingAttachmentSendFormLabel(attachment, mode)} · {pendingAttachmentTargetLabel(mode)} · {formatAttachmentSize(attachment.size)}
+                  </small>
+                  {attachment.preprocess?.summary ? (
+                    <em>{attachment.preprocess.summary}</em>
+                  ) : null}
+                  <button
+                    aria-label={`移除附件：${attachment.original_name}`}
+                    className="composer-attachment-remove"
+                    onClick={() => void handleRemovePendingAttachment(attachment)}
+                    title="移除附件"
+                    type="button"
+                  >
+                    <XmarkIcon />
+                  </button>
+                </div>
               ))}
             </div>
           ) : null}
-          {isUploadingAttachments ? <div className="composer-uploading">附件上传中...</div> : null}
-          {(!selectedPromptIsDefault || selectedSkill) ? (
+          {isUploadingAttachments ? <div className="composer-uploading">附件处理中...</div> : null}
+          {(!selectedPromptIsDefault || selectedSkill || selectedBuiltinCommand) ? (
             <div className="composer-context-row">
               {!selectedPromptIsDefault ? (
                 <button
@@ -2829,6 +4014,21 @@ function getRandomWord(prev?: string): string {
                   <span className="composer-context-chip-icon"><PromptIcon /></span>
                   <strong>{selectedPrompt.name}</strong>
                   <small>提示词</small>
+                </button>
+              ) : null}
+              {selectedBuiltinCommand ? (
+                <button
+                  className="composer-context-chip composer-context-chip-command"
+                  onClick={() => {
+                    setSelectedBuiltinCommand(null);
+                    textareaRef.current?.focus();
+                  }}
+                  title="移除内置命令"
+                  type="button"
+                >
+                  <span className="composer-context-chip-icon">/</span>
+                  <strong>{selectedBuiltinCommand.displayName}</strong>
+                  <small>内置命令</small>
                 </button>
               ) : null}
               {selectedSkill ? (
@@ -2851,31 +4051,38 @@ function getRandomWord(prev?: string): string {
           {skillPanelVisible ? (
             <div className="skill-candidate-panel" role="listbox">
               <div className="skill-candidate-panel-header">
-                <span>选择 Skill</span>
+                <span>选择指令或 Skill</span>
                 <kbd>/</kbd>
               </div>
-              {filteredSkills.length > 0 ? (
-                filteredSkills.map((skill, index) => (
+              {slashCandidates.length > 0 ? (
+                slashCandidates.map((candidate, index) => {
+                  const isCommand = candidate.kind === "command";
+                  const label = isCommand ? candidate.command.displayName : candidate.skill.display_name;
+                  const description = isCommand ? candidate.command.description : candidate.skill.description;
+                  const scope = isCommand ? candidate.command.scope : getSkillScopeLabel(candidate.skill);
+                  const key = isCommand ? `command-${candidate.command.name}` : `skill-${candidate.skill.name}`;
+                  return (
                   <button
-                    key={skill.name}
+                    key={key}
                     className={`skill-candidate-item ${index === skillPanelIndex ? "is-active" : ""}`}
-                    onClick={() => insertSkill(skill)}
+                    onClick={() => insertSlashCandidate(candidate)}
                     onMouseEnter={() => setSkillPanelIndex(index)}
                     role="option"
                     type="button"
                   >
-                    <span className="skill-candidate-icon">◆</span>
+                    <span className="skill-candidate-icon">{isCommand ? "/" : "◆"}</span>
                     <span className="skill-candidate-copy">
                       <span className="skill-candidate-title">
-                        <strong>{skill.display_name}</strong>
-                        <span>{skill.description}</span>
+                        <strong>{label}</strong>
+                        <span>{description}</span>
                       </span>
                     </span>
-                    <span className="skill-candidate-scope">{getSkillScopeLabel(skill)}</span>
+                    <span className="skill-candidate-scope">{scope}</span>
                   </button>
-                ))
+                  );
+                })
               ) : (
-                <div className="skill-candidate-empty">没有匹配的 Skill</div>
+                <div className="skill-candidate-empty">没有匹配的指令或 Skill</div>
               )}
             </div>
           ) : null}
@@ -2904,19 +4111,30 @@ function getRandomWord(prev?: string): string {
                 ref={fileInputRef}
                 type="file"
               />
-              <button
-                className="composer-tool-icon"
-                data-tooltip={isUploadingAttachments ? "附件上传中" : "上传附件"}
-                disabled={isUploadingAttachments}
-                onClick={() => fileInputRef.current?.click()}
-                title="上传附件"
+                <button
+                  className="composer-tool-icon"
+                  data-tooltip={isUploadingAttachments ? "附件处理中" : "添加会话临时附件"}
+                  disabled={isUploadingAttachments}
+                  onClick={() => fileInputRef.current?.click()}
+                title="添加会话临时附件"
                 type="button"
-              >
-                <PaperclipIcon />
-              </button>
+                >
+                  <PaperclipIcon />
+                </button>
+                <button
+                  className="composer-tool-icon"
+                  data-tooltip={isUploadingAttachments ? "附件处理中" : "从本机选择文件"}
+                  disabled={isUploadingAttachments}
+                  onClick={() => void handleChoosePrivateWorkspaceFiles()}
+                  title="从本机选择文件"
+                  type="button"
+                >
+                  <WorkspaceIcon />
+                </button>
               <div className="composer-config-group" aria-label="模型配置">
                 <div className="composer-model-select" ref={modelSelectRef}>
                   <button
+                    aria-label={`选择模型：${selectedModelOption?.label ?? (modelsLoading ? "加载模型" : "选择模型")}`}
                     aria-expanded={modelMenuOpen}
                     className="composer-model-button"
                     data-tooltip="切换模型"
@@ -2925,7 +4143,7 @@ function getRandomWord(prev?: string): string {
                     type="button"
                   >
                     <SettingsIcon />
-                    <span>{selectedModelOption?.label ?? (modelsLoading ? "加载模型" : "选择模型")}</span>
+                    <span className="composer-model-label">{selectedModelOption?.label ?? (modelsLoading ? "加载模型" : "选择模型")}</span>
                     <ChevronDownIcon />
                   </button>
                   {modelMenuOpen ? (
@@ -2973,16 +4191,38 @@ function getRandomWord(prev?: string): string {
                     </div>
                   ) : null}
                 </div>
-                <button className={`thinking-toggle ${thinkingEnabled ? "active is-active" : ""}`} data-tooltip={thinkingEnabled ? "关闭思考" : "开启思考"} onClick={() => setThinkingEnabled(!thinkingEnabled)} title="深度思考模式" type="button">
-                  <BrainIcon />
-                  <span>思考</span>
-                  <small>{thinkingEnabled ? "ON" : "OFF"}</small>
-                </button>
+                <div className="composer-mode-toggles" aria-label="对话增强开关">
+                  <button
+                    aria-label={thinkingEnabled ? "关闭深度思考" : "开启深度思考"}
+                    aria-pressed={thinkingEnabled}
+                    className={`composer-mode-toggle is-thinking ${thinkingEnabled ? "is-active" : ""}`}
+                    data-tooltip={thinkingEnabled ? "关闭深度思考" : "开启深度思考"}
+                    onClick={() => setThinkingEnabled((value) => !value)}
+                    title="深度思考"
+                    type="button"
+                  >
+                    <BrainIcon />
+                    <span className="composer-button-label">深度思考</span>
+                  </button>
+                  <button
+                    aria-label={webSearchEnabled ? "关闭联网搜索" : "开启联网搜索"}
+                    aria-pressed={webSearchEnabled}
+                    className={`composer-mode-toggle is-search ${webSearchEnabled ? "is-active" : ""}`}
+                    data-tooltip={webSearchEnabled ? "关闭联网搜索" : "开启联网搜索"}
+                    onClick={toggleWebSearch}
+                    title="联网搜索"
+                    type="button"
+                  >
+                    <GlobeIcon />
+                    <span className="composer-button-label">联网搜索</span>
+                  </button>
+                </div>
               </div>
             </div>
             <div className="composer-right-tools">
               <div className="composer-toolbox-group" aria-label="Agent 工具箱">
                 <button
+                  aria-label="提示词"
                   className={`composer-tool-button ${utilityPanel === "prompt" ? "is-active" : ""}`}
                   data-tooltip="提示词"
                   onClick={() => setUtilityPanel((value) => value === "prompt" ? null : "prompt")}
@@ -2990,9 +4230,10 @@ function getRandomWord(prev?: string): string {
                   type="button"
                 >
                   <PromptIcon />
-                  <span>提示词</span>
+                  <span className="composer-button-label">提示词</span>
                 </button>
                 <button
+                  aria-label="技能"
                   className={`composer-tool-button ${utilityPanel === "skills" ? "is-active" : ""}`}
                   data-tooltip="Skills"
                   onClick={() => setUtilityPanel((value) => value === "skills" ? null : "skills")}
@@ -3000,14 +4241,14 @@ function getRandomWord(prev?: string): string {
                   type="button"
                 >
                   <AgentIcon />
-                  <span>技能</span>
+                  <span className="composer-button-label">技能</span>
                 </button>
               </div>
               <button
                 className={`composer-send ${sessionIsSending ? "is-stopping" : ""}`}
-                disabled={(!draft.trim() && !sessionIsSending) || isUploadingAttachments}
+                disabled={(!canSendMessage && !sessionIsSending) || isUploadingAttachments}
                 onClick={() => sessionIsSending ? handleCancelSend(paneSessionId) : void handleSend()}
-                title={sessionIsSending ? "停止生成 (Esc)" : "发送"}
+                title={sendButtonTitle}
                 type="button"
               >
                 {sessionIsSending ? <StopIcon /> : <SendIcon />}
@@ -3041,8 +4282,8 @@ function getRandomWord(prev?: string): string {
           <div className="attachment-drop-overlay">
             <div>
               <PaperclipIcon />
-              <strong>释放以上传到当前对话</strong>
-              <span>图片、PDF 和其他文件会作为会话临时附件保存</span>
+              <strong>释放以添加到当前对话</strong>
+              <span>图片随本条消息发送，文本和 PDF 作为会话临时附件处理。</span>
             </div>
           </div>
         ) : null}
@@ -3112,7 +4353,7 @@ function getRandomWord(prev?: string): string {
             <button
               className={`icon-button ${utilityPanel === "workspace" ? "is-active" : ""}`}
               onClick={() => setUtilityPanel((value) => value === "workspace" ? null : "workspace")}
-              title={utilityPanel === "workspace" ? "关闭项目文件" : "项目文件"}
+              title={utilityPanel === "workspace" ? (activeWorkspace?.workspace_kind === "user" ? "关闭个人文件" : "关闭项目文件") : (activeWorkspace?.workspace_kind === "user" ? "个人文件" : "项目文件")}
               type="button"
             >
               <WorkspaceIcon />
@@ -3138,6 +4379,7 @@ function getRandomWord(prev?: string): string {
 
   function handleSelectSkillFromSidePanel(skill: SkillResponse) {
     setSelectedSkill(skill);
+    setSelectedBuiltinCommand(null);
     if (mode === "chat" && skill.outputs.length > 0) {
       setMode("agent");
     }
@@ -3145,9 +4387,28 @@ function getRandomWord(prev?: string): string {
     window.requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
+  function renderUtilityResizeHandle(onMouseDown: (event: MouseEvent<HTMLDivElement>) => void, label: string) {
+    return (
+      <div
+        aria-label={label}
+        aria-orientation="vertical"
+        className="utility-resize-handle"
+        onMouseDown={onMouseDown}
+        role="separator"
+        title={label}
+      />
+    );
+  }
+
   function renderSkillsSidePanel() {
     return (
-      <aside className="utility-side-pane" aria-label="Skills 面板">
+      <aside
+        className={`utility-side-pane auxiliary-side-pane ${auxiliaryPanelResizing ? "is-resizing" : ""}`}
+        aria-label="Skills 面板"
+        ref={auxiliaryPanelRef}
+        style={{ flexBasis: auxiliaryPanelWidth, maxWidth: auxiliaryPanelMaxWidth(), width: auxiliaryPanelWidth }}
+      >
+        {renderUtilityResizeHandle(handleAuxiliaryPanelResizeStart, "调整 Skills 面板宽度")}
         <header className="utility-side-header">
           <div>
             <h2>Skills</h2>
@@ -3185,7 +4446,13 @@ function getRandomWord(prev?: string): string {
   function renderSourceSidePanel() {
     const preview = sourcePreview;
     return (
-      <aside className="utility-side-pane source-side-pane" aria-label="引用来源预览">
+      <aside
+        className={`utility-side-pane auxiliary-side-pane source-side-pane ${auxiliaryPanelResizing ? "is-resizing" : ""}`}
+        aria-label="引用来源预览"
+        ref={auxiliaryPanelRef}
+        style={{ flexBasis: auxiliaryPanelWidth, maxWidth: auxiliaryPanelMaxWidth(), width: auxiliaryPanelWidth }}
+      >
+        {renderUtilityResizeHandle(handleAuxiliaryPanelResizeStart, "调整引用来源面板宽度")}
         <header className="utility-side-header">
           <div>
             <h2>引用来源</h2>
@@ -3222,30 +4489,53 @@ function getRandomWord(prev?: string): string {
   function renderUtilityPanel() {
     if (utilityPanel === "workspace") {
       return (
-        <aside className="utility-side-pane workspace-files-side-pane" aria-label="项目文件常驻面板">
+        <aside
+          className={`utility-side-pane workspace-files-side-pane ${workspacePanelResizing ? "is-resizing" : ""}`}
+          aria-label={activeWorkspace?.workspace_kind === "user" ? "个人文件面板" : "项目文件常驻面板"}
+          ref={workspacePanelRef}
+          style={{ flexBasis: workspacePanelWidth, maxWidth: workspacePanelMaxWidth(), width: workspacePanelWidth }}
+        >
+          {renderUtilityResizeHandle(handleWorkspacePanelResizeStart, activeWorkspace?.workspace_kind === "user" ? "调整个人文件面板宽度" : "调整项目文件面板宽度")}
           <header className="utility-side-header">
             <div>
-              <h2>项目文件</h2>
-              <p>当前工作区常驻视图</p>
+              <h2>{activeWorkspace?.workspace_kind === "user" ? "个人文件" : "项目文件"}</h2>
+              <p>{activeWorkspace?.workspace_kind === "user" ? "用户自定义文件夹" : "当前工作区常驻视图"}</p>
             </div>
             <button className="prompt-panel-close" onClick={() => setUtilityPanel(null)} type="button">×</button>
           </header>
-          <WorkspaceFilePanel apiOptions={apiOptions} workspaceId={activeWorkspaceId} workspaceName={activeWorkspace?.name} />
+          <WorkspaceFilePanel
+            apiOptions={apiOptions}
+            onPreviewOpen={handleWorkspaceFilePreviewOpen}
+            workspaceId={activeWorkspaceId}
+            workspaceName={activeWorkspace?.name}
+            workspaceKind={activeWorkspace?.workspace_kind}
+            canIngestKnowledge={Boolean(activeWorkspace && activeWorkspace.workspace_kind !== "user" && activeWorkspace.can_rename)}
+            defaultPath=""
+            onReferenceFile={handleReferenceWorkspaceFile}
+          />
         </aside>
       );
     }
     if (utilityPanel === "prompt") {
       return (
-        <PromptPanel
-          embedded
-          selectedPromptId={selectedPromptId}
-          companyPrompts={companyPrompts}
-          userPrompts={userPrompts}
-          onSelect={handleSelectPrompt}
-          onCreateUserPrompt={handleCreateUserPrompt}
-          onDeleteUserPrompt={handleDeleteUserPrompt}
-          onClose={() => setUtilityPanel(null)}
-        />
+        <aside
+          className={`utility-side-pane auxiliary-side-pane prompt-utility-side-pane ${auxiliaryPanelResizing ? "is-resizing" : ""}`}
+          aria-label="提示词面板"
+          ref={auxiliaryPanelRef}
+          style={{ flexBasis: auxiliaryPanelWidth, maxWidth: auxiliaryPanelMaxWidth(), width: auxiliaryPanelWidth }}
+        >
+          {renderUtilityResizeHandle(handleAuxiliaryPanelResizeStart, "调整提示词面板宽度")}
+          <PromptPanel
+            embedded
+            selectedPromptId={selectedPromptId}
+            companyPrompts={companyPrompts}
+            userPrompts={userPrompts}
+            onSelect={handleSelectPrompt}
+            onCreateUserPrompt={handleCreateUserPrompt}
+            onDeleteUserPrompt={handleDeleteUserPrompt}
+            onClose={() => setUtilityPanel(null)}
+          />
+        </aside>
       );
     }
     if (utilityPanel === "skills") {
@@ -3393,6 +4683,8 @@ function getRandomWord(prev?: string): string {
     const speed = formatUpdateSpeed(updateProgress?.bytesPerSecond ?? 0);
     const title = updateStep === "ready"
       ? "更新已就绪"
+      : updateStep === "installing"
+        ? "正在安装更新"
       : updateStep === "downloading"
         ? "正在下载更新"
         : updateStep === "failed"
@@ -3402,6 +4694,8 @@ function getRandomWord(prev?: string): string {
             : "发现新版本";
     const description = updateStep === "ready"
       ? `v${availableUpdate.version} 已下载完成，重启应用即可完成更新。`
+      : updateStep === "installing"
+        ? "校验完成，正在静默安装更新。Project_R 将自动退出，安装器替换当前版本后会自动重启应用。"
       : updateStep === "downloading"
         ? `正在下载 v${availableUpdate.version}...`
         : updateStep === "failed"
@@ -3410,7 +4704,7 @@ function getRandomWord(prev?: string): string {
 
     return (
       <div className="update-dialog-backdrop" onClick={() => {
-        if (!availableUpdate.is_force_update && updateStep !== "downloading") setUpdateDialogOpen(false);
+        if (!availableUpdate.is_force_update && updateStep !== "downloading" && updateStep !== "installing") setUpdateDialogOpen(false);
       }}>
         <section className="update-dialog" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label={title}>
           <header className="update-dialog-header">
@@ -3427,14 +4721,14 @@ function getRandomWord(prev?: string): string {
             </div>
           ) : null}
 
-          {updateStep === "downloading" ? (
+          {updateStep === "downloading" || updateStep === "installing" ? (
             <div className="update-download-panel">
               <div className="update-progress-track">
                 <span style={{ width: `${progressPercent}%` }} />
               </div>
               <div className="update-progress-meta">
-                <span>{formatUpdateBytes(receivedBytes)} / {formatUpdateBytes(totalBytes)}</span>
-                <span>{speed || "校验中"}</span>
+                <span>{updateStep === "installing" ? "安装中" : `${formatUpdateBytes(receivedBytes)} / ${formatUpdateBytes(totalBytes)}`}</span>
+                <span>{updateStep === "installing" ? "安装完成后自动重启" : speed || "校验中"}</span>
               </div>
             </div>
           ) : null}
@@ -3451,16 +4745,7 @@ function getRandomWord(prev?: string): string {
               <button className="btn-secondary" onClick={() => setUpdateDialogOpen(false)} type="button">稍后</button>
             ) : null}
             {updateStep === "available" ? (
-              <button className="btn-primary" onClick={() => void startClientUpdateDownload()} type="button">下载更新</button>
-            ) : null}
-            {updateStep === "downloading" && !availableUpdate.is_force_update ? (
-              <button className="btn-secondary" onClick={() => setUpdateDialogOpen(false)} type="button">后台下载</button>
-            ) : null}
-            {updateStep === "ready" && !availableUpdate.is_force_update ? (
-              <button className="btn-secondary" onClick={() => setUpdateDialogOpen(false)} type="button">稍后重启</button>
-            ) : null}
-            {updateStep === "ready" ? (
-              <button className="btn-primary" onClick={() => void installClientUpdate()} type="button">立即重启更新</button>
+              <button className="btn-primary" onClick={() => void startClientUpdateDownload()} type="button">下载并安装</button>
             ) : null}
             {updateStep === "failed" && availableUpdate.is_force_update ? (
               <button className="btn-primary" onClick={() => void window.projectR?.window?.close()} type="button">退出软件</button>
@@ -3478,7 +4763,11 @@ function getRandomWord(prev?: string): string {
 
   return (
     <div className="shell">
-      <aside className="chat-sidebar">
+      <aside
+        className={`chat-sidebar ${sidebarResizing ? "is-resizing" : ""}`}
+        ref={sidebarRef}
+        style={{ width: sidebarWidth }}
+      >
         <div className="sidebar-top">
           <div className="sidebar-brand">
             <span className="sidebar-brand-mark">R</span>
@@ -3497,7 +4786,11 @@ function getRandomWord(prev?: string): string {
             </button>
           </div>
 
-          <WorkspaceSelector apiOptions={apiOptions} onWorkspaceChanged={handleWorkspaceChanged} />
+          <WorkspaceSelector
+            apiOptions={apiOptions}
+            canCreateProject={currentUser?.role === "admin"}
+            onWorkspaceChanged={handleWorkspaceChanged}
+          />
 
           <div className="sidebar-command-row">
             <button className="new-chat-button" onClick={handleCreateSession} type="button">
@@ -3575,9 +4868,9 @@ function getRandomWord(prev?: string): string {
         </div>
 
         <div className="sidebar-user">
-          <span className={`sidebar-user-avatar ${!currentUser?.avatar ? "is-text" : ""}`}>
-            {currentUser?.avatar?.startsWith("http") || currentUser?.avatar?.startsWith("data:") ? (
-              <img src={currentUser.avatar} alt="avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          <span className={`sidebar-user-avatar ${!resolveAvatarUrl(serverUrl, currentUser?.avatar) && !currentUser?.avatar ? "is-text" : ""}`}>
+            {resolveAvatarUrl(serverUrl, currentUser?.avatar) ? (
+              <img src={resolveAvatarUrl(serverUrl, currentUser?.avatar)} alt="avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
             ) : (
               currentUser?.avatar || getInitials(currentUser?.nickname)
             )}
@@ -3604,6 +4897,14 @@ function getRandomWord(prev?: string): string {
             <button className="icon-button" onClick={handleLogout} title="登出" type="button"><LogoutIcon /></button>
           </div>
         </div>
+        <div
+          aria-label="调整功能栏宽度"
+          aria-orientation="vertical"
+          className="sidebar-resize-handle"
+          onMouseDown={handleSidebarResizeStart}
+          role="separator"
+          title="拖动调整功能栏宽度"
+        />
       </aside>
 
       {notificationPanelOpen ? renderNotificationPanel() : null}
@@ -3619,6 +4920,7 @@ function getRandomWord(prev?: string): string {
           onOpenScratch={handleOpenScratch}
         />
         {error ? <p className="chat-error">{error}</p> : null}
+        {actionNotice ? <p className="chat-notice">{actionNotice}</p> : null}
         {deletedMessageUndo ? (
           <div className="notification-toast message-undo-toast">
             <div>
@@ -3851,6 +5153,7 @@ function getRandomWord(prev?: string): string {
         initialAdminTab={settingsInitialAdminTab ?? undefined}
         initialSection={settingsInitialAdminTab ? "admin" : undefined}
         isOpen={showSettings}
+        onArchiveRestored={handleArchiveRestored}
         onClose={() => {
           setShowSettings(false);
           setSettingsInitialAdminTab(null);

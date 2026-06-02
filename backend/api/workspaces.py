@@ -8,11 +8,30 @@ from pathlib import Path
 import shutil
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from api.agent_models import AgentRunResponse
 from api.auth import get_current_user
-from core.gbrain import GBrainAdapter
+from api.time_models import UTCDateTimeModel
+from core.time_utils import serialize_datetime_utc
+from core.agent_events import add_agent_event, create_agent_run, finish_agent_run, serialize_agent_run
+from core.gbrain import (
+    GBrainAdapter,
+    customer_source_id_for_workspace,
+    customer_source_paths_for_workspace,
+    project_source_id_for_workspace,
+    project_source_paths_for_workspace,
+)
+from core.gbrain_customer_sources import compile_customer_workspace_sources
+from core.gbrain_graph import (
+    apply_entity_merge_candidate_action,
+    build_entity_merge_candidate_preview,
+    build_entity_merge_candidates,
+    build_source_graph,
+)
 from core.gbrain_project_ingest import compile_project_workspace_sources
 from core.notification_service import (
     notify_user,
@@ -21,6 +40,7 @@ from core.notification_service import (
 )
 from core.workspace_files import (
     DEFAULT_UNFILED_DIR,
+    DEFAULT_CUSTOMER_WORKSPACE_DIRS,
     DEFAULT_USER_WORKSPACE_DIRS,
     DEFAULT_WORKSPACE_DIRS,
     MAX_WORKSPACE_ADMIN_UPLOAD_BYTES,
@@ -34,13 +54,15 @@ from core.workspace_files import (
     resolve_workspace_child as _resolve_workspace_child,
     safe_name as _safe_name,
     safe_relative_path as _safe_relative_path,
+    TRASH_DIRNAME,
     trash_target as _trash_target,
     upload_limit_for,
 )
 from models import SessionLocal, get_db
+from models.agent_run import AgentRun
 from models.audit_log import AuditLog
 from models.attachment import SessionAttachment
-from models.workspace import Workspace, WorkspaceMember, WorkspaceFile
+from models.workspace import Workspace, WorkspaceMember, WorkspaceGroupAccess, WorkspaceFile
 from models.workspace_ingest_job import WorkspaceIngestJob
 from models.user import User
 
@@ -50,21 +72,29 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 WORKSPACES_ROOT = BASE_DIR / "workspace_data"
 PROJECT_ROOT_NAME = "project"
 USER_ROOT_NAME = "user"
+CUSTOMER_ROOT_NAME = "customer"
 PROJECT_BRANDS = ("AURA", "BFI", "SPECWISE", "SYNOVA")
+CUSTOMER_BRAND = "CUSTOMER"
+
+
+def _normalize_group_name(value: str | None) -> str:
+    return (value or "").strip()
 
 
 class CreateWorkspaceRequest(BaseModel):
     name: str
     description: str = ""
     brand: str = "BFI"
+    workspace_kind: str = "project"
 
 
 class UpdateWorkspaceRequest(BaseModel):
     name: str | None = None
     description: str | None = None
+    is_hidden: bool | None = None
 
 
-class WorkspaceResponse(BaseModel):
+class WorkspaceResponse(UTCDateTimeModel):
     id: int
     name: str
     slug: str
@@ -75,6 +105,7 @@ class WorkspaceResponse(BaseModel):
     workspace_kind: str = "project"
     is_default: bool = False
     is_archived: bool
+    is_hidden: bool = False
     can_rename: bool = True
     can_delete: bool = True
     created_at: datetime
@@ -87,9 +118,10 @@ class WorkspaceResponse(BaseModel):
 class WorkspaceDetailResponse(WorkspaceResponse):
     storage_path: str
     members: list["MemberResponse"]
+    access_groups: list[str] = Field(default_factory=list)
 
 
-class WorkspaceFileItemResponse(BaseModel):
+class WorkspaceFileItemResponse(UTCDateTimeModel):
     id: int | None = None
     name: str
     path: str
@@ -110,6 +142,44 @@ class WorkspaceFilesResponse(BaseModel):
     workspace_id: int
     root_name: str
     items: list[WorkspaceFileItemResponse]
+
+
+class WorkspaceKnowledgeGraphResponse(BaseModel):
+    ok: bool
+    workspace_id: int
+    workspace_name: str
+    workspace_kind: str
+    source_id: str
+    source_scope: str
+    intelligence_kind: str
+    derived_path: str | None = None
+    focus: str | None = None
+    entity_type: str | None = None
+    nodes: list[dict]
+    edges: list[dict]
+    events: list[dict]
+    profile_cards: list[dict] = Field(default_factory=list)
+    stats: dict | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class WorkspaceEntityMergeCandidatesResponse(BaseModel):
+    ok: bool
+    workspace_id: int
+    workspace_name: str
+    workspace_kind: str
+    source_id: str
+    source_scope: str
+    derived_path: str | None = None
+    focus: str | None = None
+    candidates: list[dict]
+    stats: dict | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class WorkspaceEntityMergeActionRequest(BaseModel):
+    candidate_id: str
+    action: str
 
 
 class UploadWorkspaceFileRequest(BaseModel):
@@ -136,6 +206,12 @@ class MoveWorkspacePathRequest(BaseModel):
     conflict_strategy: str = "keep_both"
 
 
+class CopyWorkspacePathRequest(BaseModel):
+    path: str
+    target_directory: str = ""
+    conflict_strategy: str = "keep_both"
+
+
 class SaveAttachmentToWorkspaceRequest(BaseModel):
     session_id: int
     attachment_id: int
@@ -147,11 +223,19 @@ class WorkspaceFileMutationResponse(BaseModel):
     path: str
     file_id: int | None = None
     rag_status: str | None = None
+    agent_run: AgentRunResponse | None = None
 
 
 class WorkspaceMultiUploadResponse(BaseModel):
     ok: bool
     files: list[WorkspaceFileMutationResponse]
+    agent_run: AgentRunResponse | None = None
+
+
+class WorkspaceTrashClearResponse(BaseModel):
+    ok: bool
+    deleted_files: int
+    agent_run: AgentRunResponse | None = None
 
 
 class RestoreWorkspaceFileRequest(BaseModel):
@@ -172,11 +256,13 @@ class WorkspaceKnowledgeRefreshResponse(BaseModel):
     gbrain_source_id: str | None = None
     gbrain_status: str | None = None
     gbrain_sync_status: str | None = None
+    gbrain_think_status: str | None = None
     gbrain_error: str | None = None
     manifest: dict | None = None
+    agent_run: AgentRunResponse | None = None
 
 
-class WorkspaceKnowledgeIngestJobResponse(BaseModel):
+class WorkspaceKnowledgeIngestJobResponse(UTCDateTimeModel):
     id: int
     workspace_id: int
     requested_by: int
@@ -186,14 +272,49 @@ class WorkspaceKnowledgeIngestJobResponse(BaseModel):
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    agent_run: AgentRunResponse | None = None
 
 
-class MemberResponse(BaseModel):
+class MemberResponse(UTCDateTimeModel):
     user_id: int
     username: str
     nickname: str
     role: str
     joined_at: datetime
+
+
+class UpsertWorkspaceMemberRequest(BaseModel):
+    user_id: int | None = None
+    username: str | None = None
+    role: str = "member"
+
+
+class UpdateWorkspaceMemberRoleRequest(BaseModel):
+    role: str
+
+
+class UpsertWorkspaceGroupRequest(BaseModel):
+    group_name: str
+
+
+class WorkspaceGroupResponse(BaseModel):
+    group_name: str
+
+
+class WorkspaceMemberCandidateResponse(BaseModel):
+    user_id: int
+    username: str
+    nickname: str
+    work_group: str = ""
+    role: str
+    is_member: bool = False
+    member_role: str | None = None
+
+
+class WorkspaceGroupCandidateResponse(BaseModel):
+    group_name: str
+    source: str = "user"
+    is_authorized: bool = False
 
 
 def _slugify(name: str) -> str:
@@ -212,19 +333,45 @@ def _normalize_brand(brand: str) -> str:
     return normalized
 
 
+def _normalize_workspace_kind(kind: str | None, brand: str | None = None) -> str:
+    normalized = (kind or "").strip().lower()
+    if (brand or "").strip().upper() == CUSTOMER_BRAND:
+        normalized = "customer"
+    if not normalized:
+        normalized = "project"
+    if normalized not in {"project", "customer"}:
+        raise HTTPException(status_code=400, detail="工作区类型不合法")
+    return normalized
+
+
 def _workspace_dirs(workspace: Workspace) -> tuple[str, ...]:
-    return DEFAULT_USER_WORKSPACE_DIRS if workspace.workspace_kind == "user" else DEFAULT_WORKSPACE_DIRS
+    if workspace.workspace_kind == "project":
+        return DEFAULT_WORKSPACE_DIRS
+    if workspace.workspace_kind == "customer":
+        return DEFAULT_CUSTOMER_WORKSPACE_DIRS
+    return ()
+
+
+def _is_trash_relative_path(path: Path) -> bool:
+    return bool(path.parts) and path.parts[0] == TRASH_DIRNAME
+
+
+def _ensure_not_trash_path(path: Path) -> None:
+    if _is_trash_relative_path(path):
+        raise HTTPException(status_code=400, detail="回收站不能作为普通文件夹操作")
 
 
 def _target_storage_path(workspace: Workspace, owner: User | None = None) -> Path:
     if workspace.workspace_kind == "user":
         username = _safe_username(owner.username if owner else workspace.slug.removeprefix("user-"))
         return (WORKSPACES_ROOT / USER_ROOT_NAME / username).resolve()
+    if workspace.workspace_kind == "customer":
+        return (WORKSPACES_ROOT / CUSTOMER_ROOT_NAME / workspace.slug).resolve()
     brand = _normalize_brand(workspace.brand or "BFI")
     return (WORKSPACES_ROOT / PROJECT_ROOT_NAME / brand / workspace.slug).resolve()
 
 
-def _ensure_storage_path(workspace: Workspace) -> str:
+def _ensure_storage_path(workspace: Workspace, *, create_user_scaffold: bool = False) -> str:
     root = WORKSPACES_ROOT.resolve()
     target = _target_storage_path(workspace)
     path = Path(workspace.storage_path) if workspace.storage_path else target
@@ -240,22 +387,36 @@ def _ensure_storage_path(workspace: Workspace) -> str:
         and not resolved.is_relative_to((WORKSPACES_ROOT / PROJECT_ROOT_NAME).resolve())
     ):
         path = target
+    if workspace.workspace_kind == "customer" and not path.resolve().is_relative_to((WORKSPACES_ROOT / CUSTOMER_ROOT_NAME).resolve()):
+        path = target
     if workspace.workspace_kind == "user" and not path.resolve().is_relative_to((WORKSPACES_ROOT / USER_ROOT_NAME).resolve()):
         path = target
     path.mkdir(parents=True, exist_ok=True)
     for dirname in _workspace_dirs(workspace):
-        (path / dirname).mkdir(exist_ok=True)
+        (path / dirname).mkdir(parents=True, exist_ok=True)
+    if workspace.workspace_kind == "user" and create_user_scaffold:
+        for dirname in DEFAULT_USER_WORKSPACE_DIRS:
+            (path / dirname).mkdir(parents=True, exist_ok=True)
+    (path / TRASH_DIRNAME).mkdir(exist_ok=True)
     return str(path)
 
 
-def _candidate_storage_path(slug: str, brand: str) -> Path:
+def _candidate_storage_path(slug: str, brand: str, workspace_kind: str = "project") -> Path:
+    if workspace_kind == "customer":
+        return (WORKSPACES_ROOT / CUSTOMER_ROOT_NAME / slug).resolve()
     return (WORKSPACES_ROOT / PROJECT_ROOT_NAME / brand / slug).resolve()
 
 
-def _workspace_response(db: Session, workspace: Workspace, member_count: int | None = None) -> WorkspaceResponse:
+def _workspace_response(
+    db: Session,
+    workspace: Workspace,
+    member_count: int | None = None,
+    user: User | None = None,
+) -> WorkspaceResponse:
     count = member_count
     if count is None:
         count = db.query(WorkspaceMember).filter(WorkspaceMember.workspace_id == workspace.id).count()
+    can_manage = bool(user and _is_workspace_admin(db, user, workspace.id))
     return WorkspaceResponse(
         id=workspace.id,
         name=workspace.name,
@@ -267,10 +428,189 @@ def _workspace_response(db: Session, workspace: Workspace, member_count: int | N
         workspace_kind=workspace.workspace_kind,
         is_default=workspace.is_default,
         is_archived=workspace.is_archived,
-        can_rename=not workspace.is_default,
-        can_delete=not workspace.is_default,
+        is_hidden=workspace.is_hidden,
+        can_rename=not workspace.is_default and can_manage,
+        can_delete=not workspace.is_default and can_manage,
         created_at=workspace.created_at,
         updated_at=workspace.updated_at,
+    )
+
+
+def _serialize_workspace_member(member: WorkspaceMember, user: User) -> MemberResponse:
+    return MemberResponse(
+        user_id=user.id,
+        username=user.username,
+        nickname=user.nickname,
+        role=member.role,
+        joined_at=member.joined_at,
+    )
+
+
+def _validate_workspace_member_role(role: str) -> str:
+    normalized = role.strip().lower()
+    if normalized not in {"admin", "member"}:
+        raise HTTPException(status_code=400, detail="工作区成员角色不合法")
+    return normalized
+
+
+def _workspace_membership(db: Session, user_id: int, workspace_id: int) -> WorkspaceMember | None:
+    return (
+        db.query(WorkspaceMember)
+        .filter(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.user_id == user_id,
+        )
+        .first()
+    )
+
+
+def _workspace_access_groups(db: Session, workspace_id: int) -> list[str]:
+    return [
+        row.group_name
+        for row in db.query(WorkspaceGroupAccess)
+        .filter(WorkspaceGroupAccess.workspace_id == workspace_id)
+        .order_by(WorkspaceGroupAccess.group_name.asc())
+        .all()
+    ]
+
+
+def _has_workspace_group_access(db: Session, user: User, workspace_id: int) -> bool:
+    group_name = _normalize_group_name(getattr(user, "work_group", ""))
+    if not group_name:
+        return False
+    return bool(
+        db.query(WorkspaceGroupAccess)
+        .filter(
+            WorkspaceGroupAccess.workspace_id == workspace_id,
+            WorkspaceGroupAccess.group_name == group_name,
+        )
+        .first()
+    )
+
+
+def _can_open_workspace(db: Session, user: User, workspace: Workspace) -> bool:
+    if workspace.workspace_kind == "user":
+        return _workspace_membership(db, user.id, workspace.id) is not None
+    if user.role == "admin":
+        return True
+    if workspace.workspace_kind == "customer":
+        return _workspace_membership(db, user.id, workspace.id) is not None or _has_workspace_group_access(db, user, workspace.id)
+    if not workspace.is_hidden:
+        return True
+    return _workspace_membership(db, user.id, workspace.id) is not None or _has_workspace_group_access(db, user, workspace.id)
+
+
+def _ensure_can_open_workspace(db: Session, user: User, workspace: Workspace) -> None:
+    if not _can_open_workspace(db, user, workspace):
+        raise HTTPException(status_code=403, detail="无权访问该工作区")
+
+
+def _workspace_gbrain_graph_scope(workspace: Workspace) -> dict[str, object]:
+    if workspace.workspace_kind == "project":
+        paths = project_source_paths_for_workspace(workspace)
+        return {
+            "source_id": project_source_id_for_workspace(workspace),
+            "derived_path": paths["derived"],
+            "source_scope": "project",
+            "intelligence_kind": "project_event_graph",
+        }
+    if workspace.workspace_kind == "customer":
+        paths = customer_source_paths_for_workspace(workspace)
+        return {
+            "source_id": customer_source_id_for_workspace(workspace),
+            "derived_path": paths["derived"],
+            "source_scope": "customer",
+            "intelligence_kind": "customer_intelligence",
+        }
+    raise HTTPException(status_code=400, detail="当前工作区不支持 GBrain 图谱")
+
+
+def _workspace_profile_cards(graph: dict[str, object]) -> list[dict[str, object]]:
+    nodes = [node for node in graph.get("nodes", []) if isinstance(node, dict)]
+    edges = [edge for edge in graph.get("edges", []) if isinstance(edge, dict)]
+    events = [event for event in graph.get("events", []) if isinstance(event, dict)]
+    relation_count: dict[str, int] = {}
+    event_count: dict[str, int] = {}
+    for edge in edges:
+        for key in ("from", "to"):
+            node_id = str(edge.get(key) or "")
+            if node_id:
+                relation_count[node_id] = relation_count.get(node_id, 0) + 1
+    for event in events:
+        node_id = str(event.get("entity_id") or "")
+        if node_id:
+            event_count[node_id] = event_count.get(node_id, 0) + 1
+
+    def card_priority(node: dict[str, object]) -> tuple[int, int, str]:
+        node_id = str(node.get("id") or "")
+        kind = str(node.get("entity_type") or "").lower()
+        type_score = 0
+        if any(token in kind for token in ("client", "customer", "contact", "person", "company")):
+            type_score = 3
+        elif "project" in kind:
+            type_score = 2
+        elif "event" in kind:
+            type_score = 1
+        return (type_score, relation_count.get(node_id, 0) + event_count.get(node_id, 0), str(node.get("title") or "").lower())
+
+    cards: list[dict[str, object]] = []
+    for node in sorted(nodes, key=card_priority, reverse=True)[:8]:
+        node_id = str(node.get("id") or "")
+        cards.append(
+            {
+                "id": node_id,
+                "title": str(node.get("title") or ""),
+                "entity_type": str(node.get("entity_type") or "page"),
+                "relation_count": relation_count.get(node_id, 0),
+                "event_count": event_count.get(node_id, 0),
+                "citation": node.get("citation") if isinstance(node.get("citation"), dict) else None,
+            }
+        )
+    return cards
+
+
+def _is_workspace_admin(db: Session, user: User, workspace_id: int) -> bool:
+    member = _workspace_membership(db, user.id, workspace_id)
+    if member and member.role == "admin":
+        return True
+    if user.role == "admin":
+        workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+        return bool(workspace and workspace.workspace_kind != "user")
+    return False
+
+
+def _ensure_workspace_admin(db: Session, user: User, workspace_id: int) -> WorkspaceMember:
+    member = _ensure_member(db, user.id, workspace_id)
+    if member.role != "admin" and user.role != "admin":
+        raise HTTPException(status_code=403, detail="仅工作区管理员可管理成员")
+    return member
+
+
+def _ensure_mutable_membership_workspace(workspace: Workspace) -> None:
+    if workspace.workspace_kind == "user":
+        raise HTTPException(status_code=400, detail="个人工作台不支持邀请成员")
+
+
+def _resolve_member_target_user(db: Session, req: UpsertWorkspaceMemberRequest) -> User:
+    target_user: User | None = None
+    if req.user_id is not None:
+        target_user = db.query(User).filter(User.id == req.user_id).first()
+    elif req.username and req.username.strip():
+        target_user = db.query(User).filter(User.username == req.username.strip()).first()
+    else:
+        raise HTTPException(status_code=400, detail="需要提供用户 ID 或用户名")
+    if not target_user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if not target_user.is_active:
+        raise HTTPException(status_code=400, detail="用户已被禁用")
+    return target_user
+
+
+def _local_workspace_admin_count(db: Session, workspace_id: int) -> int:
+    return (
+        db.query(WorkspaceMember)
+        .filter(WorkspaceMember.workspace_id == workspace_id, WorkspaceMember.role == "admin")
+        .count()
     )
 
 
@@ -286,9 +626,15 @@ def ensure_default_workspace(db: Session, user: User) -> Workspace:
         .first()
     )
     if existing:
+        expected_name = f"{user.username}的工作台"
+        if existing.name.endswith(" 的私人空间") or existing.name.endswith("的私人空间"):
+            existing.name = expected_name
+            existing.description = "用户默认个人工作台"
         storage_path = _ensure_storage_path(existing)
         if existing.storage_path != storage_path:
             existing.storage_path = storage_path
+            db.commit()
+        elif existing.name == expected_name:
             db.commit()
         return existing
 
@@ -299,9 +645,9 @@ def ensure_default_workspace(db: Session, user: User) -> Workspace:
         slug = f"{slug_base}-{suffix}"
         suffix += 1
     workspace = Workspace(
-        name=f"{user.username} 的私人空间",
+        name=f"{user.username}的工作台",
         slug=slug,
-        description="用户默认工作区",
+        description="用户默认个人工作台",
         created_by=user.id,
         brand="",
         workspace_kind="user",
@@ -309,7 +655,7 @@ def ensure_default_workspace(db: Session, user: User) -> Workspace:
     )
     db.add(workspace)
     db.flush()
-    workspace.storage_path = _ensure_storage_path(workspace)
+    workspace.storage_path = _ensure_storage_path(workspace, create_user_scaffold=True)
     db.add(WorkspaceMember(workspace_id=workspace.id, user_id=user.id, role="admin"))
     db.commit()
     db.refresh(workspace)
@@ -387,6 +733,60 @@ def _write_workspace_audit(db: Session, user_id: int, action: str, detail: str, 
     db.add(AuditLog(user_id=user_id, action=action, detail=detail[:1000], success=success))
 
 
+def _write_workspace_file_agent_run(
+    db: Session,
+    *,
+    user_id: int,
+    workspace: Workspace,
+    source_type: str,
+    title: str,
+    path: str,
+    status: str = "completed",
+    detail: str = "",
+    result: dict | None = None,
+):
+    payload = {
+        "workspace_id": workspace.id,
+        "workspace_name": workspace.name,
+        "path": path,
+        **(result or {}),
+    }
+    run = create_agent_run(
+        db,
+        user_id=user_id,
+        workspace_id=workspace.id,
+        source_type=source_type,
+        source_id=str(path or workspace.id),
+        title=title,
+        status="running",
+    )
+    add_agent_event(
+        db,
+        run,
+        event_type="permission_check",
+        title="已校验项目权限",
+        detail=workspace.name,
+        status="completed",
+        payload={"workspace_id": workspace.id},
+    )
+    add_agent_event(
+        db,
+        run,
+        event_type="tool_call",
+        title=title,
+        detail=detail or path,
+        status=status,
+        payload=payload,
+    )
+    return finish_agent_run(
+        db,
+        run,
+        status=status,
+        result=payload,
+        error_message="" if status != "failed" else detail,
+    )
+
+
 def _raise_with_audit(
     db: Session,
     user_id: int,
@@ -407,7 +807,9 @@ def _mark_workspace_rag_pending(db: Session, workspace_id: int) -> None:
     ).update({"rag_status": "pending"}, synchronize_session=False)
 
 
-def _upload_limit_for(user: User, member: WorkspaceMember) -> tuple[int, str]:
+def _upload_limit_for(user: User, member: WorkspaceMember, workspace: Workspace | None = None) -> tuple[int, str]:
+    if workspace and workspace.workspace_kind == "user":
+        return MAX_WORKSPACE_UPLOAD_BYTES, f"个人工作台文件超过 {MAX_WORKSPACE_UPLOAD_MB}MB"
     return upload_limit_for(
         user,
         member,
@@ -433,6 +835,77 @@ def _sync_file_descendant_paths(db: Session, workspace_id: int, old_prefix: str,
         meta.updated_at = datetime.now(timezone.utc)
 
 
+def _create_copied_file_metadata(
+    db: Session,
+    *,
+    workspace_id: int,
+    source_rel_path: str,
+    target_file: Path,
+    root: Path,
+    user_id: int,
+) -> WorkspaceFile:
+    target_rel_path = target_file.relative_to(root).as_posix()
+    source_meta = (
+        db.query(WorkspaceFile)
+        .filter(
+            WorkspaceFile.workspace_id == workspace_id,
+            WorkspaceFile.relative_path == source_rel_path,
+            WorkspaceFile.deleted_at.is_(None),
+        )
+        .first()
+    )
+    existing_meta = (
+        db.query(WorkspaceFile)
+        .filter(
+            WorkspaceFile.workspace_id == workspace_id,
+            WorkspaceFile.relative_path == target_rel_path,
+            WorkspaceFile.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if existing_meta:
+        db.delete(existing_meta)
+        db.flush()
+    content_type = source_meta.content_type if source_meta else mimetypes.guess_type(target_file.name)[0] or "application/octet-stream"
+    now = datetime.now(timezone.utc)
+    meta = WorkspaceFile(
+        workspace_id=workspace_id,
+        uploaded_by=user_id,
+        relative_path=target_rel_path,
+        original_name=target_file.name,
+        content_type=content_type[:128],
+        size=target_file.stat().st_size,
+        rag_status="pending",
+        updated_at=now,
+    )
+    db.add(meta)
+    db.flush()
+    return meta
+
+
+def _copy_descendant_file_metadata(
+    db: Session,
+    *,
+    workspace_id: int,
+    source_dir: Path,
+    target_dir: Path,
+    root: Path,
+    user_id: int,
+) -> None:
+    for copied_path in sorted(target_dir.rglob("*")):
+        if not copied_path.is_file():
+            continue
+        source_rel = (source_dir / copied_path.relative_to(target_dir)).relative_to(root).as_posix()
+        _create_copied_file_metadata(
+            db,
+            workspace_id=workspace_id,
+            source_rel_path=source_rel,
+            target_file=copied_path,
+            root=root,
+            user_id=user_id,
+        )
+
+
 def _display_user_names(db: Session, user_ids: set[int]) -> dict[int, str]:
     if not user_ids:
         return {}
@@ -447,6 +920,7 @@ def _build_file_tree(
     uploader_names: dict[int, str],
     member: WorkspaceMember,
     user_id: int,
+    user_role: str,
     depth: int = 0,
     max_depth: int = 3,
 ) -> list[WorkspaceFileItemResponse]:
@@ -455,11 +929,28 @@ def _build_file_tree(
 
     items: list[WorkspaceFileItemResponse] = []
     for child in sorted(path.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
-        if child.name.startswith(".") or child.is_symlink():
+        if child.is_symlink():
+            continue
+        if child.name.startswith(".") and child.name != TRASH_DIRNAME:
             continue
         stat = child.stat()
         item_type = "directory" if child.is_dir() else "file"
         rel_path = child.relative_to(root).as_posix()
+        if rel_path == TRASH_DIRNAME:
+            items.append(
+                WorkspaceFileItemResponse(
+                    id=None,
+                    name=TRASH_DIRNAME,
+                    path=TRASH_DIRNAME,
+                    type="directory",
+                    size=None,
+                    updated_at=datetime.fromtimestamp(stat.st_mtime, timezone.utc),
+                    can_delete=False,
+                    can_restore=False,
+                    children=[],
+                )
+            )
+            continue
         meta = metadata_by_path.get(rel_path)
         items.append(
             WorkspaceFileItemResponse(
@@ -475,7 +966,7 @@ def _build_file_tree(
                 deleted_by=meta.deleted_by if meta else None,
                 rag_status=meta.rag_status if meta else ("not_indexed" if item_type == "file" else None),
                 can_delete=(
-                    item_type == "file" and _member_can_mutate_file(member, user_id, meta)
+                    item_type == "file" and _member_can_mutate_file(member, user_id, meta, user_role)
                 ) or (
                     item_type == "directory" and not _is_template_root(Path(rel_path))
                 ),
@@ -487,6 +978,7 @@ def _build_file_tree(
                     uploader_names,
                     member,
                     user_id,
+                    user_role,
                     depth + 1,
                     max_depth,
                 ) if child.is_dir() else [],
@@ -500,6 +992,7 @@ def _build_deleted_file_items(
     workspace_id: int,
     member: WorkspaceMember,
     user_id: int,
+    user_role: str,
 ) -> list[WorkspaceFileItemResponse]:
     files = (
         db.query(WorkspaceFile)
@@ -521,8 +1014,8 @@ def _build_deleted_file_items(
             deleted_at=item.deleted_at,
             deleted_by=item.deleted_by,
             rag_status=item.rag_status,
-            can_delete=_member_can_restore_file(member, user_id, item),
-            can_restore=_member_can_restore_file(member, user_id, item),
+            can_delete=_member_can_restore_file(member, user_id, item, user_role),
+            can_restore=True,
             children=[],
         )
         for item in files
@@ -578,29 +1071,34 @@ def create_workspace(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="仅系统管理员可新建工作区")
+
     name = req.name.strip()
     if not name:
-        raise HTTPException(status_code=400, detail="项目名称不能为空")
+        raise HTTPException(status_code=400, detail="工作区名称不能为空")
     if len(name) > 128:
-        raise HTTPException(status_code=400, detail="项目名称不能超过 128 个字符")
+        raise HTTPException(status_code=400, detail="工作区名称不能超过 128 个字符")
 
-    brand = _normalize_brand(req.brand)
+    workspace_kind = _normalize_workspace_kind(req.workspace_kind, req.brand)
+    brand = CUSTOMER_BRAND if workspace_kind == "customer" else _normalize_brand(req.brand)
     slug = _slugify(name)
     existing = db.query(Workspace).filter(Workspace.slug == slug).first()
     if existing:
-        raise HTTPException(status_code=409, detail="已存在同名项目，请选择已有项目或使用不同项目名称")
-    target_path = _candidate_storage_path(slug, brand)
+        raise HTTPException(status_code=409, detail="已存在同名工作区，请选择已有工作区或使用不同名称")
+    target_path = _candidate_storage_path(slug, brand, workspace_kind)
     root = WORKSPACES_ROOT.resolve()
     if not target_path.is_relative_to(root):
-        raise HTTPException(status_code=400, detail="项目目录不合法")
-    existing_folder = _find_existing_project_folder(brand, slug, name)
-    if existing_folder:
-        workspace = _register_existing_project_folder(db, user, brand, existing_folder, add_member=True)
-        if workspace:
-            return _workspace_response(db, workspace)
-        raise HTTPException(status_code=409, detail="后端已存在同名项目文件夹，请选择已有项目或更换项目名称")
+        raise HTTPException(status_code=400, detail="工作区目录不合法")
+    if workspace_kind == "project":
+        existing_folder = _find_existing_project_folder(brand, slug, name)
+        if existing_folder:
+            workspace = _register_existing_project_folder(db, user, brand, existing_folder, add_member=True)
+            if workspace:
+                return _workspace_response(db, workspace, user=user)
+            raise HTTPException(status_code=409, detail="后端已存在同名项目文件夹，请选择已有项目或更换项目名称")
     if target_path.exists():
-        raise HTTPException(status_code=409, detail="后端已存在同名项目文件夹，请选择已有项目或更换项目名称")
+        raise HTTPException(status_code=409, detail="后端已存在同名工作区文件夹，请选择已有工作区或更换名称")
 
     workspace = Workspace(
         name=name,
@@ -608,8 +1106,9 @@ def create_workspace(
         description=req.description.strip(),
         created_by=user.id,
         brand=brand,
-        workspace_kind="project",
+        workspace_kind=workspace_kind,
         is_default=False,
+        is_hidden=workspace_kind == "customer",
     )
     db.add(workspace)
     db.commit()
@@ -621,7 +1120,7 @@ def create_workspace(
     db.add(WorkspaceMember(workspace_id=workspace.id, user_id=user.id, role="admin"))
     db.commit()
 
-    return _workspace_response(db, workspace, member_count=1)
+    return _workspace_response(db, workspace, member_count=1, user=user)
 
 
 @router.get("", response_model=list[WorkspaceResponse])
@@ -630,18 +1129,33 @@ def list_workspaces(
     db: Session = Depends(get_db),
 ):
     ensure_default_workspace(db, user)
-    member_workspace_ids = (
-        db.query(WorkspaceMember.workspace_id)
-        .filter(WorkspaceMember.user_id == user.id)
-        .subquery()
-    )
-    workspaces = (
-        db.query(Workspace)
-        .filter(Workspace.id.in_(member_workspace_ids))
-        .order_by(Workspace.is_default.desc(), Workspace.updated_at.desc())
-        .all()
-    )
-    return [_workspace_response(db, w) for w in workspaces]
+    if user.role == "admin":
+        workspaces = (
+            db.query(Workspace)
+            .filter(or_(Workspace.workspace_kind != "user", Workspace.created_by == user.id))
+            .order_by(Workspace.is_default.desc(), Workspace.updated_at.desc())
+            .all()
+        )
+    else:
+        member_workspace_ids = select(WorkspaceMember.workspace_id).where(WorkspaceMember.user_id == user.id)
+        group_workspace_ids = select(WorkspaceGroupAccess.workspace_id).where(
+            WorkspaceGroupAccess.group_name == _normalize_group_name(user.work_group)
+        )
+        workspaces = (
+            db.query(Workspace)
+            .filter(
+                or_(
+                    Workspace.id.in_(member_workspace_ids),
+                    Workspace.workspace_kind == "project",
+                    Workspace.workspace_kind == "customer",
+                    Workspace.id.in_(group_workspace_ids),
+                )
+            )
+            .order_by(Workspace.is_default.desc(), Workspace.updated_at.desc())
+            .all()
+        )
+        workspaces = [w for w in workspaces if _can_open_workspace(db, user, w)]
+    return [_workspace_response(db, w, user=user) for w in workspaces]
 
 
 @router.get("/search")
@@ -653,18 +1167,32 @@ def search_workspaces(
 ):
     _sync_project_folders(db, user)
     query = q.strip()
-    normalized_brand = _normalize_brand(brand) if brand else None
+    raw_brand = (brand or "").strip().upper()
+    search_customer = raw_brand == CUSTOMER_BRAND
+    normalized_brand = _normalize_brand(raw_brand) if raw_brand and not search_customer else None
     pattern = f"%{query}%" if query else "%"
     workspace_query = (
         db.query(Workspace)
         .filter(
-            Workspace.workspace_kind == "project",
+            Workspace.workspace_kind == "customer" if search_customer else Workspace.workspace_kind.in_(("project", "customer")),
             Workspace.is_archived == False,
             Workspace.name.ilike(pattern) | Workspace.slug.ilike(pattern),
         )
     )
     if normalized_brand:
-        workspace_query = workspace_query.filter(Workspace.brand == normalized_brand)
+        workspace_query = workspace_query.filter(Workspace.workspace_kind == "project", Workspace.brand == normalized_brand)
+    if user.role != "admin":
+        member_workspace_ids = select(WorkspaceMember.workspace_id).where(WorkspaceMember.user_id == user.id)
+        group_workspace_ids = select(WorkspaceGroupAccess.workspace_id).where(
+            WorkspaceGroupAccess.group_name == _normalize_group_name(user.work_group)
+        )
+        workspace_query = workspace_query.filter(
+            or_(
+                (Workspace.workspace_kind == "project") & (Workspace.is_hidden == False),
+                Workspace.id.in_(member_workspace_ids),
+                Workspace.id.in_(group_workspace_ids),
+            )
+        )
     workspaces = workspace_query.order_by(
         Workspace.brand.asc(),
         Workspace.updated_at.desc(),
@@ -676,6 +1204,7 @@ def search_workspaces(
         .filter(WorkspaceMember.user_id == user.id)
         .all()
     }
+    manageable_ids = {w.id for w in workspaces if _is_workspace_admin(db, user, w.id)}
     return [
         {
             "id": w.id,
@@ -685,15 +1214,17 @@ def search_workspaces(
             "brand": w.brand,
             "workspace_kind": w.workspace_kind,
             "is_default": w.is_default,
+            "is_hidden": w.is_hidden,
             "member_count": db.query(WorkspaceMember)
             .filter(WorkspaceMember.workspace_id == w.id)
             .count(),
             "is_member": w.id in member_ids,
-            "can_rename": not w.is_default,
-            "can_delete": not w.is_default,
+            "can_open": _can_open_workspace(db, user, w),
+            "can_rename": not w.is_default and w.id in manageable_ids,
+            "can_delete": not w.is_default and w.id in manageable_ids,
             "is_archived": w.is_archived,
-            "created_at": w.created_at,
-            "updated_at": w.updated_at,
+            "created_at": serialize_datetime_utc(w.created_at),
+            "updated_at": serialize_datetime_utc(w.updated_at),
             "created_by": w.created_by,
         }
         for w in workspaces
@@ -710,7 +1241,9 @@ def get_workspace(
     if not workspace:
         raise HTTPException(status_code=404, detail="项目不存在")
 
-    _ensure_member(db, user.id, workspace_id)
+    if not _can_open_workspace(db, user, workspace):
+        raise HTTPException(status_code=403, detail="你无权访问该隐藏项目")
+    member = _ensure_member(db, user.id, workspace_id)
 
     members = (
         db.query(WorkspaceMember, User)
@@ -720,15 +1253,16 @@ def get_workspace(
     )
     member_list = [
         MemberResponse(
-            user_id=m.User.id,
-            username=m.User.username,
-            nickname=m.User.nickname,
+            user_id=member_user.id,
+            username=member_user.username,
+            nickname=member_user.nickname,
             role=wm.role,
             joined_at=wm.joined_at,
         )
-        for wm, m in members
+        for wm, member_user in members
     ]
 
+    can_manage = _is_workspace_admin(db, user, workspace.id)
     return WorkspaceDetailResponse(
         id=workspace.id,
         name=workspace.name,
@@ -740,10 +1274,12 @@ def get_workspace(
         workspace_kind=workspace.workspace_kind,
         is_default=workspace.is_default,
         is_archived=workspace.is_archived,
-        can_rename=not workspace.is_default,
-        can_delete=not workspace.is_default,
+        is_hidden=workspace.is_hidden,
+        can_rename=not workspace.is_default and can_manage,
+        can_delete=not workspace.is_default and can_manage,
         storage_path=workspace.storage_path,
         members=member_list,
+        access_groups=_workspace_access_groups(db, workspace.id),
         created_at=workspace.created_at,
         updated_at=workspace.updated_at,
     )
@@ -771,7 +1307,7 @@ def list_workspace_files(
         return WorkspaceFilesResponse(
             workspace_id=workspace.id,
             root_name=workspace.name,
-            items=_build_deleted_file_items(db, workspace.id, member, user.id),
+            items=_build_deleted_file_items(db, workspace.id, member, user.id, user.role),
         )
     metas = (
         db.query(WorkspaceFile)
@@ -783,8 +1319,40 @@ def list_workspace_files(
     return WorkspaceFilesResponse(
         workspace_id=workspace.id,
         root_name=workspace.name,
-        items=_build_file_tree(root, root, metadata_by_path, uploader_names, member, user.id),
+        items=_build_file_tree(root, root, metadata_by_path, uploader_names, member, user.id, user.role),
     )
+
+
+@router.get("/{workspace_id}/files/content")
+def get_workspace_file_content(
+    workspace_id: int,
+    path: str = Query(..., min_length=1),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    _ensure_member(db, user.id, workspace_id)
+    root = Path(_ensure_storage_path(workspace)).resolve()
+    rel = _safe_relative_path(path)
+    target = _resolve_workspace_child(root, rel)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="文件不存在")
+    rel_path = target.relative_to(root).as_posix()
+    meta = (
+        db.query(WorkspaceFile)
+        .filter(
+            WorkspaceFile.workspace_id == workspace_id,
+            WorkspaceFile.relative_path == rel_path,
+            WorkspaceFile.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if meta and meta.trash_path:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    media_type = (meta.content_type if meta else None) or mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    return FileResponse(target, media_type=media_type, filename=target.name)
 
 
 @router.post("/{workspace_id}/files/upload", response_model=WorkspaceMultiUploadResponse)
@@ -799,9 +1367,10 @@ async def upload_workspace_files(
     if not workspace:
         raise HTTPException(status_code=404, detail="项目不存在")
     member = _ensure_member(db, user.id, workspace_id)
-    limit_bytes, limit_message = _upload_limit_for(user, member)
+    limit_bytes, limit_message = _upload_limit_for(user, member, workspace)
     root = Path(_ensure_storage_path(workspace)).resolve()
     rel_dir = _safe_relative_path(directory)
+    _ensure_not_trash_path(rel_dir)
     target_dir = _resolve_workspace_child(root, rel_dir)
     if not target_dir.exists() or not target_dir.is_dir():
         _raise_with_audit(
@@ -814,6 +1383,7 @@ async def upload_workspace_files(
         )
 
     responses: list[WorkspaceFileMutationResponse] = []
+    uploaded_paths: list[str] = []
     for upload in files:
         filename = _safe_name(upload.filename or "untitled")
         content = await upload.read()
@@ -858,8 +1428,19 @@ async def upload_workspace_files(
             _audit_detail(workspace_id, rel_path, meta.id, actor_id=user.id, size=len(content)),
         )
         responses.append(WorkspaceFileMutationResponse(ok=True, path=rel_path, file_id=meta.id, rag_status=meta.rag_status))
+        uploaded_paths.append(rel_path)
+    agent_run = _write_workspace_file_agent_run(
+        db,
+        user_id=user.id,
+        workspace=workspace,
+        source_type="workspace_file_upload",
+        title="上传项目文件",
+        path=rel_dir.as_posix(),
+        detail=f"上传 {len(uploaded_paths)} 个文件",
+        result={"file_count": len(uploaded_paths), "paths": uploaded_paths[:20]},
+    )
     db.commit()
-    return WorkspaceMultiUploadResponse(ok=True, files=responses)
+    return WorkspaceMultiUploadResponse(ok=True, files=responses, agent_run=serialize_agent_run(db, agent_run))
 
 
 @router.post("/{workspace_id}/files", response_model=WorkspaceFileMutationResponse)
@@ -873,9 +1454,10 @@ def upload_workspace_file(
     if not workspace:
         raise HTTPException(status_code=404, detail="项目不存在")
     member = _ensure_member(db, user.id, workspace_id)
-    limit_bytes, limit_message = _upload_limit_for(user, member)
+    limit_bytes, limit_message = _upload_limit_for(user, member, workspace)
     root = Path(_ensure_storage_path(workspace)).resolve()
     directory = _safe_relative_path(req.directory)
+    _ensure_not_trash_path(directory)
     filename = _safe_name(req.filename)
     target_dir = _resolve_workspace_child(root, directory)
     if not target_dir.exists() or not target_dir.is_dir():
@@ -899,7 +1481,20 @@ def upload_workspace_file(
 
     conflict_path = _resolve_conflict_path(target_dir, filename, req.conflict_strategy)
     if conflict_path is None:
-        return WorkspaceFileMutationResponse(ok=False, path=(directory / filename).as_posix(), rag_status="skipped")
+        skipped_path = (directory / filename).as_posix()
+        agent_run = _write_workspace_file_agent_run(
+            db,
+            user_id=user.id,
+            workspace=workspace,
+            source_type="workspace_file_upload",
+            title="上传项目文件",
+            path=skipped_path,
+            status="cancelled",
+            detail="目标位置已存在同名文件，按策略跳过",
+            result={"rag_status": "skipped"},
+        )
+        db.commit()
+        return WorkspaceFileMutationResponse(ok=False, path=skipped_path, rag_status="skipped", agent_run=serialize_agent_run(db, agent_run))
     target_path = _resolve_workspace_child(root, conflict_path.relative_to(root))
     if target_path.exists() and target_path.is_dir():
         raise HTTPException(status_code=400, detail="不能覆盖文件夹")
@@ -912,8 +1507,18 @@ def upload_workspace_file(
         "workspace_file_upload",
         _audit_detail(workspace_id, rel_path, meta.id, actor_id=user.id, size=len(content)),
     )
+    agent_run = _write_workspace_file_agent_run(
+        db,
+        user_id=user.id,
+        workspace=workspace,
+        source_type="workspace_file_upload",
+        title="上传项目文件",
+        path=rel_path,
+        detail=filename,
+        result={"file_id": meta.id, "rag_status": meta.rag_status, "size": len(content)},
+    )
     db.commit()
-    return WorkspaceFileMutationResponse(ok=True, path=rel_path, file_id=meta.id, rag_status=meta.rag_status)
+    return WorkspaceFileMutationResponse(ok=True, path=rel_path, file_id=meta.id, rag_status=meta.rag_status, agent_run=serialize_agent_run(db, agent_run))
 
 
 @router.post("/{workspace_id}/folders", response_model=WorkspaceFileMutationResponse)
@@ -928,7 +1533,9 @@ def create_workspace_folder(
         raise HTTPException(status_code=404, detail="项目不存在")
     _ensure_member(db, user.id, workspace_id)
     root = Path(_ensure_storage_path(workspace)).resolve()
-    parent = _resolve_workspace_child(root, _safe_relative_path(req.parent_path))
+    parent_rel = _safe_relative_path(req.parent_path)
+    _ensure_not_trash_path(parent_rel)
+    parent = _resolve_workspace_child(root, parent_rel)
     if not parent.exists() or not parent.is_dir():
         raise HTTPException(status_code=400, detail="目标父文件夹不存在")
     folder_name = _safe_name(req.name)
@@ -943,8 +1550,16 @@ def create_workspace_folder(
         "workspace_folder_create",
         _audit_detail(workspace_id, rel_path, actor_id=user.id),
     )
+    agent_run = _write_workspace_file_agent_run(
+        db,
+        user_id=user.id,
+        workspace=workspace,
+        source_type="workspace_folder_create",
+        title="新建项目文件夹",
+        path=rel_path,
+    )
     db.commit()
-    return WorkspaceFileMutationResponse(ok=True, path=rel_path)
+    return WorkspaceFileMutationResponse(ok=True, path=rel_path, agent_run=serialize_agent_run(db, agent_run))
 
 
 @router.delete("/{workspace_id}/files", response_model=WorkspaceFileMutationResponse)
@@ -973,13 +1588,13 @@ def delete_workspace_file(
         )
         .first()
     )
-    if not _member_can_mutate_file(member, user.id, meta):
+    if not _member_can_mutate_file(member, user.id, meta, user.role):
         _raise_with_audit(
             db,
             user.id,
             "workspace_file_delete",
             403,
-            "只能删除自己上传的文件",
+            "只有上传人或管理员可以删除该文件",
             _audit_detail(workspace_id, rel_path, meta.id if meta else None, actor_id=user.id, error="permission denied"),
         )
     if not meta:
@@ -1020,8 +1635,18 @@ def delete_workspace_file(
             action_payload={"workspace_id": workspace.id},
             event_key=f"workspace:{workspace.id}:file_deleted:{meta.id}",
         )
+    agent_run = _write_workspace_file_agent_run(
+        db,
+        user_id=user.id,
+        workspace=workspace,
+        source_type="workspace_file_delete",
+        title="移入项目回收区",
+        path=rel_path,
+        detail=meta.trash_path,
+        result={"file_id": meta.id, "rag_status": meta.rag_status, "trash_path": meta.trash_path},
+    )
     db.commit()
-    return WorkspaceFileMutationResponse(ok=True, path=rel_path, file_id=meta.id, rag_status=meta.rag_status)
+    return WorkspaceFileMutationResponse(ok=True, path=rel_path, file_id=meta.id, rag_status=meta.rag_status, agent_run=serialize_agent_run(db, agent_run))
 
 
 @router.post("/{workspace_id}/files/restore", response_model=WorkspaceFileMutationResponse)
@@ -1034,7 +1659,7 @@ def restore_workspace_file(
     workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
     if not workspace:
         raise HTTPException(status_code=404, detail="项目不存在")
-    member = _ensure_member(db, user.id, workspace_id)
+    _ensure_member(db, user.id, workspace_id)
     root = Path(_ensure_storage_path(workspace)).resolve()
     meta = (
         db.query(WorkspaceFile)
@@ -1043,15 +1668,6 @@ def restore_workspace_file(
     )
     if not meta or not meta.deleted_at:
         raise HTTPException(status_code=404, detail="回收区文件不存在")
-    if not _member_can_restore_file(member, user.id, meta):
-        _raise_with_audit(
-            db,
-            user.id,
-            "workspace_file_restore",
-            403,
-            "只能恢复自己删除的文件",
-            _audit_detail(workspace_id, meta.relative_path, meta.id, actor_id=user.id, error="permission denied"),
-        )
     source = _resolve_workspace_child(root, _safe_relative_path(meta.trash_path))
     target = _resolve_workspace_child(root, _safe_relative_path(meta.relative_path))
     if not source.exists() or not source.is_file():
@@ -1080,8 +1696,17 @@ def restore_workspace_file(
         "workspace_file_restore",
         _audit_detail(workspace_id, meta.relative_path, meta.id, actor_id=user.id),
     )
+    agent_run = _write_workspace_file_agent_run(
+        db,
+        user_id=user.id,
+        workspace=workspace,
+        source_type="workspace_file_restore",
+        title="恢复项目文件",
+        path=meta.relative_path,
+        result={"file_id": meta.id, "rag_status": meta.rag_status},
+    )
     db.commit()
-    return WorkspaceFileMutationResponse(ok=True, path=meta.relative_path, file_id=meta.id, rag_status=meta.rag_status)
+    return WorkspaceFileMutationResponse(ok=True, path=meta.relative_path, file_id=meta.id, rag_status=meta.rag_status, agent_run=serialize_agent_run(db, agent_run))
 
 
 @router.delete("/{workspace_id}/files/permanent", response_model=WorkspaceFileMutationResponse)
@@ -1103,13 +1728,13 @@ def permanently_delete_workspace_file(
     )
     if not meta or not meta.deleted_at:
         raise HTTPException(status_code=404, detail="回收区文件不存在")
-    if not _member_can_restore_file(member, user.id, meta):
+    if not _member_can_restore_file(member, user.id, meta, user.role):
         _raise_with_audit(
             db,
             user.id,
             "workspace_file_permanent_delete",
             403,
-            "只能永久删除自己删除的文件",
+            "只有上传人或管理员可以永久删除该文件",
             _audit_detail(workspace_id, meta.relative_path, meta.id, actor_id=user.id, error="permission denied"),
         )
     if meta.trash_path:
@@ -1125,11 +1750,20 @@ def permanently_delete_workspace_file(
         "workspace_file_permanent_delete",
         _audit_detail(workspace_id, rel_path, file_id, actor_id=user.id),
     )
+    agent_run = _write_workspace_file_agent_run(
+        db,
+        user_id=user.id,
+        workspace=workspace,
+        source_type="workspace_file_permanent_delete",
+        title="永久删除项目文件",
+        path=rel_path,
+        result={"file_id": file_id, "rag_status": "pending"},
+    )
     db.commit()
-    return WorkspaceFileMutationResponse(ok=True, path=rel_path, file_id=file_id, rag_status="pending")
+    return WorkspaceFileMutationResponse(ok=True, path=rel_path, file_id=file_id, rag_status="pending", agent_run=serialize_agent_run(db, agent_run))
 
 
-@router.delete("/{workspace_id}/files/trash")
+@router.delete("/{workspace_id}/files/trash", response_model=WorkspaceTrashClearResponse)
 def clear_workspace_trash(
     workspace_id: int,
     user: User = Depends(get_current_user),
@@ -1153,8 +1787,17 @@ def clear_workspace_trash(
         deleted += 1
     _write_workspace_audit(db, user.id, "workspace_trash_clear", _audit_detail(workspace_id, actor_id=user.id, deleted_files=deleted))
     notify_workspace_bulk_delete_risk(db, workspace=workspace, actor_user_id=user.id, deleted_files=deleted)
+    agent_run = _write_workspace_file_agent_run(
+        db,
+        user_id=user.id,
+        workspace=workspace,
+        source_type="workspace_trash_clear",
+        title="清空项目回收区",
+        path=".trash",
+        result={"deleted_files": deleted},
+    )
     db.commit()
-    return {"ok": True, "deleted_files": deleted}
+    return {"ok": True, "deleted_files": deleted, "agent_run": serialize_agent_run(db, agent_run)}
 
 
 @router.post("/{workspace_id}/attachments/save", response_model=WorkspaceFileMutationResponse)
@@ -1188,14 +1831,36 @@ def save_attachment_to_workspace(
     filename = _safe_name(attachment.original_name)
     conflict_path = _resolve_conflict_path(target_dir, filename, req.conflict_strategy)
     if conflict_path is None:
-        return WorkspaceFileMutationResponse(ok=False, path=f"{DEFAULT_UNFILED_DIR}/{filename}", rag_status="skipped")
+        skipped_path = f"{DEFAULT_UNFILED_DIR}/{filename}"
+        agent_run = _write_workspace_file_agent_run(
+            db,
+            user_id=user.id,
+            workspace=workspace,
+            source_type="workspace_attachment_save",
+            title="保存会话附件到项目",
+            path=skipped_path,
+            status="cancelled",
+            detail="目标位置已存在同名文件，按策略跳过",
+            result={"attachment_id": attachment.id, "rag_status": "skipped"},
+        )
+        db.commit()
+        return WorkspaceFileMutationResponse(ok=False, path=skipped_path, rag_status="skipped", agent_run=serialize_agent_run(db, agent_run))
     target = _resolve_workspace_child(root, conflict_path.relative_to(root))
     shutil.copy2(source, target)
     rel_path = target.relative_to(root).as_posix()
     meta = _upsert_workspace_file(db, workspace_id, user.id, rel_path, target.name, attachment.content_type, target.stat().st_size)
     _write_workspace_audit(db, user.id, "workspace_attachment_save", _audit_detail(workspace_id, rel_path, meta.id, actor_id=user.id, attachment_id=attachment.id))
+    agent_run = _write_workspace_file_agent_run(
+        db,
+        user_id=user.id,
+        workspace=workspace,
+        source_type="workspace_attachment_save",
+        title="保存会话附件到项目",
+        path=rel_path,
+        result={"file_id": meta.id, "attachment_id": attachment.id, "rag_status": meta.rag_status},
+    )
     db.commit()
-    return WorkspaceFileMutationResponse(ok=True, path=rel_path, file_id=meta.id, rag_status=meta.rag_status)
+    return WorkspaceFileMutationResponse(ok=True, path=rel_path, file_id=meta.id, rag_status=meta.rag_status, agent_run=serialize_agent_run(db, agent_run))
 
 
 @router.delete("/{workspace_id}/folders", response_model=WorkspaceFileMutationResponse)
@@ -1211,6 +1876,7 @@ def delete_workspace_folder(
     _ensure_member(db, user.id, workspace_id)
     root = Path(_ensure_storage_path(workspace)).resolve()
     rel = _safe_relative_path(path)
+    _ensure_not_trash_path(rel)
     if _is_template_root(rel):
         raise HTTPException(status_code=400, detail="默认模板文件夹不能删除")
     target = _resolve_workspace_child(root, rel)
@@ -1226,8 +1892,16 @@ def delete_workspace_folder(
         "workspace_folder_delete",
         _audit_detail(workspace_id, rel_path, actor_id=user.id),
     )
+    agent_run = _write_workspace_file_agent_run(
+        db,
+        user_id=user.id,
+        workspace=workspace,
+        source_type="workspace_folder_delete",
+        title="删除项目文件夹",
+        path=rel_path,
+    )
     db.commit()
-    return WorkspaceFileMutationResponse(ok=True, path=rel_path)
+    return WorkspaceFileMutationResponse(ok=True, path=rel_path, agent_run=serialize_agent_run(db, agent_run))
 
 
 @router.put("/{workspace_id}/paths/rename", response_model=WorkspaceFileMutationResponse)
@@ -1243,6 +1917,7 @@ def rename_workspace_path(
     member = _ensure_member(db, user.id, workspace_id)
     root = Path(_ensure_storage_path(workspace)).resolve()
     rel = _safe_relative_path(req.path)
+    _ensure_not_trash_path(rel)
     if _is_template_root(rel):
         raise HTTPException(status_code=400, detail="默认模板文件夹不能重命名")
     source = _resolve_workspace_child(root, rel)
@@ -1260,8 +1935,8 @@ def rename_workspace_path(
         .filter(WorkspaceFile.workspace_id == workspace_id, WorkspaceFile.relative_path == rel_path, WorkspaceFile.deleted_at.is_(None))
         .first()
     )
-    if source_is_file and not _member_can_mutate_file(member, user.id, meta):
-        raise HTTPException(status_code=403, detail="只能重命名自己上传的文件")
+    if source_is_file and not _member_can_mutate_file(member, user.id, meta, user.role):
+        raise HTTPException(status_code=403, detail="只有上传人或管理员可以重命名该文件")
 
     shutil.move(str(source), str(target))
     new_rel_path = target.relative_to(root).as_posix()
@@ -1275,8 +1950,18 @@ def rename_workspace_path(
     else:
         _sync_file_descendant_paths(db, workspace_id, rel_path, new_rel_path)
     _write_workspace_audit(db, user.id, "workspace_path_rename", _audit_detail(workspace_id, new_rel_path, meta.id if meta else None, actor_id=user.id, old_path=rel_path))
+    agent_run = _write_workspace_file_agent_run(
+        db,
+        user_id=user.id,
+        workspace=workspace,
+        source_type="workspace_path_rename",
+        title="重命名项目路径",
+        path=new_rel_path,
+        detail=f"{rel_path} -> {new_rel_path}",
+        result={"file_id": meta.id if meta else None, "old_path": rel_path, "rag_status": meta.rag_status if meta else None},
+    )
     db.commit()
-    return WorkspaceFileMutationResponse(ok=True, path=new_rel_path, file_id=meta.id if meta else None, rag_status=meta.rag_status if meta else None)
+    return WorkspaceFileMutationResponse(ok=True, path=new_rel_path, file_id=meta.id if meta else None, rag_status=meta.rag_status if meta else None, agent_run=serialize_agent_run(db, agent_run))
 
 
 @router.post("/{workspace_id}/paths/move", response_model=WorkspaceFileMutationResponse)
@@ -1292,6 +1977,7 @@ def move_workspace_path(
     member = _ensure_member(db, user.id, workspace_id)
     root = Path(_ensure_storage_path(workspace)).resolve()
     rel = _safe_relative_path(req.path)
+    _ensure_not_trash_path(rel)
     if _is_template_root(rel):
         raise HTTPException(status_code=400, detail="默认模板文件夹不能移动")
     source = _resolve_workspace_child(root, rel)
@@ -1299,6 +1985,7 @@ def move_workspace_path(
         raise HTTPException(status_code=404, detail="文件或文件夹不存在")
     source_is_file = source.is_file()
     target_dir_rel = _safe_relative_path(req.target_directory)
+    _ensure_not_trash_path(target_dir_rel)
     target_dir = _resolve_workspace_child(root, target_dir_rel)
     if not target_dir.exists() or not target_dir.is_dir():
         raise HTTPException(status_code=400, detail="目标文件夹不存在")
@@ -1311,12 +1998,24 @@ def move_workspace_path(
         .filter(WorkspaceFile.workspace_id == workspace_id, WorkspaceFile.relative_path == rel_path, WorkspaceFile.deleted_at.is_(None))
         .first()
     )
-    if source_is_file and not _member_can_mutate_file(member, user.id, meta):
-        raise HTTPException(status_code=403, detail="只能移动自己上传的文件")
+    if source_is_file and not _member_can_mutate_file(member, user.id, meta, user.role):
+        raise HTTPException(status_code=403, detail="只有上传人或管理员可以移动该文件")
 
     conflict_path = _resolve_conflict_path(target_dir, source.name, req.conflict_strategy)
     if conflict_path is None:
-        return WorkspaceFileMutationResponse(ok=False, path=rel_path, file_id=meta.id if meta else None, rag_status="skipped")
+        agent_run = _write_workspace_file_agent_run(
+            db,
+            user_id=user.id,
+            workspace=workspace,
+            source_type="workspace_path_move",
+            title="移动项目路径",
+            path=rel_path,
+            status="cancelled",
+            detail="目标位置已存在同名路径，按策略跳过",
+            result={"file_id": meta.id if meta else None, "rag_status": "skipped"},
+        )
+        db.commit()
+        return WorkspaceFileMutationResponse(ok=False, path=rel_path, file_id=meta.id if meta else None, rag_status="skipped", agent_run=serialize_agent_run(db, agent_run))
     target = _resolve_workspace_child(root, conflict_path.relative_to(root))
     if target.exists() and target.is_dir() and source_is_file:
         raise HTTPException(status_code=400, detail="不能覆盖文件夹")
@@ -1347,8 +2046,124 @@ def move_workspace_path(
     else:
         _sync_file_descendant_paths(db, workspace_id, rel_path, new_rel_path)
     _write_workspace_audit(db, user.id, "workspace_path_move", _audit_detail(workspace_id, new_rel_path, meta.id if meta else None, actor_id=user.id, old_path=rel_path))
+    agent_run = _write_workspace_file_agent_run(
+        db,
+        user_id=user.id,
+        workspace=workspace,
+        source_type="workspace_path_move",
+        title="移动项目路径",
+        path=new_rel_path,
+        detail=f"{rel_path} -> {new_rel_path}",
+        result={"file_id": meta.id if meta else None, "old_path": rel_path, "rag_status": meta.rag_status if meta else None},
+    )
     db.commit()
-    return WorkspaceFileMutationResponse(ok=True, path=new_rel_path, file_id=meta.id if meta else None, rag_status=meta.rag_status if meta else None)
+    return WorkspaceFileMutationResponse(ok=True, path=new_rel_path, file_id=meta.id if meta else None, rag_status=meta.rag_status if meta else None, agent_run=serialize_agent_run(db, agent_run))
+
+
+@router.post("/{workspace_id}/paths/copy", response_model=WorkspaceFileMutationResponse)
+def copy_workspace_path(
+    workspace_id: int,
+    req: CopyWorkspacePathRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    _ensure_member(db, user.id, workspace_id)
+    root = Path(_ensure_storage_path(workspace)).resolve()
+    rel = _safe_relative_path(req.path)
+    _ensure_not_trash_path(rel)
+    if _is_template_root(rel):
+        raise HTTPException(status_code=400, detail="默认模板文件夹不能复制")
+    source = _resolve_workspace_child(root, rel)
+    if not source.exists():
+        raise HTTPException(status_code=404, detail="文件或文件夹不存在")
+    source_is_file = source.is_file()
+    target_dir_rel = _safe_relative_path(req.target_directory)
+    _ensure_not_trash_path(target_dir_rel)
+    target_dir = _resolve_workspace_child(root, target_dir_rel)
+    if not target_dir.exists() or not target_dir.is_dir():
+        raise HTTPException(status_code=400, detail="目标文件夹不存在")
+    if not source_is_file and target_dir.resolve().is_relative_to(source.resolve()):
+        raise HTTPException(status_code=400, detail="不能复制到自身下级目录")
+
+    rel_path = source.relative_to(root).as_posix()
+    source_meta = (
+        db.query(WorkspaceFile)
+        .filter(WorkspaceFile.workspace_id == workspace_id, WorkspaceFile.relative_path == rel_path, WorkspaceFile.deleted_at.is_(None))
+        .first()
+    )
+    conflict_path = _resolve_conflict_path(target_dir, source.name, req.conflict_strategy)
+    if conflict_path is None:
+        agent_run = _write_workspace_file_agent_run(
+            db,
+            user_id=user.id,
+            workspace=workspace,
+            source_type="workspace_path_copy",
+            title="复制项目路径",
+            path=rel_path,
+            status="cancelled",
+            detail="目标位置已存在同名路径，按策略跳过",
+            result={"file_id": source_meta.id if source_meta else None, "rag_status": "skipped"},
+        )
+        db.commit()
+        return WorkspaceFileMutationResponse(ok=False, path=rel_path, file_id=source_meta.id if source_meta else None, rag_status="skipped", agent_run=serialize_agent_run(db, agent_run))
+    target = _resolve_workspace_child(root, conflict_path.relative_to(root))
+    if target.exists() and target.is_dir() and source_is_file:
+        raise HTTPException(status_code=400, detail="不能覆盖文件夹")
+    if target.exists() and not source_is_file:
+        raise HTTPException(status_code=409, detail="目标位置已存在同名文件夹")
+    if target.exists() and req.conflict_strategy == "replace":
+        existing_meta = (
+            db.query(WorkspaceFile)
+            .filter(
+                WorkspaceFile.workspace_id == workspace_id,
+                WorkspaceFile.relative_path == target.relative_to(root).as_posix(),
+                WorkspaceFile.deleted_at.is_(None),
+            )
+            .first()
+        )
+        if existing_meta:
+            db.delete(existing_meta)
+        target.unlink()
+
+    if source_is_file:
+        shutil.copy2(source, target)
+        meta = _create_copied_file_metadata(
+            db,
+            workspace_id=workspace_id,
+            source_rel_path=rel_path,
+            target_file=target,
+            root=root,
+            user_id=user.id,
+        )
+    else:
+        shutil.copytree(source, target)
+        _copy_descendant_file_metadata(
+            db,
+            workspace_id=workspace_id,
+            source_dir=source,
+            target_dir=target,
+            root=root,
+            user_id=user.id,
+        )
+        meta = None
+
+    new_rel_path = target.relative_to(root).as_posix()
+    _write_workspace_audit(db, user.id, "workspace_path_copy", _audit_detail(workspace_id, new_rel_path, meta.id if meta else None, actor_id=user.id, old_path=rel_path))
+    agent_run = _write_workspace_file_agent_run(
+        db,
+        user_id=user.id,
+        workspace=workspace,
+        source_type="workspace_path_copy",
+        title="复制项目路径",
+        path=new_rel_path,
+        detail=f"{rel_path} -> {new_rel_path}",
+        result={"file_id": meta.id if meta else None, "old_path": rel_path, "rag_status": meta.rag_status if meta else None},
+    )
+    db.commit()
+    return WorkspaceFileMutationResponse(ok=True, path=new_rel_path, file_id=meta.id if meta else None, rag_status=meta.rag_status if meta else None, agent_run=serialize_agent_run(db, agent_run))
 
 
 @router.post("/{workspace_id}/knowledge/ingest", response_model=WorkspaceKnowledgeRefreshResponse)
@@ -1362,7 +2177,13 @@ def refresh_workspace_knowledge(
     if not workspace:
         raise HTTPException(status_code=404, detail="项目不存在")
     _ensure_member(db, user.id, workspace_id)
+    if workspace.workspace_kind not in {"project", "customer"}:
+        raise HTTPException(status_code=400, detail="当前工作区类型暂不支持一键录入知识库")
+    if not _is_workspace_admin(db, user, workspace_id):
+        raise HTTPException(status_code=403, detail="仅系统管理员或工作区管理员可一键录入知识库")
     payload = _execute_workspace_knowledge_ingest(db, workspace, user.id)
+    agent_run = _write_immediate_workspace_ingest_agent_run(db, workspace, user.id, payload)
+    payload["agent_run"] = serialize_agent_run(db, agent_run)
     db.commit()
     return WorkspaceKnowledgeRefreshResponse(**payload)
 
@@ -1378,6 +2199,10 @@ def enqueue_workspace_knowledge_ingest(
     if not workspace:
         raise HTTPException(status_code=404, detail="项目不存在")
     _ensure_member(db, user.id, workspace_id)
+    if workspace.workspace_kind not in {"project", "customer"}:
+        raise HTTPException(status_code=400, detail="当前工作区类型暂不支持一键录入知识库")
+    if not _is_workspace_admin(db, user, workspace_id):
+        raise HTTPException(status_code=403, detail="仅系统管理员或工作区管理员可一键录入知识库")
     job = WorkspaceIngestJob(
         workspace_id=workspace_id,
         requested_by=user.id,
@@ -1386,13 +2211,31 @@ def enqueue_workspace_knowledge_ingest(
     )
     db.add(job)
     db.flush()
+    agent_run = create_agent_run(
+        db,
+        user_id=user.id,
+        workspace_id=workspace.id,
+        source_type="workspace_ingest",
+        source_id=job.id,
+        title=f"录入工作区知识库：{workspace.name}",
+        status="queued",
+    )
+    add_agent_event(
+        db,
+        agent_run,
+        event_type="queued",
+        title="工作区录入任务已排队",
+        detail=f"待录入文件 {workspace.name}",
+        status="queued",
+        payload={"workspace_id": workspace.id, "workspace_name": workspace.name},
+    )
     notify_user(
         db,
         user.id,
         category="workspace",
         severity="info",
-        title="项目知识库录入已排队",
-        content=f"{workspace.name}：后台正在处理项目资料，完成后会再次通知你。",
+        title="工作区知识库录入已排队",
+        content=f"{workspace.name}：后台正在处理工作区资料，完成后会再次通知你。",
         action_status="pending",
         action_kind="open_workspace",
         action_payload={"workspace_id": workspace.id, "ingest_job_id": job.id},
@@ -1400,7 +2243,7 @@ def enqueue_workspace_knowledge_ingest(
     db.commit()
     db.refresh(job)
     background_tasks.add_task(_run_workspace_knowledge_ingest_job, job.id)
-    return _serialize_ingest_job(job)
+    return _serialize_ingest_job(db, job)
 
 
 @router.get("/{workspace_id}/knowledge/ingest/jobs/{job_id}", response_model=WorkspaceKnowledgeIngestJobResponse)
@@ -1418,7 +2261,254 @@ def get_workspace_knowledge_ingest_job(
     )
     if not job:
         raise HTTPException(status_code=404, detail="录入任务不存在")
-    return _serialize_ingest_job(job)
+    return _serialize_ingest_job(db, job)
+
+
+@router.get("/{workspace_id}/knowledge/graph", response_model=WorkspaceKnowledgeGraphResponse)
+def workspace_knowledge_graph(
+    workspace_id: int,
+    focus: str | None = Query(default=None),
+    entity_type: str | None = Query(default=None),
+    limit: int = Query(default=120, ge=1, le=500),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id, Workspace.is_archived == False).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="工作区不存在")
+    _ensure_can_open_workspace(db, user, workspace)
+    scope = _workspace_gbrain_graph_scope(workspace)
+    source_id = str(scope["source_id"])
+    derived_path = scope["derived_path"]
+    if not isinstance(derived_path, Path):
+        raise HTTPException(status_code=500, detail="工作区 GBrain 路径配置错误")
+    graph = build_source_graph(
+        source_id,
+        derived_path=derived_path,
+        focus=focus,
+        entity_type=entity_type,
+        limit=limit,
+    )
+    _write_workspace_audit(
+        db,
+        user.id,
+        "workspace_gbrain_graph_view",
+        _audit_detail(
+            workspace.id,
+            "knowledge/graph",
+            actor_id=user.id,
+            workspace_kind=workspace.workspace_kind,
+            source_id=source_id,
+            nodes=len(graph.get("nodes") or []),
+            edges=len(graph.get("edges") or []),
+            events=len(graph.get("events") or []),
+        ),
+    )
+    db.commit()
+    return WorkspaceKnowledgeGraphResponse(
+        ok=bool(graph.get("ok")),
+        workspace_id=workspace.id,
+        workspace_name=workspace.name,
+        workspace_kind=workspace.workspace_kind,
+        source_id=source_id,
+        source_scope=str(scope["source_scope"]),
+        intelligence_kind=str(scope["intelligence_kind"]),
+        derived_path=str(graph.get("derived_path") or derived_path),
+        focus=focus,
+        entity_type=entity_type,
+        nodes=list(graph.get("nodes") or []),
+        edges=list(graph.get("edges") or []),
+        events=list(graph.get("events") or []),
+        profile_cards=_workspace_profile_cards(graph),
+        stats=graph.get("stats") if isinstance(graph.get("stats"), dict) else None,
+        warnings=[str(item) for item in graph.get("warnings") or []],
+    )
+
+
+@router.get("/{workspace_id}/knowledge/entity-merge-candidates", response_model=WorkspaceEntityMergeCandidatesResponse)
+def workspace_entity_merge_candidates(
+    workspace_id: int,
+    focus: str | None = Query(default=None),
+    limit: int = Query(default=80, ge=1, le=200),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id, Workspace.is_archived == False).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="工作区不存在")
+    if not _is_workspace_admin(db, user, workspace_id):
+        raise HTTPException(status_code=403, detail="仅系统管理员或工作区管理员可查看实体候选")
+    scope = _workspace_gbrain_graph_scope(workspace)
+    source_id = str(scope["source_id"])
+    derived_path = scope["derived_path"]
+    if not isinstance(derived_path, Path):
+        raise HTTPException(status_code=500, detail="工作区 GBrain 路径配置错误")
+    result = build_entity_merge_candidates(source_id, derived_path=derived_path, focus=focus, limit=limit)
+    _write_workspace_audit(
+        db,
+        user.id,
+        "workspace_gbrain_entity_merge_candidates_view",
+        _audit_detail(
+            workspace.id,
+            "knowledge/entity-merge-candidates",
+            actor_id=user.id,
+            workspace_kind=workspace.workspace_kind,
+            source_id=source_id,
+            candidates=len(result.get("candidates") or []),
+        ),
+    )
+    db.commit()
+    return WorkspaceEntityMergeCandidatesResponse(
+        ok=bool(result.get("ok")),
+        workspace_id=workspace.id,
+        workspace_name=workspace.name,
+        workspace_kind=workspace.workspace_kind,
+        source_id=source_id,
+        source_scope=str(scope["source_scope"]),
+        derived_path=str(result.get("derived_path") or derived_path),
+        focus=focus,
+        candidates=list(result.get("candidates") or []),
+        stats=result.get("stats") if isinstance(result.get("stats"), dict) else None,
+        warnings=[str(item) for item in result.get("warnings") or []],
+    )
+
+
+@router.post("/{workspace_id}/knowledge/entity-merge-candidates/action")
+def workspace_entity_merge_candidate_action(
+    workspace_id: int,
+    request: WorkspaceEntityMergeActionRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id, Workspace.is_archived == False).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="工作区不存在")
+    if not _is_workspace_admin(db, user, workspace_id):
+        raise HTTPException(status_code=403, detail="仅系统管理员或工作区管理员可处理实体候选")
+    if request.action not in {"create_entity_page", "dismiss", "record_alias", "apply_relink_changes"}:
+        raise HTTPException(status_code=400, detail="实体候选操作不合法")
+    scope = _workspace_gbrain_graph_scope(workspace)
+    source_id = str(scope["source_id"])
+    derived_path = scope["derived_path"]
+    if not isinstance(derived_path, Path):
+        raise HTTPException(status_code=500, detail="工作区 GBrain 路径配置错误")
+    result = apply_entity_merge_candidate_action(
+        source_id,
+        request.candidate_id,
+        request.action,
+        derived_path=derived_path,
+        actor=user.username,
+    )
+    sync_result: dict | None = None
+    if result.get("ok") and result.get("status") in {
+        "created",
+        "already_exists",
+        "alias_recorded",
+        "alias_already_exists",
+        "relink_applied",
+    }:
+        sync_result = GBrainAdapter().sync_source(source_id=source_id, repo_path=derived_path, no_pull=True)
+        result["sync"] = sync_result
+    _write_workspace_audit(
+        db,
+        user.id,
+        "workspace_gbrain_entity_merge_candidate_action",
+        _audit_detail(
+            workspace.id,
+            "knowledge/entity-merge-candidates/action",
+            actor_id=user.id,
+            workspace_kind=workspace.workspace_kind,
+            source_id=source_id,
+            action=request.action,
+            status=result.get("status"),
+            candidate_id=request.candidate_id[:160],
+            sync=(sync_result or {}).get("status") or "",
+        ),
+    )
+    db.commit()
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error") or "实体候选操作失败")
+    return result
+
+
+@router.get("/{workspace_id}/knowledge/entity-merge-candidates/preview")
+def workspace_entity_merge_candidate_preview(
+    workspace_id: int,
+    candidate_id: str = Query(..., min_length=1),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id, Workspace.is_archived == False).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="工作区不存在")
+    if not _is_workspace_admin(db, user, workspace_id):
+        raise HTTPException(status_code=403, detail="仅系统管理员或工作区管理员可预览实体候选")
+    scope = _workspace_gbrain_graph_scope(workspace)
+    source_id = str(scope["source_id"])
+    derived_path = scope["derived_path"]
+    if not isinstance(derived_path, Path):
+        raise HTTPException(status_code=500, detail="工作区 GBrain 路径配置错误")
+    result = build_entity_merge_candidate_preview(source_id, candidate_id, derived_path=derived_path)
+    _write_workspace_audit(
+        db,
+        user.id,
+        "workspace_gbrain_entity_merge_candidate_preview",
+        _audit_detail(
+            workspace.id,
+            "knowledge/entity-merge-candidates/preview",
+            actor_id=user.id,
+            workspace_kind=workspace.workspace_kind,
+            source_id=source_id,
+            status=result.get("status"),
+            candidate_id=candidate_id[:160],
+            changes=((result.get("stats") or {}).get("planned_relink_changes") or 0),
+        ),
+    )
+    db.commit()
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error") or "实体候选预览失败")
+    return result
+
+
+@router.get("/{workspace_id}/knowledge/graph/native-context")
+def workspace_native_graph_context(
+    workspace_id: int,
+    slug: str = Query(..., min_length=1),
+    depth: int = Query(default=2, ge=1, le=10),
+    direction: str = Query(default="both"),
+    link_type: str | None = Query(default=None),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id, Workspace.is_archived == False).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="工作区不存在")
+    _ensure_can_open_workspace(db, user, workspace)
+    scope = _workspace_gbrain_graph_scope(workspace)
+    source_id = str(scope["source_id"])
+    result = GBrainAdapter().graph_context(
+        slug,
+        source_id=source_id,
+        depth=depth,
+        direction=direction,
+        link_type=link_type,
+    )
+    _write_workspace_audit(
+        db,
+        user.id,
+        "workspace_gbrain_native_graph_context",
+        _audit_detail(
+            workspace.id,
+            "knowledge/graph/native-context",
+            actor_id=user.id,
+            workspace_kind=workspace.workspace_kind,
+            source_id=source_id,
+            slug=slug[:160],
+            status=result.get("status"),
+        ),
+    )
+    db.commit()
+    return result
 
 
 def _execute_workspace_knowledge_ingest(db: Session, workspace: Workspace, actor_user_id: int) -> dict:
@@ -1434,7 +2524,9 @@ def _execute_workspace_knowledge_ingest(db: Session, workspace: Workspace, actor
     gbrain_source_id = None
     gbrain_status = None
     gbrain_sync_status = None
+    gbrain_think_status = None
     gbrain_error = None
+    gbrain_think_ok = True
     manifest = None
     if workspace.workspace_kind == "project":
         manifest = compile_project_workspace_sources(workspace)
@@ -1456,13 +2548,89 @@ def _execute_workspace_knowledge_ingest(db: Session, workspace: Workspace, actor
                 gbrain_sync_status = str(sync_result.get("status") or "")
                 if sync_result.get("status") != "ok":
                     gbrain_error = str(sync_result.get("error") or "GBrain project source sync failed")
+                elif gbrain_source_id:
+                    settings = getattr(adapter, "settings", None)
+                    if settings is None or not hasattr(adapter, "ensure_think_source_client"):
+                        gbrain_think_status = "not_checked"
+                    elif not settings.think_enabled:
+                        gbrain_think_status = "disabled"
+                    elif not settings.think_source_scope_verified:
+                        gbrain_think_status = "source_scope_unverified"
+                    elif not settings.think_project_clients_enabled:
+                        gbrain_think_status = "project_clients_disabled"
+                    else:
+                        think_client_result = adapter.ensure_think_source_client(gbrain_source_id)
+                        gbrain_think_status = str(think_client_result.get("status") or "")
+                        if not think_client_result.get("ok") and not gbrain_error:
+                            gbrain_think_ok = False
+                            gbrain_error = str(
+                                think_client_result.get("error")
+                                or "GBrain project think OAuth client preparation failed"
+                            )
             else:
                 gbrain_error = str(source_result.get("registration", {}).get("error") or "")
         else:
             gbrain_status = "not_required_no_compiled_files"
             gbrain_sync_status = "not_required_no_compiled_files"
+            gbrain_think_status = "not_required_no_compiled_files"
         sync_ok = compiled_files == 0 or gbrain_sync_status == "ok"
-        ok = bool(failed_files == 0 and source_ok and sync_ok)
+        ok = bool(failed_files == 0 and source_ok and sync_ok and gbrain_think_ok)
+        indexed = _update_workspace_file_rag_statuses_from_manifest(db, workspace, manifest, sync_ok, actor_user_id)
+        rag_status = _overall_project_ingest_status(
+            ok=ok,
+            indexed_files=indexed,
+            failed_files=failed_files,
+            pending_extractor_capability_files=pending_extractor_capability_files,
+            pending_transcription_files=pending_transcription_files,
+            skipped_files=skipped_files,
+        )
+    elif workspace.workspace_kind == "customer":
+        manifest = compile_customer_workspace_sources(workspace)
+        summary = manifest.get("summary") or {}
+        compiled_files = int(summary.get("compiled", 0) or 0)
+        pending_extractor_capability_files = int(summary.get("pending_extractor_capability", 0) or 0)
+        pending_transcription_files = int(summary.get("pending_transcription", 0) or 0)
+        skipped_files = int(summary.get("skipped", 0) or 0)
+        failed_files = int(summary.get("failed", 0) or 0)
+        gbrain_source_id = str(manifest.get("source_id") or "")
+        source_ok = True
+        if compiled_files > 0:
+            adapter = GBrainAdapter()
+            source_result = adapter.ensure_customer_source(workspace)
+            source_ok = bool(source_result.get("ok"))
+            gbrain_status = str((source_result.get("source") or {}).get("status") or source_result.get("registration", {}).get("status") or "")
+            if source_ok:
+                sync_result = adapter.sync_customer_source(workspace, no_pull=True)
+                gbrain_sync_status = str(sync_result.get("status") or "")
+                if sync_result.get("status") != "ok":
+                    gbrain_error = str(sync_result.get("error") or "GBrain customer source sync failed")
+                elif gbrain_source_id:
+                    settings = getattr(adapter, "settings", None)
+                    if settings is None or not hasattr(adapter, "ensure_think_source_client"):
+                        gbrain_think_status = "not_checked"
+                    elif not settings.think_enabled:
+                        gbrain_think_status = "disabled"
+                    elif not settings.think_source_scope_verified:
+                        gbrain_think_status = "source_scope_unverified"
+                    elif not settings.think_project_clients_enabled:
+                        gbrain_think_status = "customer_clients_disabled"
+                    else:
+                        think_client_result = adapter.ensure_think_source_client(gbrain_source_id)
+                        gbrain_think_status = str(think_client_result.get("status") or "")
+                        if not think_client_result.get("ok") and not gbrain_error:
+                            gbrain_think_ok = False
+                            gbrain_error = str(
+                                think_client_result.get("error")
+                                or "GBrain customer think OAuth client preparation failed"
+                            )
+            else:
+                gbrain_error = str(source_result.get("registration", {}).get("error") or "")
+        else:
+            gbrain_status = "not_required_no_compiled_files"
+            gbrain_sync_status = "not_required_no_compiled_files"
+            gbrain_think_status = "not_required_no_compiled_files"
+        sync_ok = compiled_files == 0 or gbrain_sync_status == "ok"
+        ok = bool(failed_files == 0 and source_ok and sync_ok and gbrain_think_ok)
         indexed = _update_workspace_file_rag_statuses_from_manifest(db, workspace, manifest, sync_ok, actor_user_id)
         rag_status = _overall_project_ingest_status(
             ok=ok,
@@ -1477,7 +2645,7 @@ def _execute_workspace_knowledge_ingest(db: Session, workspace: Workspace, actor
         rag_status = "skipped"
         gbrain_status = "not_applicable_private_workspace"
         gbrain_sync_status = "not_applicable_private_workspace"
-        gbrain_error = "私人空间文件不进入 GBrain 项目知识库"
+        gbrain_error = "该工作区类型不进入 GBrain 知识库"
     _write_workspace_audit(
         db,
         actor_user_id,
@@ -1489,13 +2657,14 @@ def _execute_workspace_knowledge_ingest(db: Session, workspace: Workspace, actor
             gbrain_source_id=gbrain_source_id,
             gbrain_status=gbrain_status,
             gbrain_sync_status=gbrain_sync_status,
+            gbrain_think_status=gbrain_think_status,
             failed_files=failed_files,
             pending_extractor_capability_files=pending_extractor_capability_files,
             pending_transcription_files=pending_transcription_files,
             pending_reviews_created=pending_reviews_created,
         ),
     )
-    if workspace.workspace_kind == "project":
+    if workspace.workspace_kind in {"project", "customer"}:
         _notify_workspace_ingest_finished(
             db,
             workspace=workspace,
@@ -1521,6 +2690,7 @@ def _execute_workspace_knowledge_ingest(db: Session, workspace: Workspace, actor
         "gbrain_source_id": gbrain_source_id,
         "gbrain_status": gbrain_status,
         "gbrain_sync_status": gbrain_sync_status,
+        "gbrain_think_status": gbrain_think_status,
         "gbrain_error": gbrain_error,
         "manifest": manifest,
     }
@@ -1534,9 +2704,20 @@ def _run_workspace_knowledge_ingest_job(job_id: int) -> None:
             return
         job.status = "running"
         job.started_at = datetime.now(timezone.utc)
+        workspace = db.query(Workspace).filter(Workspace.id == job.workspace_id).first()
+        agent_run = _get_or_create_workspace_ingest_agent_run(db, job, workspace)
+        agent_run.status = "running"
+        add_agent_event(
+            db,
+            agent_run,
+            event_type="started",
+            title="开始处理工作区资料",
+            detail=workspace.name if workspace else "",
+            status="running",
+            payload={"workspace_id": job.workspace_id},
+        )
         db.commit()
 
-        workspace = db.query(Workspace).filter(Workspace.id == job.workspace_id).first()
         if not workspace:
             raise ValueError("workspace no longer exists")
         payload = _execute_workspace_knowledge_ingest(db, workspace, job.requested_by)
@@ -1544,6 +2725,22 @@ def _run_workspace_knowledge_ingest_job(job_id: int) -> None:
         job.result_json = json.dumps(payload, ensure_ascii=False)
         job.error_message = str(payload.get("gbrain_error") or "")
         job.finished_at = datetime.now(timezone.utc)
+        add_agent_event(
+            db,
+            agent_run,
+            event_type="result",
+            title="工作区知识库录入完成" if payload.get("ok") else "工作区知识库录入未完成",
+            detail=_workspace_ingest_summary_text(payload),
+            status="completed" if payload.get("ok") else "failed",
+            payload=_workspace_ingest_result_payload(payload),
+        )
+        finish_agent_run(
+            db,
+            agent_run,
+            status="completed" if payload.get("ok") else "failed",
+            result=_workspace_ingest_result_payload(payload),
+            error_message=str(payload.get("gbrain_error") or ""),
+        )
         db.commit()
     except Exception as exc:
         db.rollback()
@@ -1553,12 +2750,23 @@ def _run_workspace_knowledge_ingest_job(job_id: int) -> None:
             job.error_message = str(exc)
             job.finished_at = datetime.now(timezone.utc)
             workspace = db.query(Workspace).filter(Workspace.id == job.workspace_id).first()
+            agent_run = _get_or_create_workspace_ingest_agent_run(db, job, workspace)
+            add_agent_event(
+                db,
+                agent_run,
+                event_type="error",
+                title="工作区知识库录入失败",
+                detail=str(exc),
+                status="failed",
+                payload={"workspace_id": job.workspace_id},
+            )
+            finish_agent_run(db, agent_run, status="failed", error_message=str(exc))
             notify_user(
                 db,
                 job.requested_by,
                 category="workspace",
                 severity="warning",
-                title="项目知识库录入失败",
+                title="工作区知识库录入失败",
                 content=f"{workspace.name if workspace else '项目'}：后台录入任务失败，原因：{exc}",
                 action_status="pending",
                 action_kind="open_workspace",
@@ -1569,7 +2777,110 @@ def _run_workspace_knowledge_ingest_job(job_id: int) -> None:
         db.close()
 
 
-def _serialize_ingest_job(job: WorkspaceIngestJob) -> WorkspaceKnowledgeIngestJobResponse:
+def _get_or_create_workspace_ingest_agent_run(
+    db: Session,
+    job: WorkspaceIngestJob,
+    workspace: Workspace | None,
+):
+    run = _find_workspace_ingest_agent_run(db, job)
+    if run:
+        return run
+    return create_agent_run(
+        db,
+        user_id=job.requested_by,
+        workspace_id=job.workspace_id,
+        source_type="workspace_ingest",
+        source_id=job.id,
+        title=f"录入工作区知识库：{workspace.name if workspace else job.workspace_id}",
+        status=job.status,
+    )
+
+
+def _serialize_workspace_ingest_agent_run(db: Session, job: WorkspaceIngestJob) -> dict | None:
+    run = _find_workspace_ingest_agent_run(db, job)
+    return serialize_agent_run(db, run)
+
+
+def _find_workspace_ingest_agent_run(db: Session, job: WorkspaceIngestJob):
+    return (
+        db.query(AgentRun)
+        .filter(
+            AgentRun.source_type == "workspace_ingest",
+            AgentRun.source_id == str(job.id),
+            AgentRun.user_id == job.requested_by,
+        )
+        .order_by(AgentRun.id.desc())
+        .first()
+    )
+
+
+def _write_immediate_workspace_ingest_agent_run(
+    db: Session,
+    workspace: Workspace,
+    user_id: int,
+    payload: dict,
+):
+    run = create_agent_run(
+        db,
+        user_id=user_id,
+        workspace_id=workspace.id,
+        source_type="workspace_ingest",
+        source_id=f"sync:{workspace.id}:{datetime.now(timezone.utc).timestamp()}",
+        title=f"录入工作区知识库：{workspace.name}",
+        status="running",
+    )
+    add_agent_event(
+        db,
+        run,
+        event_type="started",
+        title="开始处理工作区资料",
+        detail=workspace.name,
+        status="completed",
+        payload={"workspace_id": workspace.id},
+    )
+    add_agent_event(
+        db,
+        run,
+        event_type="result",
+        title="工作区知识库录入完成" if payload.get("ok") else "工作区知识库录入未完成",
+        detail=_workspace_ingest_summary_text(payload),
+        status="completed" if payload.get("ok") else "failed",
+        payload=_workspace_ingest_result_payload(payload),
+    )
+    return finish_agent_run(
+        db,
+        run,
+        status="completed" if payload.get("ok") else "failed",
+        result=_workspace_ingest_result_payload(payload),
+        error_message=str(payload.get("gbrain_error") or ""),
+    )
+
+
+def _workspace_ingest_result_payload(payload: dict) -> dict:
+    return {
+        "workspace_id": payload.get("workspace_id"),
+        "indexed_files": payload.get("indexed_files", 0),
+        "compiled_files": payload.get("compiled_files", 0),
+        "pending_extractor_capability_files": payload.get("pending_extractor_capability_files", 0),
+        "pending_transcription_files": payload.get("pending_transcription_files", 0),
+        "failed_files": payload.get("failed_files", 0),
+        "gbrain_source_id": payload.get("gbrain_source_id"),
+        "gbrain_sync_status": payload.get("gbrain_sync_status"),
+        "rag_status": payload.get("rag_status"),
+    }
+
+
+def _workspace_ingest_summary_text(payload: dict) -> str:
+    return (
+        f"已入库 {payload.get('indexed_files', 0)} 个，"
+        f"已编译 {payload.get('compiled_files', 0)} 个，"
+        f"待能力补齐 {payload.get('pending_extractor_capability_files', 0)} 个，"
+        f"待转写 {payload.get('pending_transcription_files', 0)} 个，"
+        f"失败 {payload.get('failed_files', 0)} 个"
+    )
+
+
+def _serialize_ingest_job(db: Session, job: WorkspaceIngestJob) -> WorkspaceKnowledgeIngestJobResponse:
     try:
         result = json.loads(job.result_json or "{}")
     except json.JSONDecodeError:
@@ -1584,6 +2895,7 @@ def _serialize_ingest_job(job: WorkspaceIngestJob) -> WorkspaceKnowledgeIngestJo
         created_at=job.created_at,
         started_at=job.started_at,
         finished_at=job.finished_at,
+        agent_run=_serialize_workspace_ingest_agent_run(db, job),
     )
 
 
@@ -1693,10 +3005,10 @@ def _notify_workspace_ingest_finished(
     gbrain_error: str | None,
 ) -> None:
     if ok and failed_files == 0:
-        title = "项目知识库录入完成"
+        title = "工作区知识库录入完成"
         severity = "success"
     else:
-        title = "项目知识库录入未完成"
+        title = "工作区知识库录入未完成"
         severity = "warning"
     details = [
         f"已入库 {indexed_files} 个文件",
@@ -1730,7 +3042,7 @@ def update_workspace(
     if not workspace:
         raise HTTPException(status_code=404, detail="项目不存在")
 
-    _ensure_member(db, user.id, workspace_id)
+    _ensure_workspace_admin(db, user, workspace_id)
     if workspace.is_default and (req.name is not None or req.description is not None):
         raise HTTPException(status_code=400, detail="默认工作区不能重命名或修改")
 
@@ -1743,10 +3055,294 @@ def update_workspace(
         workspace.name = name
     if req.description is not None:
         workspace.description = req.description.strip()
+    if req.is_hidden is not None:
+        if workspace.workspace_kind == "user":
+            raise HTTPException(status_code=400, detail="个人工作台不支持隐藏项目设置")
+        workspace.is_hidden = req.is_hidden
 
     db.commit()
     db.refresh(workspace)
-    return _workspace_response(db, workspace)
+    return _workspace_response(db, workspace, user=user)
+
+
+@router.get("/{workspace_id}/member-candidates", response_model=list[WorkspaceMemberCandidateResponse])
+def list_workspace_member_candidates(
+    workspace_id: int,
+    q: str = Query(default=""),
+    limit: int = Query(default=30, ge=1, le=80),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="工作区不存在")
+    _ensure_mutable_membership_workspace(workspace)
+    _ensure_workspace_admin(db, user, workspace_id)
+
+    text = q.strip().lower()
+    member_roles = {
+        member.user_id: member.role
+        for member in db.query(WorkspaceMember).filter(WorkspaceMember.workspace_id == workspace_id).all()
+    }
+    users_query = db.query(User).filter(User.is_active == True)
+    if text:
+        needle = f"%{text}%"
+        users_query = users_query.filter(
+            or_(
+                User.username.ilike(needle),
+                User.nickname.ilike(needle),
+                User.work_group.ilike(needle),
+            )
+        )
+    users = users_query.order_by(User.username.asc()).limit(limit).all()
+    return [
+        WorkspaceMemberCandidateResponse(
+            user_id=item.id,
+            username=item.username,
+            nickname=item.nickname,
+            work_group=item.work_group,
+            role=item.role,
+            is_member=item.id in member_roles,
+            member_role=member_roles.get(item.id),
+        )
+        for item in users
+    ]
+
+
+@router.get("/{workspace_id}/group-candidates", response_model=list[WorkspaceGroupCandidateResponse])
+def list_workspace_group_candidates(
+    workspace_id: int,
+    q: str = Query(default=""),
+    limit: int = Query(default=30, ge=1, le=80),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="工作区不存在")
+    _ensure_mutable_membership_workspace(workspace)
+    _ensure_workspace_admin(db, user, workspace_id)
+
+    authorized = set(_workspace_access_groups(db, workspace_id))
+    groups: dict[str, WorkspaceGroupCandidateResponse] = {}
+    for (group_name,) in db.query(User.work_group).filter(User.work_group != "").distinct().all():
+        normalized = _normalize_group_name(group_name)
+        if normalized:
+            groups[normalized] = WorkspaceGroupCandidateResponse(
+                group_name=normalized,
+                source="user",
+                is_authorized=normalized in authorized,
+            )
+    for group_name in authorized:
+        groups[group_name] = WorkspaceGroupCandidateResponse(
+            group_name=group_name,
+            source=groups.get(group_name).source if group_name in groups else "workspace",
+            is_authorized=True,
+        )
+    text = q.strip().lower()
+    items = [
+        item
+        for item in groups.values()
+        if not text or text in item.group_name.lower()
+    ]
+    return sorted(items, key=lambda item: (not item.is_authorized, item.group_name.lower()))[:limit]
+
+
+@router.post("/{workspace_id}/members", response_model=MemberResponse)
+def upsert_workspace_member(
+    workspace_id: int,
+    req: UpsertWorkspaceMemberRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="工作区不存在")
+    _ensure_mutable_membership_workspace(workspace)
+    _ensure_workspace_admin(db, user, workspace_id)
+
+    role = _validate_workspace_member_role(req.role)
+    target_user = _resolve_member_target_user(db, req)
+    member = _workspace_membership(db, target_user.id, workspace_id)
+    action = "workspace_member_update" if member else "workspace_member_invite"
+    if member:
+        member.role = role
+    else:
+        member = WorkspaceMember(workspace_id=workspace_id, user_id=target_user.id, role=role)
+        db.add(member)
+    db.flush()
+    _write_workspace_audit(
+        db,
+        user.id,
+        action,
+        _audit_detail(workspace_id, actor_id=user.id, target_user_id=target_user.id, role=role),
+    )
+    notify_user(
+        db,
+        target_user.id,
+        category="workspace",
+        severity="info",
+        title="工作区权限已更新",
+        content=f"{workspace.name}：你已被设置为{'工作区管理员' if role == 'admin' else '成员'}。",
+        action_status="none",
+        action_kind="open_workspace",
+        action_payload={"workspace_id": workspace.id},
+        event_key=f"workspace:{workspace.id}:member:{target_user.id}:{role}",
+    )
+    db.commit()
+    db.refresh(member)
+    db.refresh(target_user)
+    return _serialize_workspace_member(member, target_user)
+
+
+@router.put("/{workspace_id}/members/{target_user_id}", response_model=MemberResponse)
+def update_workspace_member_role(
+    workspace_id: int,
+    target_user_id: int,
+    req: UpdateWorkspaceMemberRoleRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="工作区不存在")
+    _ensure_mutable_membership_workspace(workspace)
+    _ensure_workspace_admin(db, user, workspace_id)
+
+    role = _validate_workspace_member_role(req.role)
+    member = _workspace_membership(db, target_user_id, workspace_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="成员不存在")
+    if member.role == "admin" and role != "admin" and _local_workspace_admin_count(db, workspace_id) <= 1:
+        raise HTTPException(status_code=400, detail="至少需要保留一名工作区管理员")
+    target_user = db.query(User).filter(User.id == target_user_id).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    member.role = role
+    _write_workspace_audit(
+        db,
+        user.id,
+        "workspace_member_role_update",
+        _audit_detail(workspace_id, actor_id=user.id, target_user_id=target_user_id, role=role),
+    )
+    notify_user(
+        db,
+        target_user.id,
+        category="workspace",
+        severity="info",
+        title="工作区角色已更新",
+        content=f"{workspace.name}：你的角色已变更为{'工作区管理员' if role == 'admin' else '成员'}。",
+        action_status="none",
+        action_kind="open_workspace",
+        action_payload={"workspace_id": workspace.id},
+        event_key=f"workspace:{workspace.id}:role:{target_user.id}:{role}",
+    )
+    db.commit()
+    db.refresh(member)
+    return _serialize_workspace_member(member, target_user)
+
+
+@router.delete("/{workspace_id}/members/{target_user_id}")
+def remove_workspace_member(
+    workspace_id: int,
+    target_user_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="工作区不存在")
+    _ensure_mutable_membership_workspace(workspace)
+    _ensure_workspace_admin(db, user, workspace_id)
+
+    member = _workspace_membership(db, target_user_id, workspace_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="成员不存在")
+    if member.role == "admin" and _local_workspace_admin_count(db, workspace_id) <= 1:
+        raise HTTPException(status_code=400, detail="至少需要保留一名工作区管理员")
+    db.delete(member)
+    _write_workspace_audit(
+        db,
+        user.id,
+        "workspace_member_remove",
+        _audit_detail(workspace_id, actor_id=user.id, target_user_id=target_user_id),
+    )
+    notify_user(
+        db,
+        target_user_id,
+        category="workspace",
+        severity="info",
+        title="工作区访问权限已移除",
+        content=f"{workspace.name}：你已不再是该工作区成员。",
+        action_status="none",
+        action_kind="open_workspace",
+        action_payload={"workspace_id": workspace.id},
+        event_key=f"workspace:{workspace.id}:remove:{target_user_id}",
+    )
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/{workspace_id}/groups", response_model=WorkspaceGroupResponse)
+def upsert_workspace_group(
+    workspace_id: int,
+    req: UpsertWorkspaceGroupRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="工作区不存在")
+    _ensure_mutable_membership_workspace(workspace)
+    _ensure_workspace_admin(db, user, workspace_id)
+
+    group_name = _normalize_group_name(req.group_name)
+    if not group_name:
+        raise HTTPException(status_code=400, detail="组别不能为空")
+    existing = (
+        db.query(WorkspaceGroupAccess)
+        .filter(WorkspaceGroupAccess.workspace_id == workspace_id, WorkspaceGroupAccess.group_name == group_name)
+        .first()
+    )
+    if not existing:
+        db.add(WorkspaceGroupAccess(workspace_id=workspace_id, group_name=group_name))
+        _write_workspace_audit(
+            db,
+            user.id,
+            "workspace_group_access_add",
+            _audit_detail(workspace_id, actor_id=user.id, group_name=group_name),
+        )
+        db.commit()
+    return WorkspaceGroupResponse(group_name=group_name)
+
+
+@router.delete("/{workspace_id}/groups/{group_name}")
+def remove_workspace_group(
+    workspace_id: int,
+    group_name: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="工作区不存在")
+    _ensure_mutable_membership_workspace(workspace)
+    _ensure_workspace_admin(db, user, workspace_id)
+
+    normalized = _normalize_group_name(group_name)
+    db.query(WorkspaceGroupAccess).filter(
+        WorkspaceGroupAccess.workspace_id == workspace_id,
+        WorkspaceGroupAccess.group_name == normalized,
+    ).delete()
+    _write_workspace_audit(
+        db,
+        user.id,
+        "workspace_group_access_remove",
+        _audit_detail(workspace_id, actor_id=user.id, group_name=normalized),
+    )
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/{workspace_id}/join")
@@ -1770,10 +3366,14 @@ def join_workspace(
     if existing:
         return {"ok": True, "message": "已是项目成员"}
 
-    db.add(WorkspaceMember(workspace_id=workspace_id, user_id=user.id, role="member"))
-    notify_workspace_joined(db, workspace=workspace, user_id=user.id)
-    db.commit()
-    return {"ok": True}
+    if user.role == "admin" and workspace.workspace_kind != "user":
+        return {"ok": True, "message": "系统管理员无需加入即可访问"}
+    if workspace.workspace_kind == "project" and not workspace.is_hidden:
+        return {"ok": True, "message": "开放项目无需加入即可访问"}
+    if workspace.workspace_kind in {"project", "customer"} and _has_workspace_group_access(db, user, workspace_id):
+        return {"ok": True, "message": "你的组别已获授权访问"}
+
+    raise HTTPException(status_code=403, detail="受限工作区只能通过工作区管理员添加人员或组别授权")
 
 
 @router.delete("/{workspace_id}")
@@ -1788,20 +3388,14 @@ def delete_workspace(
     if workspace.is_default:
         raise HTTPException(status_code=400, detail="默认工作区不能删除")
 
-    is_admin = (
-        db.query(WorkspaceMember)
-        .filter(
-            WorkspaceMember.workspace_id == workspace_id,
-            WorkspaceMember.user_id == user.id,
-            WorkspaceMember.role == "admin",
-        )
-        .first()
-    )
-    if not is_admin:
+    if not _is_workspace_admin(db, user, workspace_id):
         raise HTTPException(status_code=403, detail="仅项目管理员可删除")
 
     db.query(WorkspaceMember).filter(
         WorkspaceMember.workspace_id == workspace_id
+    ).delete()
+    db.query(WorkspaceGroupAccess).filter(
+        WorkspaceGroupAccess.workspace_id == workspace_id
     ).delete()
     db.delete(workspace)
     db.commit()
@@ -1809,14 +3403,21 @@ def delete_workspace(
 
 
 def _ensure_member(db: Session, user_id: int, workspace_id: int):
-    member = (
-        db.query(WorkspaceMember)
-        .filter(
-            WorkspaceMember.workspace_id == workspace_id,
-            WorkspaceMember.user_id == user_id,
-        )
-        .first()
-    )
+    member = _workspace_membership(db, user_id, workspace_id)
+    if member:
+        return member
+    user = db.query(User).filter(User.id == user_id).first()
+    if user and user.role == "admin":
+        workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+        if workspace and workspace.workspace_kind != "user":
+            return WorkspaceMember(workspace_id=workspace_id, user_id=user_id, role="admin")
+    if user:
+        workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+        if workspace and workspace.workspace_kind == "project":
+            if not workspace.is_hidden or _has_workspace_group_access(db, user, workspace_id):
+                return WorkspaceMember(workspace_id=workspace_id, user_id=user_id, role="member")
+        if workspace and workspace.workspace_kind == "customer" and _has_workspace_group_access(db, user, workspace_id):
+            return WorkspaceMember(workspace_id=workspace_id, user_id=user_id, role="member")
     if not member:
-        raise HTTPException(status_code=403, detail="你尚未加入该项目")
+        raise HTTPException(status_code=403, detail="你尚未加入该工作区")
     return member

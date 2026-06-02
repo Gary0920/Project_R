@@ -31,6 +31,8 @@ backend/generated_files/
 backend/logs/
 backend/models_cache/
 backend/workspace_data/
+backend/session_attachments/
+backend/update_packages/
 backend/knowledge_base/.agents/
 backend/knowledge_base/.claude/
 backend/knowledge_base/raw/

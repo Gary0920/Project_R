@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
+from core.time_utils import serialize_datetime_utc
 from models import get_db
 from models.distillation import DistillationSuggestion
 from models.notification import Notification
@@ -59,8 +60,8 @@ def list_pending_suggestions(
             content=s.content,
             status=s.status,
             reviewer_id=s.reviewer_id,
-            created_at=s.created_at.isoformat(),
-            reviewed_at=s.reviewed_at.isoformat() if s.reviewed_at else None,
+            created_at=serialize_datetime_utc(s.created_at),
+            reviewed_at=serialize_datetime_utc(s.reviewed_at) if s.reviewed_at else None,
         )
         for s in suggestions
     ]
@@ -120,7 +121,7 @@ def _write_knowledge_file(suggestion):
 
         header = f"# {suggestion.title}\n\n"
         header += f"> 来源: 会话 #{suggestion.session_id} | 审批人: {suggestion.reviewer_id}\n"
-        header += f"> 生成时间: {suggestion.created_at.isoformat()}\n\n"
+        header += f"> 生成时间: {serialize_datetime_utc(suggestion.created_at)}\n\n"
         header += suggestion.content
 
         file_path.write_text(header, encoding="utf-8")

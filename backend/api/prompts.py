@@ -7,6 +7,7 @@ from pydantic import BaseModel
 import yaml
 
 from api.auth import get_current_user
+from api.time_models import UTCDateTimeModel
 from models.user import User
 
 router = APIRouter(prefix="/prompts", tags=["prompts"])
@@ -16,7 +17,7 @@ PROMPT_PRESET_DIR = BASE_DIR / "prompt_presets"
 COMPANY_PROMPT_DIR = PROMPT_PRESET_DIR / "company"
 
 
-class CompanyPromptResponse(BaseModel):
+class CompanyPromptResponse(UTCDateTimeModel):
     id: str
     name: str
     description: str

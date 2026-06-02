@@ -1,0 +1,34 @@
+[
+  {
+    "id": "customer_5points_relationship_graph",
+    "source_id": "customer-reference",
+    "focus": "5Points",
+    "expected_node_titles": ["5Points", "Barry-Deane Bourhill", "Portside Duet"],
+    "expected_edges": [
+      { "from_title": "Barry-Deane Bourhill", "to_title": "5Points", "relation_type": "linked_company" },
+      { "from_title": "Barry-Deane Bourhill", "to_title": "Portside Duet", "relation_type": "linked_project" }
+    ]
+  },
+  {
+    "id": "customer_18_mary_event_graph",
+    "source_id": "customer-reference",
+    "focus": "18 Mary Avenue",
+    "expected_node_titles": ["18 Mary Avenue", "Aura Facade", "Bakulo", "Klein"],
+    "expected_edges": [
+      { "from_title": "18 Mary Avenue", "to_title": "Aura Facade", "relation_type": "linked_company" },
+      { "from_title": "18 Mary Avenue", "to_title": "Bakulo", "relation_type": "linked_company" }
+    ],
+    "min_events": 2
+  },
+  {
+    "id": "customer_aaron_morris_unresolved_entities",
+    "source_id": "customer-reference",
+    "focus": "Aaron Morris",
+    "expected_node_titles": ["Aaron Morris", "Binah", "VELA"],
+    "expected_edges": [
+      { "from_title": "Aaron Morris", "to_title": "Binah", "relation_type": "linked_company" },
+      { "from_title": "Aaron Morris", "to_title": "VELA", "relation_type": "linked_project" }
+    ],
+    "expected_entity_merge_candidate_titles": ["Binah", "VELA"]
+  }
+]

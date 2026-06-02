@@ -104,6 +104,12 @@ def validate_think_case(case: dict[str, Any], response: dict[str, Any]) -> list[
     expected_terms = [str(term) for term in case.get("expected_answer_terms_any", []) if str(term).strip()]
     if expected_terms and not _text_contains_any(answer, expected_terms):
         failures.append(f"answer does not contain any expected term {expected_terms!r}")
+    forbidden_terms = [str(term) for term in case.get("forbidden_answer_terms", []) if str(term).strip()]
+    if forbidden_terms:
+        lowered_answer = answer.lower()
+        leaked_terms = [term for term in forbidden_terms if term.lower() in lowered_answer]
+        if leaked_terms:
+            failures.append(f"answer contains forbidden terms {leaked_terms!r}")
 
     citations = result.get("citations") if isinstance(result.get("citations"), list) else []
     min_citations = int(case.get("min_citations", 1))
@@ -112,6 +118,16 @@ def validate_think_case(case: dict[str, Any], response: dict[str, Any]) -> list[
     expected_citation = str(case.get("expected_citation_contains") or "").lower()
     if expected_citation and not any(expected_citation in _citation_text(citation).lower() for citation in citations if isinstance(citation, dict)):
         failures.append(f"no citation contains {case.get('expected_citation_contains')!r}")
+    forbidden_citations = [str(term) for term in case.get("forbidden_citation_contains_any", []) if str(term).strip()]
+    if forbidden_citations:
+        citation_blob = "\n".join(
+            _citation_text(citation)
+            for citation in citations
+            if isinstance(citation, dict)
+        ).lower()
+        leaked_citations = [term for term in forbidden_citations if term.lower() in citation_blob]
+        if leaked_citations:
+            failures.append(f"citations contain forbidden terms {leaked_citations!r}")
 
     return failures
 

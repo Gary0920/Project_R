@@ -5,12 +5,17 @@ import os
 import re
 import uuid
 from pathlib import Path
+from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_serializer
 from sqlalchemy.orm import Session
 
+from api.agent_models import AgentRunResponse
 from api.auth import get_current_user
+from core.time_utils import serialize_datetime_utc
+from core.agent_events import add_agent_event, create_agent_run, finish_agent_run, get_agent_run_for_message, serialize_agent_run
 from core.notification_service import notify_file_generated, notify_knowledge_review_pending
 from core.intent import IntentType, classify_intent
 from core.doc_renderer import render_docx
@@ -25,6 +30,13 @@ from core.system_prompt import (
     TEXT_TRANSFORMATION_PROMPT_IDS,
     compose_system_prompt,
     should_reduce_knowledge_context,
+)
+from core.web_search import (
+    WEB_SEARCH_SKILL_NAME,
+    WebSearchResponse,
+    format_web_search_prompt,
+    search_web,
+    web_results_to_sources,
 )
 from models import get_db
 from models.audit_log import AuditLog
@@ -41,7 +53,6 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 HISTORY_LIMIT = 20
 logger = logging.getLogger(__name__)
 KNOWLEDGE_COMMAND_PREFIX = "/query"
-KNOWLEDGE_THINK_COMMAND_PREFIX = "/think"
 BASE_DIR = Path(__file__).resolve().parent.parent
 SESSION_ATTACHMENTS_ROOT = BASE_DIR / "session_attachments"
 GLOBAL_BASE_PROMPT_PATH = BASE_DIR / "prompt_presets" / "global-base-prompt.md"
@@ -59,6 +70,7 @@ MESSAGE_FEEDBACK_ROOT = Path(
     os.getenv("MESSAGE_FEEDBACK_PATH", str(BASE_DIR / "feedback_data" / "message_ratings"))
 )
 ANSWER_CORRECTION_REVIEW_PREFIX = "gbrain_answer_correction:message:"
+GBRAIN_THINK_REVIEW_PREFIX = "gbrain_think_review:message:"
 ANSWER_CORRECTION_RATING_THRESHOLD = 2
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 _last_session_attachment_cleanup_at: datetime | None = None
@@ -87,7 +99,7 @@ class SessionResponse(BaseModel):
 
     @field_serializer("created_at", "updated_at")
     def serialize_datetime(self, value: datetime) -> str:
-        return value.isoformat() + "Z"
+        return serialize_datetime_utc(value)
 
     class Config:
         from_attributes = True
@@ -104,8 +116,10 @@ class SendMessageRequest(BaseModel):
     model_profile: str | None = None
     selected_skill: str | None = None
     selected_prompt_id: str | None = None
+    force_knowledge_query: bool = False
     stream: bool = False
     thinking: bool = False
+    web_search: bool = False
     system_prompt: str | None = None
 
 
@@ -113,6 +127,7 @@ class RegenerateMessageRequest(BaseModel):
     provider: str | None = None
     model_profile: str | None = None
     thinking: bool = False
+    web_search: bool = False
     system_prompt: str | None = None
     temperature: float = Field(default=0.9, ge=0, le=2)
 
@@ -122,6 +137,7 @@ class EditMessageRequest(BaseModel):
     provider: str | None = None
     model_profile: str | None = None
     thinking: bool = False
+    web_search: bool = False
     system_prompt: str | None = None
 
 
@@ -151,19 +167,26 @@ class CreateAttachmentRequest(BaseModel):
     filename: str
     content: str
     content_type: str = "text/plain"
+    source_scope: str = "session_upload"
+    source_label: str = "会话临时上传"
+    authorization_status: str = "uploaded"
 
 
 class AttachmentResponse(BaseModel):
     id: int
     session_id: int
+    message_id: int | None = None
     original_name: str
     content_type: str
     size: int
+    source_scope: str = "session_upload"
+    source_label: str = "会话临时上传"
+    authorization_status: str = "uploaded"
     created_at: datetime
 
     @field_serializer("created_at")
     def serialize_datetime(self, value: datetime) -> str:
-        return value.isoformat() + "Z"
+        return serialize_datetime_utc(value)
 
     class Config:
         from_attributes = True
@@ -191,11 +214,16 @@ class MessageResponse(BaseModel):
     feedback_rating: int | None = None
     feedback_comment: str | None = None
     sources: list[ChatSourceResponse] = Field(default_factory=list)
+    attachments: list[AttachmentResponse] = Field(default_factory=list)
+    generated_file: dict[str, Any] | None = None
+    skill_run: dict[str, Any] | None = None
+    agent_run: AgentRunResponse | None = None
+    context_trace: dict = Field(default_factory=dict)
     created_at: datetime
 
     @field_serializer("created_at")
     def serialize_datetime(self, value: datetime) -> str:
-        return value.isoformat() + "Z"
+        return serialize_datetime_utc(value)
 
     class Config:
         from_attributes = True
@@ -212,7 +240,7 @@ class MessageVersionResponse(BaseModel):
 
     @field_serializer("created_at")
     def serialize_datetime(self, value: datetime) -> str:
-        return value.isoformat() + "Z"
+        return serialize_datetime_utc(value)
 
     class Config:
         from_attributes = True
@@ -246,6 +274,17 @@ class MessageFeedbackResponse(BaseModel):
     created_at: str
     knowledge_review_id: int | None = None
     knowledge_review_status: str | None = None
+
+
+class GBrainThinkReviewRequest(BaseModel):
+    note: str = Field(default="", max_length=2000)
+
+
+class GBrainThinkReviewResponse(BaseModel):
+    ok: bool
+    knowledge_review_id: int
+    knowledge_review_status: str
+    created: bool
 
 
 class RestoreMessagesResponse(BaseModel):
@@ -527,10 +566,29 @@ def regenerate_message(
         raise HTTPException(status_code=400, detail="缺少可用于重生成的上文")
 
     requested_model = req.model_profile or req.provider or target.provider
+    web_search_query = next(
+        (str(message.get("content") or "") for message in reversed(llm_messages) if message.get("role") == "user"),
+        target.content,
+    )
+    web_sources, web_search_context, web_search_trace = _maybe_run_web_search(
+        web_search_query,
+        req.web_search,
+    )
+    response_sources = _serialize_sources(web_sources)
+    system_prompt = req.system_prompt
+    if req.web_search:
+        system_prompt = _compose_system_prompt(
+            req.system_prompt,
+            [],
+            IntentType.CHAT,
+            "",
+            False,
+            web_search_context=web_search_context,
+        )
     try:
         llm_response = get_llm_client(requested_model).complete(
             llm_messages,
-            system_prompt=req.system_prompt,
+            system_prompt=system_prompt,
             thinking=req.thinking,
             temperature=req.temperature,
         )
@@ -561,8 +619,24 @@ def regenerate_message(
         token_output=usage.get("output_tokens", 0),
         token_total=llm_response.token_cost,
         status="success",
-        rag_used=target.rag_used,
-        sources_json=target.sources_json,
+        rag_used=bool(response_sources) if req.web_search else target.rag_used,
+        sources_json=json.dumps(response_sources, ensure_ascii=False) if req.web_search else target.sources_json,
+        context_json=json.dumps(
+            _build_context_trace(
+                session=session,
+                req=req,
+                attachments=[],
+                sources=response_sources,
+                intent=IntentType.CHAT,
+                provider=llm_response.provider,
+                model=llm_response.model,
+                requested_model=requested_model,
+                extra=_web_search_context_extra(web_search_trace),
+            ),
+            ensure_ascii=False,
+        )
+        if req.web_search
+        else "{}",
         version_group_id=group_id,
         version_index=next_index,
         active_version=True,
@@ -617,10 +691,25 @@ def edit_message(
         extra_tail=[{"role": "user", "content": content}],
     )
     requested_model = req.model_profile or req.provider
+    web_sources, web_search_context, web_search_trace = _maybe_run_web_search(
+        content,
+        req.web_search,
+    )
+    response_sources = _serialize_sources(web_sources)
+    system_prompt = req.system_prompt
+    if req.web_search:
+        system_prompt = _compose_system_prompt(
+            req.system_prompt,
+            [],
+            IntentType.CHAT,
+            "",
+            False,
+            web_search_context=web_search_context,
+        )
     try:
         llm_response = get_llm_client(requested_model).complete(
             llm_messages,
-            system_prompt=req.system_prompt,
+            system_prompt=system_prompt,
             thinking=req.thinking,
         )
     except LLMConfigurationError as exc:
@@ -661,8 +750,24 @@ def edit_message(
         token_output=usage.get("output_tokens", 0),
         token_total=llm_response.token_cost,
         status="success",
-        rag_used=False,
-        sources_json="[]",
+        rag_used=bool(response_sources),
+        sources_json=json.dumps(response_sources, ensure_ascii=False),
+        context_json=json.dumps(
+            _build_context_trace(
+                session=session,
+                req=req,
+                attachments=[],
+                sources=response_sources,
+                intent=IntentType.CHAT,
+                provider=llm_response.provider,
+                model=llm_response.model,
+                requested_model=requested_model,
+                extra=_web_search_context_extra(web_search_trace),
+            ),
+            ensure_ascii=False,
+        )
+        if req.web_search
+        else "{}",
         version_group_id=str(uuid.uuid4()),
     )
     db.add(user_message)
@@ -784,6 +889,51 @@ def submit_message_feedback(
     }
 
 
+@router.post(
+    "/sessions/{session_id}/messages/{message_id}/gbrain-think-review",
+    response_model=GBrainThinkReviewResponse,
+)
+def submit_gbrain_think_review(
+    session_id: int,
+    message_id: int,
+    req: GBrainThinkReviewRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    session = _get_user_session(db, user.id, session_id)
+    message = (
+        _message_query(db, user.id, session_id, include_inactive=True)
+        .filter(ChatMessage.id == message_id, ChatMessage.role == "assistant")
+        .first()
+    )
+    if not message:
+        raise HTTPException(status_code=404, detail="可提交审核的 GBrain 回答不存在")
+    review, created = _create_gbrain_think_review(
+        db,
+        user=user,
+        session=session,
+        message=message,
+        note=req.note.strip()[:2000],
+    )
+    if not review:
+        raise HTTPException(status_code=400, detail="该回答没有可提交审核的 GBrain 缺口、冲突或警告")
+    db.add(
+        AuditLog(
+            user_id=user.id,
+            action="gbrain_think_review_submit",
+            detail=f"会话 {session_id} 回答 {message_id} 提交 GBrain gap/conflict 审核 {review.id}",
+            success=True,
+        )
+    )
+    db.commit()
+    return {
+        "ok": True,
+        "knowledge_review_id": review.id,
+        "knowledge_review_status": review.status,
+        "created": created,
+    }
+
+
 @router.put("/sessions/{session_id}", response_model=SessionResponse)
 def update_session(
     session_id: int,
@@ -865,10 +1015,9 @@ def send_message(
 ):
     session = _get_user_session(db, user.id, session_id)
     content = req.content.strip()
-    if not content:
-        raise HTTPException(status_code=400, detail="消息内容不能为空")
-
     selected_attachments = _load_selected_session_attachments(db, user.id, session_id, req.files)
+    if not content and not selected_attachments:
+        raise HTTPException(status_code=400, detail="消息内容不能为空")
     requested_model = req.model_profile or req.provider
 
     user_message = ChatMessage(
@@ -882,9 +1031,15 @@ def send_message(
     db.add(user_message)
     db.commit()
     db.refresh(user_message)
+    _bind_attachments_to_message(db, selected_attachments, user_message)
 
-    forced_knowledge, knowledge_query, use_gbrain_think = _parse_knowledge_command(content)
-    intent = classify_intent(knowledge_query)
+    forced_knowledge, knowledge_query = _parse_knowledge_command(content)
+    if req.force_knowledge_query:
+        forced_knowledge = True
+        knowledge_query = content
+    llm_user_content = content or _attachment_only_prompt(selected_attachments)
+    query_content = knowledge_query or llm_user_content
+    intent = classify_intent(query_content)
     effective_intent = IntentType.RAG_QUERY if forced_knowledge else intent.intent
     reduce_knowledge_context = _should_reduce_knowledge_context(req.selected_prompt_id, forced_knowledge)
     if reduce_knowledge_context and effective_intent == IntentType.RAG_QUERY:
@@ -892,9 +1047,27 @@ def send_message(
 
     active_skill_response = None
     if effective_intent != IntentType.DOCUMENT_GENERATION and not req.selected_skill:
-        active_skill_response = _continue_active_skill_run(db, user.id, session_id, content)
+        active_skill_response = _continue_active_skill_run(db, user.id, session_id, llm_user_content)
     if active_skill_response:
-        return _write_skill_assistant_response(db, user.id, session, user_message.id, content, active_skill_response)
+        return _write_skill_assistant_response(
+            db,
+            user.id,
+            session,
+            user_message.id,
+            content,
+            active_skill_response,
+            context_trace=_build_context_trace(
+                session=session,
+                req=req,
+                attachments=selected_attachments,
+                sources=[],
+                intent=effective_intent,
+                provider="project_r",
+                model="skill_runner",
+                requested_model=requested_model,
+                extra=_skill_context_extra(active_skill_response),
+            ),
+        )
 
     llm_messages = _build_llm_messages(db, user.id, session_id)
     if req.selected_skill and effective_intent != IntentType.DOCUMENT_GENERATION:
@@ -912,7 +1085,25 @@ def send_message(
             return chat_text_response
         skill_response = _start_skill_run_by_name(db, user.id, session_id, req.selected_skill)
         if skill_response:
-            return _write_skill_assistant_response(db, user.id, session, user_message.id, content, skill_response)
+            return _write_skill_assistant_response(
+                db,
+                user.id,
+                session,
+                user_message.id,
+                content,
+                skill_response,
+                context_trace=_build_context_trace(
+                    session=session,
+                    req=req,
+                    attachments=selected_attachments,
+                    sources=[],
+                    intent=effective_intent,
+                    provider="project_r",
+                    model="skill_runner",
+                    requested_model=requested_model,
+                    extra=_skill_context_extra(skill_response),
+                ),
+            )
     if effective_intent == IntentType.SKILL_TRIGGER:
         matched_skill = SkillRunner.get().match_skill(content)
         if matched_skill:
@@ -930,16 +1121,41 @@ def send_message(
                 return chat_text_response
         skill_response = _start_skill_run_from_chat(db, user.id, session_id, content)
         if skill_response:
-            return _write_skill_assistant_response(db, user.id, session, user_message.id, content, skill_response)
+            return _write_skill_assistant_response(
+                db,
+                user.id,
+                session,
+                user_message.id,
+                content,
+                skill_response,
+                context_trace=_build_context_trace(
+                    session=session,
+                    req=req,
+                    attachments=selected_attachments,
+                    sources=[],
+                    intent=effective_intent,
+                    provider="project_r",
+                    model="skill_runner",
+                    requested_model=requested_model,
+                    extra=_skill_context_extra(skill_response),
+                ),
+            )
 
-    if forced_knowledge and use_gbrain_think:
-        return _run_gbrain_think_response(db, user.id, session, user_message.id, content, knowledge_query)
+    if forced_knowledge:
+        return _run_gbrain_think_response(
+            db,
+            user.id,
+            session,
+            user_message.id,
+            content,
+            query_content,
+        )
 
     try:
         llm_client = get_llm_client(requested_model)
     except LLMConfigurationError as exc:
         _write_failed_assistant_message(db, user.id, session_id, str(exc), requested_model)
-        _write_chat_audit(db, user.id, session_id, content, False, str(exc))
+        _write_chat_audit(db, user.id, session_id, llm_user_content, False, str(exc))
         raise HTTPException(status_code=503, detail="AI 服务暂时不可用，请稍后重试") from exc
 
     selected_image_attachments = [attachment for attachment in selected_attachments if _is_image_attachment(attachment)]
@@ -950,19 +1166,19 @@ def send_message(
     if selected_image_attachments and not supports_vision:
         detail = "当前模型不支持图片理解，请切换到支持图像输入的 MiMo 模型后再发送。"
         _write_failed_assistant_message(db, user.id, session_id, detail, requested_model)
-        _write_chat_audit(db, user.id, session_id, content, False, detail)
+        _write_chat_audit(db, user.id, session_id, llm_user_content, False, detail)
         raise HTTPException(status_code=400, detail=detail)
     if selected_audio_video_attachments:
         detail = "当前版本暂未接入视频/音频附件理解，请先改用图片或可提取文本的附件。"
         _write_failed_assistant_message(db, user.id, session_id, detail, requested_model)
-        _write_chat_audit(db, user.id, session_id, content, False, detail)
+        _write_chat_audit(db, user.id, session_id, llm_user_content, False, detail)
         raise HTTPException(status_code=400, detail=detail)
     try:
         vision_images = _load_vision_image_inputs(selected_image_attachments) if selected_image_attachments else []
     except HTTPException as exc:
         detail = str(exc.detail)
         _write_failed_assistant_message(db, user.id, session_id, detail, requested_model)
-        _write_chat_audit(db, user.id, session_id, content, False, detail)
+        _write_chat_audit(db, user.id, session_id, llm_user_content, False, detail)
         raise
     if vision_images:
         llm_messages = _attach_vision_images_to_latest_user_message(
@@ -972,12 +1188,17 @@ def send_message(
         )
     knowledge_sources = _search_knowledge_sources(
         db,
-        knowledge_query,
+        query_content,
         effective_intent,
         session.workspace_id,
         reduce_knowledge_context=reduce_knowledge_context,
     )
-    response_sources = _serialize_sources(knowledge_sources)
+    web_sources, web_search_context, web_search_trace = _maybe_run_web_search(
+        query_content,
+        req.web_search,
+        source_start_index=len(knowledge_sources) + 1,
+    )
+    response_sources = _serialize_sources([*knowledge_sources, *web_sources])
     attachment_context = _load_attachment_context_from_attachments(selected_attachments, supports_vision=bool(vision_images))
     system_prompt = _compose_system_prompt(
         req.system_prompt,
@@ -985,6 +1206,7 @@ def send_message(
         effective_intent,
         attachment_context,
         reduce_knowledge_context,
+        web_search_context=web_search_context,
     )
 
     try:
@@ -995,7 +1217,7 @@ def send_message(
         )
     except LLMConfigurationError as exc:
         _write_failed_assistant_message(db, user.id, session_id, str(exc), requested_model)
-        _write_chat_audit(db, user.id, session_id, content, False, str(exc))
+        _write_chat_audit(db, user.id, session_id, llm_user_content, False, str(exc))
         raise HTTPException(status_code=503, detail="AI 服务暂时不可用，请稍后重试") from exc
     except LLMProviderError as exc:
         status_code = 503 if exc.retryable else 502
@@ -1003,13 +1225,28 @@ def send_message(
         if exc.key_index:
             detail = f"{detail}（key_index={exc.key_index}）"
         _write_failed_assistant_message(db, user.id, session_id, detail, requested_model)
-        _write_chat_audit(db, user.id, session_id, content, False, detail)
+        _write_chat_audit(db, user.id, session_id, llm_user_content, False, detail)
         raise HTTPException(status_code=status_code, detail="AI 服务暂时不可用，请稍后重试") from exc
 
     usage = llm_response.usage
     generated_file = None
     if effective_intent == IntentType.DOCUMENT_GENERATION:
         generated_file = _create_generated_docx(db, user.id, session_id, content, llm_response.text)
+    context_trace = _build_context_trace(
+        session=session,
+        req=req,
+        attachments=selected_attachments,
+        sources=response_sources,
+        intent=effective_intent,
+        provider=llm_response.provider,
+        model=llm_response.model,
+        requested_model=requested_model,
+        reduce_knowledge_context=reduce_knowledge_context,
+        extra={
+            "generated_file": _generated_file_context(generated_file),
+            **_web_search_context_extra(web_search_trace),
+        },
+    )
     assistant_message = ChatMessage(
         session_id=session_id,
         user_id=user.id,
@@ -1023,18 +1260,30 @@ def send_message(
         status="success",
         rag_used=bool(response_sources),
         sources_json=json.dumps(response_sources, ensure_ascii=False),
+        context_json=json.dumps(context_trace, ensure_ascii=False),
         version_group_id=str(uuid.uuid4()),
     )
     db.add(assistant_message)
     session.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(assistant_message)
+    agent_run = None
+    if generated_file:
+        agent_run = _write_document_generation_agent_run(
+            db,
+            user_id=user.id,
+            session=session,
+            message_id=assistant_message.id,
+            user_prompt=content,
+            generated_file=generated_file,
+        )
+        db.commit()
 
     _write_chat_audit(
         db,
         user.id,
         session_id,
-        content,
+        llm_user_content,
         True,
         f"provider={llm_response.provider}, model={llm_response.model}, key_index={llm_response.key_index}",
         token_cost=llm_response.token_cost,
@@ -1052,6 +1301,9 @@ def send_message(
         "sources": response_sources,
         "generated_file": generated_file,
         "skill_run": None,
+        "user_attachments": [_attachment_to_response_dict(attachment) for attachment in selected_attachments],
+        "agent_run": serialize_agent_run(db, agent_run),
+        "context_trace": context_trace,
     }
 
 
@@ -1075,6 +1327,9 @@ def create_session_attachment(
         filename,
         req.content_type,
         content_bytes,
+        source_scope=req.source_scope,
+        source_label=req.source_label,
+        authorization_status=req.authorization_status,
     )
 
 
@@ -1084,6 +1339,9 @@ async def upload_session_attachment(
     file: UploadFile = File(...),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    source_scope: str = Form("session_upload"),
+    source_label: str = Form("会话临时上传"),
+    authorization_status: str = Form("uploaded"),
 ):
     _get_user_session(db, user.id, session_id)
     filename = _safe_filename(file.filename or "attachment")
@@ -1100,6 +1358,9 @@ async def upload_session_attachment(
         filename,
         file.content_type or "application/octet-stream",
         content,
+        source_scope=source_scope,
+        source_label=source_label,
+        authorization_status=authorization_status,
     )
 
 
@@ -1110,6 +1371,9 @@ def _store_session_attachment(
     filename: str,
     content_type: str,
     content: bytes,
+    source_scope: str = "session_upload",
+    source_label: str = "会话临时上传",
+    authorization_status: str = "uploaded",
 ) -> SessionAttachment:
     return session_attachments.store_session_attachment(
         db,
@@ -1119,7 +1383,30 @@ def _store_session_attachment(
         _safe_content_type(content_type, filename),
         content,
         attachment_dir=_attachment_dir,
+        source_scope=source_scope,
+        source_label=source_label,
+        authorization_status=authorization_status,
     )
+
+
+def _get_user_session_attachment(
+    db: Session,
+    user_id: int,
+    session_id: int,
+    attachment_id: int,
+) -> SessionAttachment:
+    attachment = (
+        db.query(SessionAttachment)
+        .filter(
+            SessionAttachment.id == attachment_id,
+            SessionAttachment.session_id == session_id,
+            SessionAttachment.user_id == user_id,
+        )
+        .first()
+    )
+    if not attachment:
+        raise HTTPException(status_code=404, detail="附件不存在")
+    return attachment
 
 
 @router.get("/sessions/{session_id}/attachments", response_model=list[AttachmentResponse])
@@ -1130,6 +1417,25 @@ def list_session_attachments(
 ):
     _get_user_session(db, user.id, session_id)
     return session_attachments.list_session_attachments(db, user.id, session_id)
+
+
+@router.get("/sessions/{session_id}/attachments/{attachment_id}/content")
+def get_session_attachment_content(
+    session_id: int,
+    attachment_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _get_user_session(db, user.id, session_id)
+    attachment = _get_user_session_attachment(db, user.id, session_id, attachment_id)
+    path = Path(attachment.stored_path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="附件文件不存在")
+    return FileResponse(
+        path,
+        media_type=attachment.content_type or "application/octet-stream",
+        filename=attachment.original_name,
+    )
 
 
 @router.delete("/sessions/{session_id}/attachments/{attachment_id}")
@@ -1249,9 +1555,41 @@ def _message_versions(db: Session, message: ChatMessage) -> list[ChatMessage]:
     )
 
 
+def _attachment_to_response_dict(attachment: SessionAttachment) -> dict:
+    return {
+        "id": attachment.id,
+        "session_id": attachment.session_id,
+        "message_id": attachment.message_id,
+        "original_name": attachment.original_name,
+        "content_type": attachment.content_type,
+        "size": attachment.size,
+        "source_scope": attachment.source_scope,
+        "source_label": attachment.source_label,
+        "authorization_status": attachment.authorization_status,
+        "created_at": serialize_datetime_utc(attachment.created_at),
+    }
+
+
+def _message_attachments(db: Session, message: ChatMessage) -> list[SessionAttachment]:
+    return (
+        db.query(SessionAttachment)
+        .filter(
+            SessionAttachment.session_id == message.session_id,
+            SessionAttachment.user_id == message.user_id,
+            SessionAttachment.message_id == message.id,
+        )
+        .order_by(SessionAttachment.created_at.asc(), SessionAttachment.id.asc())
+        .all()
+    )
+
+
 def _message_to_response_dict(db: Session, message: ChatMessage) -> dict:
     versions = _message_versions(db, message)
     feedback = _load_latest_message_feedback(message)
+    attachments = _message_attachments(db, message)
+    agent_run = get_agent_run_for_message(db, message.user_id, message.id)
+    serialized_agent_run = serialize_agent_run(db, agent_run)
+    agent_result = serialized_agent_run.get("result", {}) if serialized_agent_run else {}
     return {
         "id": message.id,
         "session_id": message.session_id,
@@ -1278,14 +1616,19 @@ def _message_to_response_dict(db: Session, message: ChatMessage) -> dict:
                 "model": version.model,
                 "version_index": version.version_index or 1,
                 "active_version": version.active_version,
-                "created_at": version.created_at,
+                "created_at": serialize_datetime_utc(version.created_at),
             }
             for version in versions
         ],
         "feedback_rating": feedback.get("rating") if feedback else None,
         "feedback_comment": feedback.get("comment") if feedback else None,
         "sources": message.sources,
-        "created_at": message.created_at,
+        "attachments": [_attachment_to_response_dict(attachment) for attachment in attachments],
+        "generated_file": agent_result.get("generated_file"),
+        "skill_run": agent_result.get("skill_run"),
+        "agent_run": serialized_agent_run,
+        "context_trace": message.context_trace,
+        "created_at": serialize_datetime_utc(message.created_at),
     }
 
 
@@ -1307,11 +1650,11 @@ def _build_llm_messages_before(
         .limit(HISTORY_LIMIT)
         .all()
     )
-    payload = [
-        {"role": message.role, "content": message.content}
-        for message in reversed(messages)
-        if message.content
-    ]
+    payload = []
+    for message in reversed(messages):
+        content = _message_llm_content(db, message)
+        if content:
+            payload.append({"role": message.role, "content": content})
     if extra_tail:
         payload.extend(extra_tail)
     return payload
@@ -1374,7 +1717,7 @@ def _write_message_feedback(user: User, message: ChatMessage, rating: int, comme
     payload = {
         "schema_version": 1,
         "feedback_id": feedback_id,
-        "created_at": created_at.isoformat().replace("+00:00", "Z"),
+        "created_at": serialize_datetime_utc(created_at),
         "rating": rating,
         "comment": comment,
         "user": {
@@ -1446,6 +1789,52 @@ def _maybe_create_answer_correction_review(
     db.flush()
     notify_knowledge_review_pending(db, review_id=review.id, source=source)
     return review
+
+
+def _create_gbrain_think_review(
+    db: Session,
+    *,
+    user: User,
+    session: ChatSession,
+    message: ChatMessage,
+    note: str,
+) -> tuple[KnowledgeReview | None, bool]:
+    trace = message.context_trace
+    gbrain_think = trace.get("gbrain_think") if isinstance(trace.get("gbrain_think"), dict) else {}
+    gaps = _safe_trace_list(gbrain_think.get("gaps"))
+    conflicts = _safe_trace_list(gbrain_think.get("conflicts"))
+    warnings = _safe_trace_list(gbrain_think.get("warnings"))
+    if not (gaps or conflicts or warnings):
+        return None, False
+
+    source = f"{GBRAIN_THINK_REVIEW_PREFIX}{message.id}"
+    content = _build_gbrain_think_review_content(
+        user=user,
+        session=session,
+        message=message,
+        note=note,
+        question=_previous_user_message_content(db, message),
+        sources=_gbrain_sources_for_message(message),
+        gbrain_think=gbrain_think,
+        gaps=gaps,
+        conflicts=conflicts,
+        warnings=warnings,
+    )
+    review = (
+        db.query(KnowledgeReview)
+        .filter(KnowledgeReview.source == source, KnowledgeReview.status == "pending")
+        .order_by(KnowledgeReview.created_at.desc(), KnowledgeReview.id.desc())
+        .first()
+    )
+    created = review is None
+    if review:
+        review.content = content
+    else:
+        review = KnowledgeReview(submitter_id=user.id, content=content, source=source)
+        db.add(review)
+    db.flush()
+    notify_knowledge_review_pending(db, review_id=review.id, source=source)
+    return review, created
 
 
 def _gbrain_sources_for_message(message: ChatMessage) -> list[dict]:
@@ -1530,6 +1919,73 @@ def _build_answer_correction_review_content(
     )
 
 
+def _build_gbrain_think_review_content(
+    *,
+    user: User,
+    session: ChatSession,
+    message: ChatMessage,
+    note: str,
+    question: str,
+    sources: list[dict],
+    gbrain_think: dict,
+    gaps: list[str],
+    conflicts: list[str],
+    warnings: list[str],
+) -> str:
+    source_lines = []
+    for index, source in enumerate(sources, start=1):
+        source_lines.append(
+            "\n".join(
+                [
+                    f"{index}. `{_safe_review_text(str(source.get('file') or 'gbrain'))}`",
+                    f"   - 标题 / Title: {_safe_review_text(str(source.get('source_title') or ''))}",
+                    f"   - 位置 / Path: {_safe_review_text(str(source.get('section_path') or ''))}",
+                    f"   - 摘录 / Excerpt: {_safe_review_text(str(source.get('content') or ''), 500)}",
+                ]
+            )
+        )
+    source_block = "\n".join(source_lines) or "- 无引用来源 / No citation source."
+    question_text = question or "未找到上一条用户问题。 / Previous user question was not found."
+    note_text = note or "用户未补充说明。 / No additional user note."
+    gap_block = "\n".join(f"- {item}" for item in gaps) or "- 无 / None"
+    conflict_block = "\n".join(f"- {item}" for item in conflicts) or "- 无 / None"
+    warning_block = "\n".join(f"- {item}" for item in warnings) or "- 无 / None"
+    diagnostics = gbrain_think.get("diagnostics") if isinstance(gbrain_think.get("diagnostics"), dict) else {}
+    return (
+        "# GBrain Think 缺口 / 冲突审核候选\n\n"
+        "> 本候选来自 GBrain Think 在回答时返回的 gap/conflict/warning。管理员需要判断它是资料缺失、资料冲突、检索范围问题，还是回答组织问题；"
+        "审核通过前不得把未核实的 gap/conflict 直接写成事实。\n\n"
+        "> This candidate comes from GBrain Think gaps/conflicts/warnings. Before approval, an administrator must decide whether it indicates missing knowledge, conflicting sources, retrieval scope issues, or answer-composition issues. Do not turn unverified gaps/conflicts into facts.\n\n"
+        "## 元数据 / Metadata\n\n"
+        f"- user: `{user.username}` / `{user.nickname}`\n"
+        f"- session_id: {session.id}\n"
+        f"- workspace_id: {session.workspace_id if session.workspace_id is not None else 'company-wiki'}\n"
+        f"- assistant_message_id: {message.id}\n"
+        f"- source_id: `{_safe_review_text(str(gbrain_think.get('source_id') or ''))}`\n"
+        f"- status: `{_safe_review_text(str(gbrain_think.get('status') or ''))}`\n"
+        f"- model: `{_safe_review_text(str(gbrain_think.get('model') or message.model or ''))}`\n"
+        f"- trace_id: `{_safe_review_text(str(diagnostics.get('trace_id') or ''))}`\n\n"
+        "## 用户补充 / User Note\n\n"
+        f"- 中文：{_safe_review_text(note_text)}\n"
+        f"- English: Same user note for review: {_safe_review_text(note_text)}\n\n"
+        "## 原问题 / Original Question\n\n"
+        f"{_safe_review_text(question_text, 1200)}\n\n"
+        "## 原回答摘录 / Answer Excerpt\n\n"
+        f"{_safe_review_text(message.content, 1600)}\n\n"
+        "## GBrain 缺口 / Gaps\n\n"
+        f"{_safe_review_text(gap_block, 1600)}\n\n"
+        "## GBrain 冲突 / Conflicts\n\n"
+        f"{_safe_review_text(conflict_block, 1600)}\n\n"
+        "## GBrain 警告 / Warnings\n\n"
+        f"{_safe_review_text(warning_block, 1600)}\n\n"
+        "## GBrain 引用来源 / GBrain Citations\n\n"
+        f"{source_block}\n\n"
+        "## 管理员处理建议 / Admin Triage Guidance\n\n"
+        "- 中文：资料缺失时补充经验证知识；资料冲突时进入 contradiction review；引用格式问题可调用 citation-fixer；检索范围问题应先检查 source scope 和权限。\n"
+        "- English: Add verified knowledge for real gaps; route source conflicts to contradiction review; use citation-fixer for citation-format issues; check source scope and permissions for retrieval-scope issues.\n"
+    )
+
+
 def _safe_review_text(value: str, limit: int = 2000) -> str:
     text = str(value or "").strip()
     if not text:
@@ -1561,31 +2017,52 @@ def _build_llm_messages(db: Session, user_id: int, session_id: int) -> list[dict
         .limit(HISTORY_LIMIT)
         .all()
     )
-    return [
-        {"role": message.role, "content": message.content}
-        for message in reversed(messages)
-        if message.content
-    ]
+    payload = []
+    for message in reversed(messages):
+        content = _message_llm_content(db, message)
+        if content:
+            payload.append({"role": message.role, "content": content})
+    return payload
 
 
-def _parse_knowledge_command(content: str) -> tuple[bool, str, bool]:
+def _message_llm_content(db: Session, message: ChatMessage) -> str:
+    if message.content:
+        return message.content
+    if message.role != "user":
+        return ""
+    return _attachment_only_prompt(_message_attachments(db, message))
+
+
+def _attachment_only_prompt(attachments: list[SessionAttachment]) -> str:
+    if not attachments:
+        return ""
+    names = "、".join(attachment.original_name for attachment in attachments[:6])
+    suffix = "等附件" if len(attachments) > 6 else "附件"
+    return f"请根据本轮上传的{suffix}回答。附件：{names}"
+
+
+def _bind_attachments_to_message(
+    db: Session,
+    attachments: list[SessionAttachment],
+    message: ChatMessage,
+) -> None:
+    if not attachments:
+        return
+    for attachment in attachments:
+        attachment.message_id = message.id
+    db.commit()
+    for attachment in attachments:
+        db.refresh(attachment)
+
+
+def _parse_knowledge_command(content: str) -> tuple[bool, str]:
     stripped = content.strip()
-    if stripped == KNOWLEDGE_THINK_COMMAND_PREFIX:
-        return True, stripped, True
-    if stripped.startswith(f"{KNOWLEDGE_THINK_COMMAND_PREFIX} "):
-        query = stripped[len(KNOWLEDGE_THINK_COMMAND_PREFIX) :].strip()
-        return True, query or stripped, True
     if stripped == KNOWLEDGE_COMMAND_PREFIX:
-        return True, stripped, False
+        return True, stripped
     if stripped.startswith(f"{KNOWLEDGE_COMMAND_PREFIX} "):
         query = stripped[len(KNOWLEDGE_COMMAND_PREFIX) :].strip()
-        if query.lower() == "--think":
-            return True, stripped, True
-        if query.lower().startswith("--think "):
-            think_query = query[len("--think") :].strip()
-            return True, think_query or stripped, True
-        return True, query or stripped, False
-    return False, stripped, False
+        return True, query or stripped
+    return False, stripped
 
 
 def _safe_filename(filename: str) -> str:
@@ -1602,15 +2079,8 @@ def _attachment_dir(db: Session, user: User, session_id: int) -> Path:
         user,
         session_id,
         fallback_root=SESSION_ATTACHMENTS_ROOT,
-        default_workspace_resolver=_default_workspace_for_attachment,
         logger=logger,
     )
-
-
-def _default_workspace_for_attachment(db: Session, user: User):
-    from api.workspaces import ensure_default_workspace
-
-    return ensure_default_workspace(db, user)
 
 
 def _load_attachment_context(
@@ -1817,6 +2287,412 @@ def _create_generated_docx(
     }
 
 
+def _build_context_trace(
+    *,
+    session: ChatSession,
+    req: SendMessageRequest | None,
+    attachments: list[SessionAttachment],
+    sources: list[dict],
+    intent: IntentType,
+    provider: str | None,
+    model: str | None,
+    requested_model: str | None = None,
+    reduce_knowledge_context: bool = False,
+    extra: dict | None = None,
+) -> dict:
+    system_prompt = getattr(req, "system_prompt", None) if req else None
+    return {
+        "schema_version": 1,
+        "workspace_id": session.workspace_id,
+        "intent": intent.value if isinstance(intent, IntentType) else str(intent),
+        "model": {
+            "provider": provider,
+            "model": model,
+            "requested_model": requested_model,
+            "thinking": bool(getattr(req, "thinking", False)) if req else False,
+            "web_search": bool(getattr(req, "web_search", False)) if req else False,
+        },
+        "prompt": {
+            "selected_prompt_id": getattr(req, "selected_prompt_id", None) if req else None,
+            "selected_skill": getattr(req, "selected_skill", None) if req else None,
+            "system_prompt_provided": bool(system_prompt and system_prompt.strip()),
+            "system_prompt_preview": _trace_preview(system_prompt, 220),
+        },
+        "attachments": [_attachment_trace_dict(attachment) for attachment in attachments],
+        "knowledge": {
+            "reduce_context": reduce_knowledge_context,
+            "source_count": len(sources),
+            "sources": [_source_trace_dict(source, index) for index, source in enumerate(sources[:12], start=1)],
+        },
+        **(extra or {}),
+    }
+
+
+def _attachment_trace_dict(attachment: SessionAttachment) -> dict:
+    return {
+        "id": attachment.id,
+        "session_id": attachment.session_id,
+        "message_id": attachment.message_id,
+        "name": attachment.original_name,
+        "content_type": attachment.content_type,
+        "size": attachment.size,
+    }
+
+
+def _source_trace_dict(source: dict, index: int) -> dict:
+    return {
+        "index": index,
+        "file": source.get("file"),
+        "source_title": source.get("source_title"),
+        "section_path": source.get("section_path"),
+        "score": source.get("score"),
+        "source_file": source.get("source_file"),
+        "source_locator": source.get("source_locator"),
+    }
+
+
+def _safe_trace_list(value: object, *, limit: int = 6, item_limit: int = 220) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value[:limit]:
+        text = str(item or "").strip()
+        if text:
+            result.append(text[:item_limit])
+    return result
+
+
+def _gbrain_think_trace(think_result: dict) -> dict:
+    metadata = think_result.get("metadata") if isinstance(think_result.get("metadata"), dict) else {}
+    gaps = _safe_trace_list(metadata.get("gaps"))
+    conflicts = _safe_trace_list(metadata.get("conflicts"))
+    warnings = _safe_trace_list(metadata.get("warnings"))
+    diagnostics = metadata.get("diagnostics") if isinstance(metadata.get("diagnostics"), dict) else {}
+    return {
+        "source_id": think_result.get("source_id"),
+        "status": think_result.get("status"),
+        "model": think_result.get("model"),
+        "gap_count": len(metadata.get("gaps") if isinstance(metadata.get("gaps"), list) else []),
+        "conflict_count": len(metadata.get("conflicts") if isinstance(metadata.get("conflicts"), list) else []),
+        "warning_count": len(metadata.get("warnings") if isinstance(metadata.get("warnings"), list) else []),
+        "gaps": gaps,
+        "conflicts": conflicts,
+        "warnings": warnings,
+        "diagnostics": {
+            "trace_id": diagnostics.get("trace_id"),
+            "pipeline": diagnostics.get("pipeline"),
+        },
+    }
+
+
+def _skill_context_extra(skill_response: dict) -> dict:
+    skill_run = skill_response.get("skill_run") or {}
+    skill = skill_run.get("skill") or {}
+    return {
+        "skill": {
+            "run_id": skill_run.get("id"),
+            "skill_name": skill_run.get("skill_name"),
+            "display_name": skill.get("display_name"),
+            "status": skill_run.get("status"),
+            "missing_input_count": len(skill_run.get("missing_inputs") or []),
+        },
+        "generated_file": _generated_file_context(skill_response.get("generated_file")),
+    }
+
+
+def _generated_file_context(generated_file: dict | None) -> dict | None:
+    if not generated_file:
+        return None
+    return {
+        "id": generated_file.get("id"),
+        "filename": generated_file.get("filename"),
+        "mime_type": generated_file.get("mime_type"),
+        "download_url": generated_file.get("download_url"),
+    }
+
+
+def _trace_preview(value: str | None, limit: int = 160) -> str:
+    text = (value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "..."
+
+
+def _write_document_generation_agent_run(
+    db: Session,
+    *,
+    user_id: int,
+    session: ChatSession,
+    message_id: int,
+    user_prompt: str,
+    generated_file: dict,
+):
+    title = f"生成文件：{generated_file.get('filename') or _safe_document_title(user_prompt)}"
+    run = create_agent_run(
+        db,
+        user_id=user_id,
+        session_id=session.id,
+        message_id=message_id,
+        workspace_id=session.workspace_id,
+        source_type="document_generation",
+        source_id=str(generated_file.get("id") or ""),
+        title=title,
+        status="running",
+    )
+    add_agent_event(
+        db,
+        run,
+        event_type="plan",
+        title="识别文件生成任务",
+        detail=_safe_event_detail(user_prompt),
+        status="completed",
+    )
+    add_agent_event(
+        db,
+        run,
+        event_type="tool_call",
+        title="渲染 Word 文档",
+        detail=str(generated_file.get("filename") or ""),
+        status="completed",
+        payload={"tool": "document_generation.render_docx", "file_id": generated_file.get("id")},
+    )
+    add_agent_event(
+        db,
+        run,
+        event_type="result",
+        title="文件已生成",
+        detail=str(generated_file.get("filename") or ""),
+        status="completed",
+        payload={"generated_file": generated_file},
+    )
+    return finish_agent_run(db, run, status="completed", result={"generated_file": generated_file})
+
+
+def _write_skill_agent_run(
+    db: Session,
+    *,
+    user_id: int,
+    session: ChatSession,
+    message_id: int,
+    skill_response: dict,
+):
+    skill_run = skill_response.get("skill_run") or {}
+    generated_file = skill_response.get("generated_file")
+    status = _agent_status_for_skill_status(str(skill_run.get("status") or "running"))
+    skill_name = str(skill_run.get("skill_name") or "skill")
+    display_name = str(((skill_run.get("skill") or {}).get("display_name")) or skill_name)
+    run = create_agent_run(
+        db,
+        user_id=user_id,
+        session_id=session.id,
+        message_id=message_id,
+        workspace_id=session.workspace_id,
+        source_type="skill",
+        source_id=str(skill_run.get("id") or ""),
+        title=f"运行 Skill：{display_name}",
+        status="running",
+    )
+    add_agent_event(
+        db,
+        run,
+        event_type="skill_selected",
+        title="已选择业务 Skill",
+        detail=display_name,
+        status="completed",
+        payload={"skill_name": skill_name, "skill_run_id": skill_run.get("id")},
+    )
+    dispatch = skill_run.get("dispatch") or {}
+    dispatch_steps = dispatch.get("steps") or []
+    if dispatch:
+        add_agent_event(
+            db,
+            run,
+            event_type="execution_plan",
+            title="读取 Skill 执行计划",
+            detail=str(dispatch.get("mode") or "manual"),
+            status="completed",
+            payload={
+                "mode": dispatch.get("mode"),
+                "risk_level": dispatch.get("risk_level"),
+                "requires_confirmation": dispatch.get("requires_confirmation"),
+                "allowed_tools": dispatch.get("allowed_tools") or [],
+                "steps": dispatch_steps,
+            },
+        )
+    missing_inputs = skill_run.get("missing_inputs") or []
+    if missing_inputs:
+        add_agent_event(
+            db,
+            run,
+            event_type="input_request",
+            title="等待用户补充参数",
+            detail=f"还需要 {len(missing_inputs)} 个字段",
+            status="waiting",
+            payload={"missing_inputs": missing_inputs},
+        )
+    elif generated_file:
+        if dispatch_steps:
+            for step in dispatch_steps:
+                add_agent_event(
+                    db,
+                    run,
+                    event_type="tool_call",
+                    title=str(step.get("label") or step.get("tool") or "执行 Skill 工具"),
+                    detail=str(step.get("tool") or ""),
+                    status="completed",
+                    payload={
+                        "tool": step.get("tool"),
+                        "step_id": step.get("id"),
+                        "risk_level": step.get("risk_level"),
+                    },
+                )
+        else:
+            add_agent_event(
+                db,
+                run,
+                event_type="tool_call",
+                title="执行 Skill 并生成文件",
+                detail=str(generated_file.get("filename") or ""),
+                status="completed",
+                payload={"generated_file": generated_file},
+            )
+        add_agent_event(
+            db,
+            run,
+            event_type="result",
+            title="Skill 产物已生成",
+            detail=str(generated_file.get("filename") or ""),
+            status="completed",
+            payload={"generated_file": generated_file},
+        )
+    else:
+        if dispatch_steps:
+            for step in dispatch_steps:
+                add_agent_event(
+                    db,
+                    run,
+                    event_type="tool_call",
+                    title=str(step.get("label") or step.get("tool") or "执行 Skill 工具"),
+                    detail=str(step.get("tool") or ""),
+                    status=status,
+                    payload={
+                        "tool": step.get("tool"),
+                        "step_id": step.get("id"),
+                        "risk_level": step.get("risk_level"),
+                        "skill_status": skill_run.get("status"),
+                    },
+                )
+        else:
+            add_agent_event(
+                db,
+                run,
+                event_type="tool_call",
+                title="执行 Skill",
+                detail=_safe_event_detail(skill_response.get("reply") or ""),
+                status=status,
+                payload={"skill_status": skill_run.get("status")},
+            )
+        if status == "completed":
+            add_agent_event(
+                db,
+                run,
+                event_type="result",
+                title="Skill 输出已生成",
+                detail=_safe_event_detail(skill_response.get("reply") or ""),
+                status="completed",
+                payload={"output_type": "chat_text"},
+            )
+    result = {"skill_run": skill_run}
+    if generated_file:
+        result["generated_file"] = generated_file
+    return finish_agent_run(db, run, status=status, result=result)
+
+
+def _write_gbrain_think_agent_run(
+    db: Session,
+    *,
+    user_id: int,
+    session: ChatSession,
+    message_id: int,
+    query: str,
+    think_result: dict,
+    response_sources: list[dict],
+):
+    ok = bool(think_result.get("ok"))
+    run = create_agent_run(
+        db,
+        user_id=user_id,
+        session_id=session.id,
+        message_id=message_id,
+        workspace_id=session.workspace_id,
+        source_type="gbrain_think",
+        source_id=str(think_result.get("source_id") or ""),
+        title="GBrain Think 知识推理",
+        status="running",
+    )
+    add_agent_event(
+        db,
+        run,
+        event_type="context_trace",
+        title="限定知识库 Source",
+        detail=str(think_result.get("source_id") or session.workspace_id or "company-wiki"),
+        status="completed",
+        payload={"workspace_id": session.workspace_id, "source_id": think_result.get("source_id")},
+    )
+    add_agent_event(
+        db,
+        run,
+        event_type="tool_call",
+        title="调用 GBrain think",
+        detail=_safe_event_detail(query),
+        status="completed" if ok else "failed",
+        payload={
+            "model": think_result.get("model"),
+            "status": think_result.get("status"),
+            "source_count": len(response_sources),
+            "gaps": _safe_trace_list((think_result.get("metadata") or {}).get("gaps") if isinstance(think_result.get("metadata"), dict) else []),
+            "conflicts": _safe_trace_list((think_result.get("metadata") or {}).get("conflicts") if isinstance(think_result.get("metadata"), dict) else []),
+            "warnings": _safe_trace_list((think_result.get("metadata") or {}).get("warnings") if isinstance(think_result.get("metadata"), dict) else []),
+        },
+    )
+    if response_sources:
+        add_agent_event(
+            db,
+            run,
+            event_type="citation",
+            title="整理引用来源",
+            detail=f"{len(response_sources)} 个来源",
+            status="completed",
+            payload={"sources": response_sources[:8]},
+        )
+    error_message = "" if ok else str(think_result.get("error") or think_result.get("status") or "GBrain think unavailable")
+    return finish_agent_run(
+        db,
+        run,
+        status="completed" if ok else "failed",
+        result={
+            "model": think_result.get("model"),
+            "source_id": think_result.get("source_id"),
+            "source_count": len(response_sources),
+            "gbrain_think": _gbrain_think_trace(think_result),
+        },
+        error_message=error_message,
+    )
+
+
+def _agent_status_for_skill_status(status: str) -> str:
+    if status in {"completed", "failed"}:
+        return status
+    if status == "collecting_inputs":
+        return "waiting"
+    return "running"
+
+
+def _safe_event_detail(value: object, limit: int = 240) -> str:
+    text = str(value or "").strip()
+    return text[:limit]
+
+
 def _start_skill_run_from_chat(db: Session, user_id: int, session_id: int, content: str) -> dict | None:
     runner = SkillRunner.get()
     match = runner.match_skill(content)
@@ -1931,7 +2807,9 @@ def _write_skill_assistant_response(
     user_message_id: int,
     content: str,
     skill_response: dict,
+    context_trace: dict | None = None,
 ) -> dict:
+    context_trace = context_trace or {}
     assistant_message = ChatMessage(
         session_id=session.id,
         user_id=user_id,
@@ -1945,12 +2823,21 @@ def _write_skill_assistant_response(
         status="success",
         rag_used=False,
         sources_json="[]",
+        context_json=json.dumps(context_trace, ensure_ascii=False),
         version_group_id=str(uuid.uuid4()),
     )
     db.add(assistant_message)
     session.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(assistant_message)
+    agent_run = _write_skill_agent_run(
+        db,
+        user_id=user_id,
+        session=session,
+        message_id=assistant_message.id,
+        skill_response=skill_response,
+    )
+    db.commit()
     _write_chat_audit(
         db,
         user_id,
@@ -1972,6 +2859,8 @@ def _write_skill_assistant_response(
         "sources": [],
         "generated_file": skill_response.get("generated_file"),
         "skill_run": skill_response["skill_run"],
+        "agent_run": serialize_agent_run(db, agent_run),
+        "context_trace": context_trace,
     }
 
 
@@ -1986,6 +2875,22 @@ def _run_gbrain_think_response(
     think_result = KNOWLEDGE_SOURCES.think(db, knowledge_query, workspace_id=session.workspace_id)
     response_sources = _serialize_sources(think_result.get("sources", []))
     ok = bool(think_result.get("ok"))
+    context_trace = _build_context_trace(
+        session=session,
+        req=None,
+        attachments=[],
+        sources=response_sources,
+        intent=IntentType.RAG_QUERY,
+        provider="gbrain",
+        model=str(think_result.get("model") or ("think" if ok else "think-unavailable")),
+        requested_model="gbrain_think",
+        extra={
+            "knowledge_query": knowledge_query,
+            "gbrain_source_id": think_result.get("source_id"),
+            "gbrain_status": think_result.get("status"),
+            "gbrain_think": _gbrain_think_trace(think_result),
+        },
+    )
     assistant_message = ChatMessage(
         session_id=session.id,
         user_id=user_id,
@@ -1999,6 +2904,7 @@ def _run_gbrain_think_response(
         status="success",
         rag_used=bool(response_sources),
         sources_json=json.dumps(response_sources, ensure_ascii=False),
+        context_json=json.dumps(context_trace, ensure_ascii=False),
         version_group_id=str(uuid.uuid4()),
     )
     db.add(assistant_message)
@@ -2017,6 +2923,16 @@ def _run_gbrain_think_response(
     )
     db.commit()
     db.refresh(assistant_message)
+    agent_run = _write_gbrain_think_agent_run(
+        db,
+        user_id=user_id,
+        session=session,
+        message_id=assistant_message.id,
+        query=knowledge_query,
+        think_result=think_result,
+        response_sources=response_sources,
+    )
+    db.commit()
     return {
         "user_message_id": user_message_id,
         "assistant_message_id": assistant_message.id,
@@ -2029,6 +2945,8 @@ def _run_gbrain_think_response(
         "sources": response_sources,
         "generated_file": None,
         "skill_run": None,
+        "agent_run": serialize_agent_run(db, agent_run),
+        "context_trace": context_trace,
     }
 
 
@@ -2046,6 +2964,7 @@ def _run_chat_text_skill_by_name(
     skill = runner.get_skill(skill_name)
     if not skill or not _skill_outputs_chat_text(skill):
         return None
+    _ensure_llm_chat_text_skill_allowed(skill)
 
     input_payload = _chat_text_skill_input_payload(skill, content)
     run = runner.start_run(db, skill.name, user_id=user.id, session_id=session.id, inputs=input_payload)
@@ -2061,8 +2980,14 @@ def _run_chat_text_skill_by_name(
         session.workspace_id,
         reduce_knowledge_context=reduce_knowledge_context,
     )
-    response_sources = _serialize_sources(knowledge_sources)
-    attachment_context = _load_attachment_context(db, user.id, session.id, req.files)
+    web_sources, web_search_context, web_search_trace = _maybe_run_web_search(
+        content,
+        req.web_search,
+        source_start_index=len(knowledge_sources) + 1,
+    )
+    response_sources = _serialize_sources([*knowledge_sources, *web_sources])
+    selected_attachments = _load_selected_session_attachments(db, user.id, session.id, req.files)
+    attachment_context = _load_attachment_context_from_attachments(selected_attachments, supports_vision=False)
     skill_prompt = _load_skill_prompt(skill)
     system_prompt = _compose_system_prompt(
         _compose_skill_base_prompt(req.system_prompt, skill.display_name, skill_prompt),
@@ -2070,6 +2995,7 @@ def _run_chat_text_skill_by_name(
         intent,
         attachment_context,
         reduce_knowledge_context,
+        web_search_context=web_search_context,
     )
     requested_model = req.model_profile or req.provider
 
@@ -2093,6 +3019,22 @@ def _run_chat_text_skill_by_name(
         raise HTTPException(status_code=status_code, detail="AI 服务暂时不可用，请稍后重试") from exc
 
     usage = llm_response.usage
+    skill_payload = run_to_dict(run, skill)
+    context_trace = _build_context_trace(
+        session=session,
+        req=req,
+        attachments=selected_attachments,
+        sources=response_sources,
+        intent=IntentType.SKILL_TRIGGER,
+        provider=llm_response.provider,
+        model=llm_response.model,
+        requested_model=requested_model,
+        reduce_knowledge_context=reduce_knowledge_context,
+        extra={
+            **_skill_context_extra({"skill_run": skill_payload}),
+            **_web_search_context_extra(web_search_trace),
+        },
+    )
     assistant_message = ChatMessage(
         session_id=session.id,
         user_id=user.id,
@@ -2106,12 +3048,25 @@ def _run_chat_text_skill_by_name(
         status="success",
         rag_used=bool(response_sources),
         sources_json=json.dumps(response_sources, ensure_ascii=False),
+        context_json=json.dumps(context_trace, ensure_ascii=False),
         version_group_id=str(uuid.uuid4()),
     )
     db.add(assistant_message)
     session.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(assistant_message)
+    agent_run = _write_skill_agent_run(
+        db,
+        user_id=user.id,
+        session=session,
+        message_id=assistant_message.id,
+        skill_response={
+            "reply": llm_response.text,
+            "skill_run": skill_payload,
+            "generated_file": None,
+        },
+    )
+    db.commit()
 
     _write_chat_audit(
         db,
@@ -2134,12 +3089,30 @@ def _run_chat_text_skill_by_name(
         "intent": IntentType.SKILL_TRIGGER.value,
         "sources": response_sources,
         "generated_file": None,
-        "skill_run": run_to_dict(run, skill),
+        "skill_run": skill_payload,
+        "agent_run": serialize_agent_run(db, agent_run),
+        "context_trace": context_trace,
     }
 
 
 def _skill_outputs_chat_text(skill) -> bool:
+    mode = str((skill.execution or {}).get("mode") or "")
+    if mode:
+        return mode == "llm_chat_text"
     return any(str(output.get("type") or "") == "chat_text" for output in skill.outputs)
+
+
+def _ensure_llm_chat_text_skill_allowed(skill) -> None:
+    mode = str((skill.execution or {}).get("mode") or "")
+    if mode != "llm_chat_text":
+        return
+    allowed_tools = {
+        str(tool).strip()
+        for tool in ((skill.governance or {}).get("allowed_tools") or (skill.execution or {}).get("allowed_tools") or [])
+        if str(tool).strip()
+    }
+    if "llm.complete" not in allowed_tools:
+        raise HTTPException(status_code=500, detail="Skill 执行策略缺少 llm.complete 授权")
 
 
 def _chat_text_skill_input_payload(skill, content: str) -> dict[str, str]:
@@ -2169,6 +3142,49 @@ def _compose_skill_base_prompt(base_prompt: str | None, display_name: str, skill
     if skill_prompt:
         parts.append("以下是该 Skill 的专用指令：\n\n" + skill_prompt)
     return "\n\n".join(parts)
+
+
+def _maybe_run_web_search(
+    query: str,
+    enabled: bool,
+    *,
+    source_start_index: int = 1,
+) -> tuple[list[dict], str, dict | None]:
+    if not enabled:
+        return [], "", None
+    response = _run_web_search_skill(query)
+    sources = web_results_to_sources(response)
+    prompt = format_web_search_prompt(response, start_index=source_start_index)
+    return sources, prompt, _web_search_trace(response, len(sources))
+
+
+def _run_web_search_skill(query: str) -> WebSearchResponse:
+    try:
+        return search_web(query)
+    except Exception as exc:  # pragma: no cover - defensive guard for provider bugs.
+        logger.warning("web search skill failed unexpectedly", exc_info=True)
+        return WebSearchResponse(
+            query=" ".join(query.split()).strip(),
+            provider="unknown",
+            warnings=[f"unexpected_error:{type(exc).__name__}"],
+        )
+
+
+def _web_search_trace(response: WebSearchResponse, result_count: int) -> dict:
+    return {
+        "enabled": True,
+        "skill_name": WEB_SEARCH_SKILL_NAME,
+        "query": response.query,
+        "provider": response.provider,
+        "result_count": result_count,
+        "warnings": response.warnings,
+    }
+
+
+def _web_search_context_extra(trace: dict | None) -> dict:
+    if not trace:
+        return {}
+    return {"web_search": trace}
 
 
 def _search_workspace_sources(db: Session, workspace_id: int | None, content: str) -> list[dict]:
@@ -2220,6 +3236,8 @@ def _compose_system_prompt(
     intent: IntentType | None = None,
     attachment_context: str = "",
     reduce_knowledge_context: bool = False,
+    *,
+    web_search_context: str = "",
 ) -> str | None:
     return compose_system_prompt(
         base_prompt,
@@ -2228,6 +3246,7 @@ def _compose_system_prompt(
         attachment_context=attachment_context,
         reduce_knowledge_context=reduce_knowledge_context,
         global_base_prompt=_load_global_base_prompt(),
+        web_search_context=web_search_context,
     )
 
 

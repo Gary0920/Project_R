@@ -171,27 +171,24 @@ class NotificationsPhase18Tests(unittest.TestCase):
     def test_skill_completion_creates_task_success_notification(self):
         response = skills_api.start_skill_run(
             skills_api.StartSkillRunRequest(
-                skill_name="tag-printing",
+                skill_name="client-reply-drafting",
                 inputs={
-                    "project_name": "项目 A",
-                    "project_code": "PR-A",
-                    "label_items": [{"name": "样品", "quantity": 2}],
-                    "template_file": "默认模板",
+                    "reply_brief": "Client asks us to absorb delay cost, but we should reject responsibility.",
                 },
             ),
             self.employee,
             self.db,
         )
 
-        self.assertEqual(response.status, "completed")
-        notification = self.db.query(Notification).filter(Notification.user_id == self.employee.id).one()
-        self.assertEqual(notification.category, "task")
-        self.assertEqual(notification.severity, "success")
-        self.assertIn(str(response.id), notification.action_payload_json)
+        self.assertEqual(response.status, "ready")
+        self.assertEqual(
+            self.db.query(Notification).filter(Notification.user_id == self.employee.id).count(),
+            0,
+        )
 
     def test_skill_missing_inputs_create_pending_task_notification(self):
         response = skills_api.start_skill_run(
-            skills_api.StartSkillRunRequest(skill_name="tag-printing", inputs={}),
+            skills_api.StartSkillRunRequest(skill_name="client-reply-drafting", inputs={}),
             self.employee,
             self.db,
         )
@@ -214,11 +211,19 @@ class NotificationsPhase18Tests(unittest.TestCase):
             self.db,
         )
 
-        workspaces_api.join_workspace(workspace.id, self.employee, self.db)
+        workspaces_api.upsert_workspace_member(
+            workspace.id,
+            workspaces_api.UpsertWorkspaceMemberRequest(user_id=self.employee.id, role="member"),
+            self.admin,
+            self.db,
+        )
 
         joined = (
             self.db.query(Notification)
-            .filter(Notification.user_id == self.employee.id, Notification.event_key == f"workspace:{workspace.id}:join:{self.employee.id}")
+            .filter(
+                Notification.user_id == self.employee.id,
+                Notification.event_key == f"workspace:{workspace.id}:member:{self.employee.id}:member",
+            )
             .one()
         )
         self.assertEqual(joined.category, "workspace")

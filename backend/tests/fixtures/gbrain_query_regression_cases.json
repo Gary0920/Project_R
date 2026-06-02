@@ -1,177 +1,5 @@
 [
   {
-    "id": "as1288_safety_glass",
-    "description": "Chinese safety glass question should rank AS 1288 above meeting noise.",
-    "query": "安全玻璃有哪些要求",
-    "expected_query_variants": [
-      "安全玻璃有哪些要求",
-      "safety glass human impact AS 1288"
-    ],
-    "expected_top_file_contains": "standards/as-1288",
-    "expected_top_title_contains": "AS 1288",
-    "expected_top_content_terms": [
-      "安全玻璃",
-      "Safety glass"
-    ],
-    "mock_results_by_query": {
-      "安全玻璃有哪些要求": [
-        {
-          "slug": "meetings/张学辉发起的视频会议_0515",
-          "source_id": "company-wiki",
-          "title": "张学辉发起的视频会议_0515",
-          "chunk_text": "会议讨论了客户接待和样品准备。",
-          "score": 0.9143770629932932
-        }
-      ],
-      "safety glass human impact AS 1288": [
-        {
-          "slug": "standards/as-1288-2006-glass-in-buildings-selection-and-installation",
-          "source_id": "company-wiki",
-          "title": "AS 1288-2006 Glass in buildings - Selection and installation",
-          "chunk_text": "中文：安全玻璃应根据人体撞击风险和安装位置选择。 English: Safety glass shall be selected based on human impact risk and installation location.",
-          "score": 0.9182115218171069
-        }
-      ]
-    }
-  },
-  {
-    "id": "as2047_water_penetration",
-    "description": "Chinese water penetration question should rank AS 2047 first.",
-    "query": "窗户防水等级有哪些要求",
-    "expected_query_variants": [
-      "窗户防水等级有哪些要求",
-      "water penetration resistance AS 2047"
-    ],
-    "expected_top_file_contains": "standards/as_2047",
-    "expected_top_title_contains": "AS_2047",
-    "expected_top_content_terms": [
-      "防水",
-      "water penetration"
-    ],
-    "mock_results_by_query": {
-      "窗户防水等级有哪些要求": [
-        {
-          "slug": "meetings/张学辉发起的视频会议_0515",
-          "source_id": "company-wiki",
-          "title": "张学辉发起的视频会议_0515",
-          "chunk_text": "会议记录包含客户现场反馈。",
-          "score": 0.9104089213228268
-        }
-      ],
-      "water penetration resistance AS 2047": [
-        {
-          "slug": "standards/as_2047-2014_windows_and_external_glazed_doors_in_buildings",
-          "source_id": "company-wiki",
-          "title": "AS_2047-2014_Windows_and_external_glazed_doors_in_buildings",
-          "chunk_text": "中文：外窗和外门需要满足水密性测试要求。 English: Windows and external glazed doors require water penetration resistance testing.",
-          "score": 0.9245191084052172
-        }
-      ]
-    }
-  },
-  {
-    "id": "as1288_heat_soak",
-    "description": "Heat soak question should rank AS 1288 first.",
-    "query": "热浸测试适用于什么玻璃",
-    "expected_query_variants": [
-      "热浸测试适用于什么玻璃",
-      "Heat Soak Test"
-    ],
-    "expected_top_file_contains": "standards/as-1288",
-    "expected_top_title_contains": "AS 1288",
-    "expected_top_content_terms": [
-      "热浸",
-      "Heat Soak"
-    ],
-    "mock_results_by_query": {
-      "热浸测试适用于什么玻璃": [
-        {
-          "slug": "standards/as_2047-2014_windows_and_external_glazed_doors_in_buildings",
-          "source_id": "company-wiki",
-          "title": "AS_2047-2014_Windows_and_external_glazed_doors_in_buildings",
-          "chunk_text": "门窗性能等级信息。",
-          "score": 0.6736172770734011
-        }
-      ],
-      "Heat Soak Test": [
-        {
-          "slug": "standards/as-1288-2006-glass-in-buildings-selection-and-installation",
-          "source_id": "company-wiki",
-          "title": "AS 1288-2006 Glass in buildings - Selection and installation",
-          "chunk_text": "中文：热浸测试用于降低钢化玻璃自爆风险。 English: Heat Soak Test reduces spontaneous breakage risk in toughened glass.",
-          "score": 0.875030170754865
-        }
-      ]
-    }
-  },
-  {
-    "id": "vmu_customer_visit",
-    "description": "VMU customer visit question should rank the dedicated VMU reception process first.",
-    "query": "VMU客户参观接待流程是什么",
-    "expected_query_variants": [
-      "VMU客户参观接待流程是什么",
-      "VMU客户参观接待流程"
-    ],
-    "expected_top_file_contains": "rules/vmu客户参观接待流程",
-    "expected_top_title_contains": "VMU客户参观接待流程",
-    "expected_top_content_terms": [
-      "客户参观",
-      "接待流程"
-    ],
-    "mock_results_by_query": {
-      "VMU客户参观接待流程是什么": [
-        {
-          "slug": "rules/vmu客户参观接待流程",
-          "source_id": "company-wiki",
-          "title": "VMU客户参观接待流程",
-          "chunk_text": "中文：VMU 客户参观接待流程包括预约、准备、现场接待和复盘。",
-          "score": 0.953635246240409
-        },
-        {
-          "slug": "rules/vmu-标准作业流程",
-          "source_id": "company-wiki",
-          "title": "VMU 标准作业流程",
-          "chunk_text": "VMU 标准作业流程。",
-          "score": 0.9335232079039134
-        }
-      ],
-      "VMU客户参观接待流程": [
-        {
-          "slug": "rules/vmu客户参观接待流程",
-          "source_id": "company-wiki",
-          "title": "VMU客户参观接待流程",
-          "chunk_text": "中文：VMU 客户参观接待流程包括预约、准备、现场接待和复盘。",
-          "score": 0.956
-        }
-      ]
-    }
-  },
-  {
-    "id": "meeting_0515_actions",
-    "description": "Meeting question should rank the 0515 meeting note first.",
-    "query": "张学辉 0515 会议有哪些行动项",
-    "expected_query_variants": [
-      "张学辉 0515 会议有哪些行动项"
-    ],
-    "expected_top_file_contains": "meetings/张学辉发起的视频会议_0515",
-    "expected_top_title_contains": "张学辉发起的视频会议_0515",
-    "expected_top_content_terms": [
-      "会议",
-      "行动项"
-    ],
-    "mock_results_by_query": {
-      "张学辉 0515 会议有哪些行动项": [
-        {
-          "slug": "meetings/张学辉发起的视频会议_0515",
-          "source_id": "company-wiki",
-          "title": "张学辉发起的视频会议_0515",
-          "chunk_text": "会议行动项包括资料准备、客户跟进和内部复盘。",
-          "score": 0.9401
-        }
-      ]
-    }
-  },
-  {
     "id": "written_principle",
     "description": "Company rule question should rank the written-principle rule first.",
     "query": "书面化原则是什么",
@@ -189,11 +17,11 @@
     "mock_results_by_query": {
       "书面化原则是什么": [
         {
-          "slug": "meetings/张学辉发起的视频会议_0515",
+          "slug": "rules/240221-trn-铁架的选择逻辑02-zack_video",
           "source_id": "company-wiki",
-          "title": "张学辉发起的视频会议_0515",
-          "chunk_text": "会议记录里也提到了口头确认和后续沟通。",
-          "score": 0.92
+          "title": "240221 Trn [铁架的选择逻辑02] Zack_video",
+          "chunk_text": "技术组会基于现有认证库判断是否可复用。",
+          "score": 0.94
         }
       ],
       "书面化原则": [
@@ -201,8 +29,8 @@
           "slug": "rules/书面化原则",
           "source_id": "company-wiki",
           "title": "书面化原则",
-          "chunk_text": "重要事项需要书面化并留痕，避免只依赖口头沟通。",
-          "score": 0.906
+          "chunk_text": "所有重要决策、任务分配、沟通确认，必须通过书面形式记录并留痕。",
+          "score": 0.91
         }
       ],
       "书面化原则 留痕 written record principle": [
@@ -217,8 +45,317 @@
           "slug": "rules/书面化原则",
           "source_id": "company-wiki",
           "title": "书面化原则",
-          "chunk_text": "重要事项需要书面化并留痕，避免只依赖口头沟通。",
+          "chunk_text": "所有重要决策、任务分配、沟通确认，必须通过书面形式记录并留痕。",
           "score": 0.932
+        }
+      ]
+    }
+  },
+  {
+    "id": "vmu_standard_procedure",
+    "description": "VMU procedure question should rank the dedicated VMU SOP first.",
+    "query": "VMU 标准作业流程",
+    "expected_query_variants": [
+      "VMU 标准作业流程",
+      "Australian Standard compliance requirement"
+    ],
+    "expected_top_file_contains": "rules/vmu-标准作业流程",
+    "expected_top_title_contains": "VMU 标准作业流程",
+    "expected_top_content_terms": [
+      "VMU",
+      "标准作业流程"
+    ],
+    "mock_results_by_query": {
+      "VMU 标准作业流程": [
+        {
+          "slug": "rules/vmu-标准作业流程",
+          "source_id": "company-wiki",
+          "title": "VMU 标准作业流程",
+          "chunk_text": "VMU 标准作业流程包括内部确认 SOW、客户确认、材料准备和复盘。",
+          "score": 0.93
+        },
+        {
+          "slug": "rules/vmu客户参观接待流程",
+          "source_id": "company-wiki",
+          "title": "VMU客户参观接待流程",
+          "chunk_text": "VMU 客户参观接待流程包括预约、准备、现场接待和复盘。",
+          "score": 0.91
+        }
+      ],
+      "Australian Standard compliance requirement": [
+        {
+          "slug": "rules/含gst澳洲本地费用报销",
+          "source_id": "company-wiki",
+          "title": "含GST澳洲本地费用报销",
+          "chunk_text": "Australian local costs and GST reimbursement requirements.",
+          "score": 0.89
+        }
+      ]
+    }
+  },
+  {
+    "id": "project_email_rule",
+    "description": "Project email rule question should rank the dedicated project email policy first.",
+    "query": "项目邮件相关规则",
+    "expected_query_variants": [
+      "项目邮件相关规则"
+    ],
+    "expected_top_file_contains": "rules/项目邮件相关规则",
+    "expected_top_title_contains": "项目邮件相关规则",
+    "expected_top_content_terms": [
+      "项目",
+      "邮件",
+      "规范"
+    ],
+    "mock_results_by_query": {
+      "项目邮件相关规则": [
+        {
+          "slug": "rules/项目邮件相关规则",
+          "source_id": "company-wiki",
+          "title": "项目邮件相关规则",
+          "chunk_text": "所有与项目相关的邮件，邮件标题必须以项目名称开头。",
+          "score": 0.93
+        },
+        {
+          "slug": "rules/250208-trn-to-do-list-jacky",
+          "source_id": "company-wiki",
+          "title": "250208 Trn [To do list] Jacky",
+          "chunk_text": "创建任务时，通过相关进程和项目属性关联到对应项目阶段。",
+          "score": 0.90
+        }
+      ]
+    }
+  },
+  {
+    "id": "file_naming_rule",
+    "description": "File naming question should rank the dedicated file naming rule first.",
+    "query": "文件命名规则是什么",
+    "expected_query_variants": [
+      "文件命名规则是什么",
+      "文件命名规则"
+    ],
+    "expected_top_file_contains": "rules/文件命名规则",
+    "expected_top_title_contains": "文件命名规则",
+    "expected_top_content_terms": [
+      "文件命名",
+      "项目文件"
+    ],
+    "mock_results_by_query": {
+      "文件命名规则是什么": [
+        {
+          "slug": "rules/231101-trn-folder-struc-intro",
+          "source_id": "company-wiki",
+          "title": "231101 Trn [Folder Struc Intro]",
+          "chunk_text": "公共资源和项目文件夹结构介绍。",
+          "score": 0.91
+        }
+      ],
+      "文件命名规则": [
+        {
+          "slug": "rules/文件命名规则",
+          "source_id": "company-wiki",
+          "title": "文件命名规则",
+          "chunk_text": "所有项目文件必须遵循统一文件命名规则，便于团队协作、搜索及系统归档管理。",
+          "score": 0.90
+        }
+      ]
+    }
+  },
+  {
+    "id": "accessory_order_rule",
+    "description": "Accessory ordering question should rank the dedicated accessory ordering rule first.",
+    "query": "配件下单规范",
+    "expected_query_variants": [
+      "配件下单规范",
+      "Australian Standard compliance requirement"
+    ],
+    "expected_top_file_contains": "rules/配件下单规范",
+    "expected_top_title_contains": "配件下单规范",
+    "expected_top_content_terms": [
+      "配件",
+      "下单"
+    ],
+    "mock_results_by_query": {
+      "配件下单规范": [
+        {
+          "slug": "rules/配件下单规范",
+          "source_id": "company-wiki",
+          "title": "配件下单规范",
+          "chunk_text": "规范五金配件类物料下单流程与图纸资料要求，避免错单与工厂混淆。",
+          "score": 0.90
+        },
+        {
+          "slug": "rules/240719-trn-project-review-in-depth-4",
+          "source_id": "company-wiki",
+          "title": "240719 Trn [Project Review] In Depth-4",
+          "chunk_text": "用于容纳机械排风的大尺寸副框，其范围和构造做法需要与设计方确认。",
+          "score": 0.86
+        }
+      ],
+      "Australian Standard compliance requirement": [
+        {
+          "slug": "rules/含gst澳洲本地费用报销",
+          "source_id": "company-wiki",
+          "title": "含GST澳洲本地费用报销",
+          "chunk_text": "Australian local costs and GST reimbursement requirements.",
+          "score": 0.89
+        }
+      ]
+    }
+  },
+  {
+    "id": "structural_dwg_reading",
+    "description": "Structural drawing question should rank Reading Structural DWG first.",
+    "query": "如何通过结构图确认窗洞口高度和FSL SSL？",
+    "expected_query_variants": [
+      "如何通过结构图确认窗洞口高度和FSL SSL？",
+      "Reading Structural DWG FSL SSL slab thickness step down window opening height",
+      "wind load wind pressure N1 N6 C1 C4 AS 2047"
+    ],
+    "expected_top_file_contains": "rules/200612-trn-reading-structural-dwg",
+    "expected_top_title_contains": "Reading Structural DWG",
+    "expected_top_content_terms": [
+      "FSL",
+      "SSL",
+      "窗洞口"
+    ],
+    "mock_results_by_query": {
+      "如何通过结构图确认窗洞口高度和FSL SSL？": [
+        {
+          "slug": "rules/240709-trn-infopack-summarysystem-_franco",
+          "source_id": "company-wiki",
+          "title": "240709 Trn [infopack] summary&system _Franco",
+          "chunk_text": "Info pack summary and general project system.",
+          "score": 0.99
+        }
+      ],
+      "Reading Structural DWG FSL SSL slab thickness step down window opening height": [
+        {
+          "slug": "rules/200612-trn-reading-structural-dwg",
+          "source_id": "company-wiki",
+          "title": "200612 Trn [Reading Structural DWG]",
+          "chunk_text": "通过 FSL/SSL、Slab Thickness、step down 验证窗洞口高度。",
+          "score": 0.92
+        }
+      ],
+      "wind load wind pressure N1 N6 C1 C4 AS 2047": [
+        {
+          "slug": "rules/230203-trn-wind",
+          "source_id": "company-wiki",
+          "title": "230203 Trn [Wind]",
+          "chunk_text": "Wind pressure class notes.",
+          "score": 0.91
+        }
+      ]
+    }
+  },
+  {
+    "id": "markup_window_schedule",
+    "description": "Window schedule markup question should rank the dedicated markup training first.",
+    "query": "建筑图没有窗表时应该如何标注 window schedule？",
+    "expected_query_variants": [
+      "建筑图没有窗表时应该如何标注 window schedule？",
+      "Markup Window schedule Doris window number takeoff Bluebeam",
+      "wind load wind pressure N1 N6 C1 C4 AS 2047"
+    ],
+    "expected_top_file_contains": "rules/200519-trn-markup-window-schedule-doris",
+    "expected_top_title_contains": "Markup Window schedule",
+    "expected_top_content_terms": [
+      "窗表",
+      "窗号",
+      "Bluebeam"
+    ],
+    "mock_results_by_query": {
+      "建筑图没有窗表时应该如何标注 window schedule？": [
+        {
+          "slug": "rules/241118-trn-图纸及报告需要看哪些",
+          "source_id": "company-wiki",
+          "title": "241118 Trn [图纸及报告需要看哪些]",
+          "chunk_text": "图纸和报告阅读范围。",
+          "score": 0.97
+        }
+      ],
+      "Markup Window schedule Doris window number takeoff Bluebeam": [
+        {
+          "slug": "rules/200519-trn-markup-window-schedule-doris",
+          "source_id": "company-wiki",
+          "title": "200519 Trn [Markup Window schedule] Doris",
+          "chunk_text": "建筑图缺失窗表时，需要标注窗号并用 Bluebeam takeoff 导出。",
+          "score": 0.91
+        }
+      ]
+    }
+  },
+  {
+    "id": "sample_register_glass",
+    "description": "Glass sample register question should rank the dedicated sample register page first.",
+    "query": "玻璃样品登记册需要如何追踪替代样品和审批状态？",
+    "expected_query_variants": [
+      "玻璃样品登记册需要如何追踪替代样品和审批状态？",
+      "SampleRegister_Glass glass sample register substitute sample approval status"
+    ],
+    "expected_top_file_contains": "rules/220204-trn-sampleregister_glass",
+    "expected_top_title_contains": "SampleRegister_Glass",
+    "expected_top_content_terms": [
+      "样品登记册",
+      "替代样品",
+      "审批状态"
+    ],
+    "mock_results_by_query": {
+      "玻璃样品登记册需要如何追踪替代样品和审批状态？": [
+        {
+          "slug": "rules/241111-trn-基本规则及认识玻璃",
+          "source_id": "company-wiki",
+          "title": "241111 Trn [基本规则及认识玻璃]",
+          "chunk_text": "玻璃基础知识。",
+          "score": 0.98
+        }
+      ],
+      "SampleRegister_Glass glass sample register substitute sample approval status": [
+        {
+          "slug": "rules/220204-trn-sampleregister_glass",
+          "source_id": "company-wiki",
+          "title": "220204 Trn [SampleRegister_Glass]",
+          "chunk_text": "样品登记册用于追踪玻璃替代样品、寄送和审批状态。",
+          "score": 0.91
+        }
+      ],
+      "glass glazing AS 1288": []
+    }
+  },
+  {
+    "id": "system_file_organization",
+    "description": "System thinking and file organization question should rank its dedicated training page first.",
+    "query": "为什么团队要建立系统性和文件组织规则？",
+    "expected_query_variants": [
+      "为什么团队要建立系统性和文件组织规则？",
+      "为什么团队要建立系统性和文件组织规则",
+      "System Thinking File Organization system rules team workflow"
+    ],
+    "expected_top_file_contains": "rules/220209-trn-system-thinkingfile-organization",
+    "expected_top_title_contains": "System Thinking+File Organization",
+    "expected_top_content_terms": [
+      "系统性",
+      "文件组织",
+      "团队"
+    ],
+    "mock_results_by_query": {
+      "为什么团队要建立系统性和文件组织规则？": [
+        {
+          "slug": "rules/260227-trn-交接资料施工图-danny",
+          "source_id": "company-wiki",
+          "title": "260227 Trn [交接资料（施工图）] Danny",
+          "chunk_text": "施工图交接资料。",
+          "score": 0.90
+        }
+      ],
+      "System Thinking File Organization system rules team workflow": [
+        {
+          "slug": "rules/220209-trn-system-thinkingfile-organization",
+          "source_id": "company-wiki",
+          "title": "220209 Trn [System Thinking+File Organization]",
+          "chunk_text": "团队通过系统性和文件组织规则提升工作流，覆盖常规情况。",
+          "score": 0.94
         }
       ]
     }

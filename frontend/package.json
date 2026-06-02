@@ -10,6 +10,7 @@
     "dev": "bun run scripts/dev.mjs",
     "build": "bun run typecheck && vite build && tsc -p tsconfig.main.json && bun run scripts/copy-preload.mjs",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.main.json --noEmit",
+    "test:private-workspace": "bun scripts/test-private-workspace.ts",
     "test:update-download": "bun scripts/test-update-download.mjs",
     "dist": "bun run build && electron-builder --config electron-builder.yml",
     "dist:win": "bun run build && electron-builder --win nsis --config electron-builder.yml",

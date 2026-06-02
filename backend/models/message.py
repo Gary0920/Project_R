@@ -30,6 +30,7 @@ class ChatMessage(Base):
     version_index: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     active_version: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     sources_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    context_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
@@ -41,3 +42,11 @@ class ChatMessage(Base):
             return parsed if isinstance(parsed, list) else []
         except json.JSONDecodeError:
             return []
+
+    @property
+    def context_trace(self) -> dict:
+        try:
+            parsed = json.loads(self.context_json or "{}")
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}

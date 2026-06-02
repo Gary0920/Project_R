@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
+from api.time_models import UTCDateTimeModel
 from models import BASE_DIR, get_db
 from models.audit_log import AuditLog
 from models.client_update import ClientUpdateRelease
@@ -32,7 +33,7 @@ def _resolve_update_root() -> Path:
 UPDATE_PACKAGES_ROOT = _resolve_update_root()
 
 
-class ClientUpdateInfo(BaseModel):
+class ClientUpdateInfo(UTCDateTimeModel):
     id: int
     version: str
     platform: str

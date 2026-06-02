@@ -37,6 +37,8 @@ export const setAuthAtom = atom(null, (_get, set, payload: LoginResponse) => {
     role: payload.role,
     nickname: payload.nickname,
     avatar: payload.avatar,
+    work_group: payload.work_group,
+    last_login_at: payload.last_login_at,
   };
 
   window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, payload.token);

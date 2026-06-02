@@ -18,6 +18,17 @@ contextBridge.exposeInMainWorld("projectR", {
     saveUser: (input) => ipcRenderer.invoke("prompts:save-user", input),
     deleteUser: (id) => ipcRenderer.invoke("prompts:delete-user", id),
   },
+  privateWorkspace: {
+    getConfig: () => ipcRenderer.invoke("private-workspace:get-config"),
+    getWorkerStatus: () => ipcRenderer.invoke("private-workspace:get-worker-status"),
+    chooseRoot: () => ipcRenderer.invoke("private-workspace:choose-root"),
+    openRoot: () => ipcRenderer.invoke("private-workspace:open-root"),
+    resetRoot: () => ipcRenderer.invoke("private-workspace:reset-root"),
+    getManifest: () => ipcRenderer.invoke("private-workspace:get-manifest"),
+    quickDrop: () => ipcRenderer.invoke("private-workspace:quick-drop"),
+    chooseFiles: () => ipcRenderer.invoke("private-workspace:choose-files"),
+    setAuthorization: (input) => ipcRenderer.invoke("private-workspace:set-authorization", input),
+  },
   updates: {
     getCurrentVersion: () => ipcRenderer.invoke("updates:get-current-version"),
     download: (input) => ipcRenderer.invoke("updates:download", input),

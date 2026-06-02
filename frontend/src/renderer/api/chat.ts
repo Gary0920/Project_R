@@ -1,10 +1,11 @@
-import { apiRequest, type ApiClientOptions } from "./client";
+import { ApiError, apiRequest, type ApiClientOptions } from "./client";
 import type {
   ChatMessageListResponse,
   ChatSearchResultResponse,
   ChatSessionResponse,
   ActivateMessageVersionResponse,
   EditMessageResponse,
+  GBrainThinkReviewResponse,
   MessageFeedbackResponse,
   RegenerateMessageResponse,
   RestoreMessagesResponse,
@@ -60,6 +61,7 @@ export function regenerateChatMessage(
     modelProfile?: string | null;
     systemPrompt?: string | null;
     thinking?: boolean;
+    webSearch?: boolean;
     temperature?: number;
   },
 ) {
@@ -73,6 +75,7 @@ export function regenerateChatMessage(
         model_profile: data.modelProfile ?? null,
         system_prompt: data.systemPrompt ?? null,
         thinking: Boolean(data.thinking),
+        web_search: Boolean(data.webSearch),
         temperature: data.temperature ?? 0.9,
       }),
     },
@@ -89,6 +92,7 @@ export function editChatMessage(
     modelProfile?: string | null;
     systemPrompt?: string | null;
     thinking?: boolean;
+    webSearch?: boolean;
   },
 ) {
   return apiRequest<EditMessageResponse>(
@@ -102,6 +106,7 @@ export function editChatMessage(
         model_profile: data.modelProfile ?? null,
         system_prompt: data.systemPrompt ?? null,
         thinking: Boolean(data.thinking),
+        web_search: Boolean(data.webSearch),
       }),
     },
   );
@@ -136,6 +141,22 @@ export function submitMessageFeedback(
   );
 }
 
+export function submitGBrainThinkReview(
+  options: ApiClientOptions,
+  sessionId: number,
+  messageId: number,
+  data: { note?: string } = {},
+) {
+  return apiRequest<GBrainThinkReviewResponse>(
+    options,
+    `/chat/sessions/${sessionId}/messages/${messageId}/gbrain-think-review`,
+    {
+      method: "POST",
+      body: JSON.stringify(data),
+    },
+  );
+}
+
 export function listChatMessages(options: ApiClientOptions, sessionId: number) {
   return apiRequest<ChatMessageListResponse>(options, `/chat/sessions/${sessionId}/messages`);
 }
@@ -150,7 +171,9 @@ export function sendChatMessage(
   modelProfile?: string | null,
   selectedSkill?: string | null,
   selectedPromptId?: string | null,
+  forceKnowledgeQuery?: boolean,
   thinking?: boolean,
+  webSearch?: boolean,
   signal?: AbortSignal,
 ) {
   return apiRequest<SendChatMessageResponse>(options, `/chat/sessions/${sessionId}/messages`, {
@@ -164,7 +187,9 @@ export function sendChatMessage(
       model_profile: modelProfile ?? null,
       selected_skill: selectedSkill ?? null,
       selected_prompt_id: selectedPromptId ?? null,
+      force_knowledge_query: Boolean(forceKnowledgeQuery),
       thinking: Boolean(thinking),
+      web_search: Boolean(webSearch),
     }),
   });
 }
@@ -172,7 +197,14 @@ export function sendChatMessage(
 export function createSessionAttachment(
   options: ApiClientOptions,
   sessionId: number,
-  data: { filename: string; content: string; content_type?: string },
+  data: {
+    filename: string;
+    content: string;
+    content_type?: string;
+    source_scope?: string;
+    source_label?: string;
+    authorization_status?: string;
+  },
 ) {
   return apiRequest<SessionAttachmentResponse>(options, `/chat/sessions/${sessionId}/attachments`, {
     method: "POST",
@@ -184,9 +216,17 @@ export function uploadSessionAttachmentFile(
   options: ApiClientOptions,
   sessionId: number,
   file: File,
+  metadata?: {
+    source_scope?: string;
+    source_label?: string;
+    authorization_status?: string;
+  },
 ) {
   const form = new FormData();
   form.append("file", file);
+  if (metadata?.source_scope) form.append("source_scope", metadata.source_scope);
+  if (metadata?.source_label) form.append("source_label", metadata.source_label);
+  if (metadata?.authorization_status) form.append("authorization_status", metadata.authorization_status);
   return apiRequest<SessionAttachmentResponse>(options, `/chat/sessions/${sessionId}/attachments/upload`, {
     method: "POST",
     body: form,
@@ -195,6 +235,37 @@ export function uploadSessionAttachmentFile(
 
 export function listSessionAttachments(options: ApiClientOptions, sessionId: number) {
   return apiRequest<SessionAttachmentResponse[]>(options, `/chat/sessions/${sessionId}/attachments`);
+}
+
+export async function fetchSessionAttachmentBlob(
+  options: ApiClientOptions,
+  sessionId: number,
+  attachmentId: number,
+  signal?: AbortSignal,
+) {
+  const response = await fetch(
+    `${options.baseUrl}/chat/sessions/${sessionId}/attachments/${attachmentId}/content`,
+    {
+      signal,
+      headers: {
+        ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+      },
+    },
+  );
+  if (!response.ok) {
+    if (response.status === 401) {
+      options.onUnauthorized?.();
+    }
+    let detail = response.statusText;
+    try {
+      const payload = (await response.json()) as { detail?: string };
+      detail = payload.detail || detail;
+    } catch {
+      // Keep the status text when the server returns no JSON body.
+    }
+    throw new ApiError(detail, response.status);
+  }
+  return response.blob();
 }
 
 export function deleteSessionAttachment(options: ApiClientOptions, sessionId: number, attachmentId: number) {

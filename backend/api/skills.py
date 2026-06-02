@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
+from api.time_models import UTCDateTimeModel
 from core.notification_service import notify_skill_blocked
 from core.skill_execution import execute_ready_run, generated_file_payload
 from core.skill_runner import SkillRunner, run_to_dict
@@ -28,6 +29,8 @@ class SkillResponse(BaseModel):
     inputs: list[dict[str, Any]]
     outputs: list[dict[str, Any]]
     references: list[str]
+    execution: dict[str, Any] = Field(default_factory=dict)
+    governance: dict[str, Any] = Field(default_factory=dict)
     path: str
 
 
@@ -51,7 +54,7 @@ class SubmitSkillInputRequest(BaseModel):
     inputs: dict[str, Any] = Field(default_factory=dict)
 
 
-class SkillRunResponse(BaseModel):
+class SkillRunResponse(UTCDateTimeModel):
     id: int
     skill_name: str
     skill: SkillResponse | None = None
@@ -60,6 +63,7 @@ class SkillRunResponse(BaseModel):
     status: str
     inputs: dict[str, Any]
     missing_inputs: list[dict[str, Any]]
+    dispatch: dict[str, Any] | None = None
     generated_file: dict[str, str] | None = None
     created_at: datetime
     updated_at: datetime

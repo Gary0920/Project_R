@@ -16,7 +16,7 @@ export type UpdateDownloadInput = {
 
 export type UpdateProgress = {
   version: string;
-  status: "downloading" | "verifying" | "ready" | "error";
+  status: "downloading" | "verifying" | "ready" | "installing" | "error";
   receivedBytes: number;
   totalBytes: number;
   percent: number;

@@ -52,6 +52,7 @@ def compose_system_prompt(
     attachment_context: str = "",
     reduce_knowledge_context: bool = False,
     global_base_prompt: str = "",
+    web_search_context: str = "",
 ) -> str | None:
     parts: list[str] = []
     if global_base_prompt:
@@ -80,6 +81,8 @@ def compose_system_prompt(
         )
     elif intent == IntentType.RAG_QUERY and not reduce_knowledge_context:
         parts.append(EMPTY_KNOWLEDGE_PROMPT)
+    if web_search_context:
+        parts.append(web_search_context)
     return "\n\n".join(parts) if parts else None
 
 

@@ -26,7 +26,7 @@ class IntentTests(unittest.TestCase):
         self.assertEqual(result.intent, IntentType.CHAT)
 
     def test_skill_trigger_text_stays_chat_in_explicit_routing(self):
-        result = classify_intent("帮我启动标签打印流程")
+        result = classify_intent("帮我启动项目沟通风险分析流程")
 
         self.assertEqual(result.intent, IntentType.CHAT)
 

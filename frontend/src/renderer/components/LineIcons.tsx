@@ -4,6 +4,7 @@ import archiveUrl from "iconoir/icons/archive.svg";
 import attachmentUrl from "iconoir/icons/attachment.svg";
 import bellUrl from "iconoir/icons/bell-notification.svg";
 import brainUrl from "iconoir/icons/brain-electricity.svg";
+import cameraUrl from "iconoir/icons/camera.svg";
 import checkUrl from "iconoir/icons/check.svg";
 import chatUrl from "iconoir/icons/chat-lines.svg";
 import chevronDownUrl from "iconoir/icons/nav-arrow-down.svg";
@@ -12,12 +13,15 @@ import chevronRightUrl from "iconoir/icons/nav-arrow-right.svg";
 import copyUrl from "iconoir/icons/copy.svg";
 import editUrl from "iconoir/icons/edit-pencil.svg";
 import folderUrl from "iconoir/icons/folder.svg";
+import globeUrl from "iconoir/icons/globe.svg";
+import homeUrl from "iconoir/icons/home.svg";
 import logoutUrl from "iconoir/icons/log-out.svg";
 import maximizeUrl from "iconoir/icons/square.svg";
 import minimizeUrl from "iconoir/icons/minus.svg";
 import moreUrl from "iconoir/icons/more-horiz.svg";
 import moveUrl from "iconoir/icons/data-transfer-both.svg";
 import noteUrl from "iconoir/icons/page-edit.svg";
+import arrowUpUrl from "iconoir/icons/nav-arrow-up.svg";
 import pinUrl from "iconoir/icons/pin.svg";
 import plusUrl from "iconoir/icons/plus.svg";
 import refreshUrl from "iconoir/icons/refresh-double.svg";
@@ -55,7 +59,10 @@ export function WorkspaceIcon(props: IconProps) { return <IconoirIcon url={folde
 export function ChevronDownIcon(props: IconProps) { return <IconoirIcon url={chevronDownUrl} {...props} />; }
 export function ChevronLeftIcon(props: IconProps) { return <IconoirIcon url={chevronLeftUrl} {...props} />; }
 export function ChevronRightIcon(props: IconProps) { return <IconoirIcon url={chevronRightUrl} {...props} />; }
+export function ArrowUpIcon(props: IconProps) { return <IconoirIcon url={arrowUpUrl} {...props} />; }
+export function HomeIcon(props: IconProps) { return <IconoirIcon url={homeUrl} {...props} />; }
 export function EditIcon(props: IconProps) { return <IconoirIcon url={editUrl} {...props} />; }
+export function GlobeIcon(props: IconProps) { return <IconoirIcon url={globeUrl} {...props} />; }
 export function TrashIcon(props: IconProps) { return <IconoirIcon url={trashUrl} {...props} />; }
 export function PinIcon(props: IconProps) { return <IconoirIcon url={pinUrl} {...props} />; }
 export function ArchiveIcon(props: IconProps) { return <IconoirIcon url={archiveUrl} {...props} />; }
@@ -73,6 +80,7 @@ export function CopyIcon(props: IconProps) { return <IconoirIcon url={copyUrl} {
 export function RefreshIcon(props: IconProps) { return <IconoirIcon url={refreshUrl} {...props} />; }
 export function PaperclipIcon(props: IconProps) { return <IconoirIcon url={attachmentUrl} {...props} />; }
 export function BrainIcon(props: IconProps) { return <IconoirIcon url={brainUrl} {...props} />; }
+export function CameraIcon(props: IconProps) { return <IconoirIcon url={cameraUrl} {...props} />; }
 export function SendIcon(props: IconProps) { return <IconoirIcon url={sendUrl} {...props} />; }
 export function XmarkIcon(props: IconProps) { return <IconoirIcon url={xmarkUrl} {...props} />; }
 export function ShieldIcon(props: IconProps) { return <IconoirIcon url={shieldUrl} {...props} />; }

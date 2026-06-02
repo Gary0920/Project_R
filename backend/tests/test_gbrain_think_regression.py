@@ -15,12 +15,17 @@ spec.loader.exec_module(gbrain_think_regression)
 
 
 class GBrainThinkRegressionTests(unittest.TestCase):
-    def test_fixture_covers_company_wiki_think(self):
+    def test_fixture_covers_company_and_unified_customer_think(self):
         cases = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
         ids = {case["id"] for case in cases}
+        source_ids = {case["source_id"] for case in cases}
 
         self.assertIn("written_principle_think", ids)
-        self.assertTrue(all(case["source_id"] == "company-wiki" for case in cases))
+        self.assertIn("customer_five_points_think", ids)
+        self.assertIn("customer_18_mary_think", ids)
+        self.assertIn("customer_aaron_morris_think", ids)
+        self.assertIn("company-wiki", source_ids)
+        self.assertIn("customer-reference", source_ids)
 
     def test_validate_think_case_accepts_scoped_citation_answer(self):
         case = {
@@ -79,6 +84,41 @@ class GBrainThinkRegressionTests(unittest.TestCase):
         self.assertTrue(any("source_scope.verified" in failure for failure in failures))
         self.assertTrue(any("citations=0" in failure for failure in failures))
         self.assertTrue(any("warnings=" in failure for failure in failures))
+
+    def test_validate_think_case_rejects_customer_cross_talk(self):
+        case = {
+            "source_id": "customer-reference",
+            "expected_model_contains": "deepseek",
+            "expected_answer_terms_any": ["Aaron Morris"],
+            "expected_citation_contains": "aaron-morris",
+            "forbidden_answer_terms": ["5Points"],
+            "forbidden_citation_contains_any": ["5points"],
+            "min_citations": 1,
+            "max_warnings": 0,
+        }
+        response = {
+            "status": "ok",
+            "source_id": "customer-reference",
+            "source_scope": {
+                "verified": True,
+                "scope_is_token_bound": True,
+                "allowed_sources": ["customer-reference"],
+            },
+            "result": {
+                "answer": "Aaron Morris is related to Binah, but 5Points is also mentioned.",
+                "modelUsed": "deepseek:deepseek-chat",
+                "warnings": [],
+                "citations": [
+                    {"page_slug": "clients/01_clients__aaron-morris-75b5f010"},
+                    {"page_slug": "companies/03_companies__5points-d1d55c2f"},
+                ],
+            },
+        }
+
+        failures = gbrain_think_regression.validate_think_case(case, response)
+
+        self.assertTrue(any("forbidden terms" in failure for failure in failures))
+        self.assertTrue(any("forbidden terms" in failure for failure in failures if "citations" in failure))
 
 
 if __name__ == "__main__":

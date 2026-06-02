@@ -16,23 +16,38 @@ import {
 } from "../atoms/workspace-atoms";
 import type { WorkspaceSearchResult } from "../api/types";
 import { createApiOptions } from "../pages/AppPage";
+import { parseApiDate } from "../utils/time";
 import {
   ChevronDownIcon,
   EditIcon,
+  HomeIcon,
   PlusIcon,
   SearchIcon,
+  ShieldIcon,
   TrashIcon,
   WorkspaceIcon,
 } from "./LineIcons";
+import { WorkspaceMemberManagementPanel } from "./WorkspaceMemberManagementPanel";
 
 export type WorkspaceSelectorProps = {
   apiOptions: ReturnType<typeof createApiOptions>;
+  canCreateProject?: boolean;
   onWorkspaceChanged?: (workspaceId: number | null) => void;
 };
 
 const ORDER_KEY = "project_r_workspace_order";
 const BRANDS = ["AURA", "BFI", "SPECWISE", "SYNOVA"];
+const DIRECTORY_GROUPS = [...BRANDS, "CUSTOMER"];
+const CUSTOMER_GROUP = "CUSTOMER";
 type DirectoryWorkspace = WorkspaceSearchResult;
+
+function groupLabel(group: string) {
+  return group === CUSTOMER_GROUP ? "客户情报" : group;
+}
+
+function workspaceKindFromGroup(group: string) {
+  return group === CUSTOMER_GROUP ? "customer" : "project";
+}
 
 function readOrder() {
   try {
@@ -43,28 +58,28 @@ function readOrder() {
 }
 
 function sortByOrder(items: Workspace[], order: number[]) {
-  const defaults = items.filter((item) => item.is_default);
-  const projects = items.filter((item) => !item.is_default);
+  const defaults = items.filter((item) => item.workspace_kind === "user" || item.is_default);
+  const projects = items.filter((item) => item.workspace_kind !== "user" && !item.is_default);
   if (order.length === 0) return [...defaults, ...projects];
   const weight = new Map(order.map((id, index) => [id, index]));
   projects.sort((a, b) => {
     const aw = weight.get(a.id) ?? Number.MAX_SAFE_INTEGER;
     const bw = weight.get(b.id) ?? Number.MAX_SAFE_INTEGER;
     if (aw !== bw) return aw - bw;
-    return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+    return parseApiDate(b.updated_at).getTime() - parseApiDate(a.updated_at).getTime();
   });
   return [...defaults, ...projects];
 }
 
 function sortDirectoryProjects(a: DirectoryWorkspace, b: DirectoryWorkspace) {
   if (a.is_member !== b.is_member) return a.is_member ? -1 : 1;
-  const at = new Date(a.updated_at).getTime();
-  const bt = new Date(b.updated_at).getTime();
+  const at = parseApiDate(a.updated_at).getTime();
+  const bt = parseApiDate(b.updated_at).getTime();
   if (at !== bt) return bt - at;
   return a.name.localeCompare(b.name, "zh-Hans-CN");
 }
 
-export function WorkspaceSelector({ apiOptions, onWorkspaceChanged }: WorkspaceSelectorProps) {
+export function WorkspaceSelector({ apiOptions, canCreateProject = false, onWorkspaceChanged }: WorkspaceSelectorProps) {
   const [workspaces, setWorkspaces] = useAtom(workspacesAtom);
   const [activeWorkspaceId, setActiveWorkspaceId] = useAtom(activeWorkspaceIdAtom);
   const [isOpen, setIsOpen] = useState(true);
@@ -78,18 +93,20 @@ export function WorkspaceSelector({ apiOptions, onWorkspaceChanged }: WorkspaceS
   const [newBrand, setNewBrand] = useState("BFI");
   const [createError, setCreateError] = useState("");
   const [renameInput, setRenameInput] = useState<{ id: number; value: string } | null>(null);
+  const [managingWorkspaceId, setManagingWorkspaceId] = useState<number | null>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
 
   const activeWorkspace = workspaces.find((item) => item.id === activeWorkspaceId);
+  const managingWorkspace = workspaces.find((item) => item.id === managingWorkspaceId) ?? null;
   const queryText = directoryQuery.trim();
   const brandSummaries = useMemo(() => {
-    return BRANDS.map((brand) => ({
+    return DIRECTORY_GROUPS.map((brand) => ({
       brand,
       items: directoryResults.filter((item) => item.brand === brand),
     }));
   }, [directoryResults]);
   const groupedSearchResults = useMemo(() => {
-    return BRANDS.map((brand) => ({
+    return DIRECTORY_GROUPS.map((brand) => ({
       brand,
       items: directoryResults
         .filter((item) => item.brand === brand)
@@ -102,6 +119,9 @@ export function WorkspaceSelector({ apiOptions, onWorkspaceChanged }: WorkspaceS
       : directoryResults;
     return [...filtered].sort(sortDirectoryProjects);
   }, [directoryResults, queryText, selectedBrand]);
+  const personalWorkspaces = useMemo(() => workspaces.filter((item) => item.workspace_kind === "user" || item.is_default), [workspaces]);
+  const projectWorkspaces = useMemo(() => workspaces.filter((item) => item.workspace_kind === "project" && !item.is_default), [workspaces]);
+  const customerWorkspaces = useMemo(() => workspaces.filter((item) => item.workspace_kind === "customer" && !item.is_default), [workspaces]);
 
   async function reloadWorkspaces(preferredId?: number | null) {
     const loaded = sortByOrder(await listWorkspaces(apiOptions), readOrder());
@@ -144,7 +164,7 @@ export function WorkspaceSelector({ apiOptions, onWorkspaceChanged }: WorkspaceS
   }, [apiOptions, directoryOpen, directoryQuery, selectedBrand]);
 
   function persistOrder(next: Workspace[]) {
-    localStorage.setItem(ORDER_KEY, JSON.stringify(next.filter((item) => !item.is_default).map((item) => item.id)));
+    localStorage.setItem(ORDER_KEY, JSON.stringify(next.filter((item) => item.workspace_kind !== "user" && !item.is_default).map((item) => item.id)));
   }
 
   function setOrderedWorkspaces(next: Workspace[]) {
@@ -153,10 +173,12 @@ export function WorkspaceSelector({ apiOptions, onWorkspaceChanged }: WorkspaceS
   }
 
   async function handleCreate() {
+    if (!canCreateProject) return;
     const name = newName.trim();
     if (!name) return;
     try {
-      const workspace = await createWorkspace(apiOptions, name, newDescription.trim(), newBrand);
+      const workspaceKind = workspaceKindFromGroup(newBrand);
+      const workspace = await createWorkspace(apiOptions, name, newDescription.trim(), newBrand, workspaceKind);
       await reloadWorkspaces(workspace.id);
       setSelectedBrand(workspace.brand || newBrand);
       setDirectoryQuery("");
@@ -167,7 +189,7 @@ export function WorkspaceSelector({ apiOptions, onWorkspaceChanged }: WorkspaceS
       setNewDescription("");
       setCreateError("");
     } catch (error) {
-      setCreateError(error instanceof ApiError ? error.message : "新建项目失败，请稍后重试。");
+      setCreateError(error instanceof ApiError ? error.message : "新建工作区失败，请稍后重试。");
     }
   }
 
@@ -180,15 +202,19 @@ export function WorkspaceSelector({ apiOptions, onWorkspaceChanged }: WorkspaceS
     return workspace.is_member || workspaces.some((item) => item.id === workspace.id);
   }
 
-  function openJoinedWorkspace(workspace: DirectoryWorkspace) {
+  function canOpenWorkspace(workspace: DirectoryWorkspace) {
+    return workspace.can_open;
+  }
+
+  function openAccessibleWorkspace(workspace: DirectoryWorkspace) {
     setActiveWorkspaceId(workspace.id);
     onWorkspaceChanged?.(workspace.id);
     setDirectoryOpen(false);
   }
 
   async function handleDirectoryProject(workspace: DirectoryWorkspace) {
-    if (isJoined(workspace)) {
-      openJoinedWorkspace(workspace);
+    if (canOpenWorkspace(workspace)) {
+      openAccessibleWorkspace(workspace);
       return;
     }
     await joinWorkspace(apiOptions, workspace.id);
@@ -255,9 +281,11 @@ export function WorkspaceSelector({ apiOptions, onWorkspaceChanged }: WorkspaceS
 
   function renderProjectRow(workspace: DirectoryWorkspace) {
     const joined = isJoined(workspace);
+    const accessible = canOpenWorkspace(workspace);
     return (
       <button
         className={`project-directory-row ${joined ? "is-joined" : ""}`}
+        disabled={!accessible}
         key={workspace.id}
         onClick={() => void handleDirectoryProject(workspace)}
         type="button"
@@ -267,8 +295,12 @@ export function WorkspaceSelector({ apiOptions, onWorkspaceChanged }: WorkspaceS
           <small>{workspace.slug}</small>
         </span>
         <span className="project-directory-row-meta">{workspace.member_count} 人</span>
-        <span className="project-directory-row-status">{joined ? "已加入" : "未加入"}</span>
-        <b>{joined ? "打开" : "加入"}</b>
+        <span className="project-directory-row-status">
+          {workspace.workspace_kind === "customer"
+            ? joined ? "客户成员" : "受限情报"
+            : workspace.is_hidden ? (joined ? "隐藏成员" : "隐藏授权") : joined ? "已加入" : "开放项目"}
+        </span>
+        <b>{accessible ? "打开" : "等待邀请"}</b>
       </button>
     );
   }
@@ -284,7 +316,7 @@ export function WorkspaceSelector({ apiOptions, onWorkspaceChanged }: WorkspaceS
         >
           <span className="workspace-section-title">
             <WorkspaceIcon />
-            <span>工作区</span>
+          <span>工作区</span>
             {activeWorkspace ? <small>{activeWorkspace.name}</small> : null}
           </span>
           <ChevronDownIcon className={isOpen ? "workspace-chevron is-open" : "workspace-chevron"} />
@@ -307,10 +339,34 @@ export function WorkspaceSelector({ apiOptions, onWorkspaceChanged }: WorkspaceS
 
       {isOpen ? (
         <div className="workspace-list">
-          {workspaces.map((workspace, index) => (
+          {personalWorkspaces.length ? (
+            <div className="workspace-list-group">
+              <span className="workspace-list-group-title">个人</span>
+              {personalWorkspaces.map((workspace) => (
+                <div
+                  className={`workspace-list-item is-personal ${workspace.id === activeWorkspaceId ? "is-active" : ""}`}
+                  key={workspace.id}
+                  onClick={() => {
+                    setActiveWorkspaceId(workspace.id);
+                    onWorkspaceChanged?.(workspace.id);
+                  }}
+                  role="button"
+                  tabIndex={0}
+                >
+                  <HomeIcon className="workspace-item-icon" />
+                  <span className="workspace-list-name">{workspace.name}</span>
+                  <span className="workspace-default-badge">个人</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {projectWorkspaces.length ? <div className="workspace-list-group"><span className="workspace-list-group-title">项目</span></div> : null}
+          {projectWorkspaces.map((workspace) => {
+            const index = workspaces.findIndex((item) => item.id === workspace.id);
+            return (
             <div
               className={`workspace-list-item ${workspace.id === activeWorkspaceId ? "is-active" : ""} ${dragIndex === index ? "is-dragging" : ""}`}
-              draggable={!workspace.is_default}
+              draggable
               key={workspace.id}
               onClick={() => {
                 setActiveWorkspaceId(workspace.id);
@@ -340,27 +396,106 @@ export function WorkspaceSelector({ apiOptions, onWorkspaceChanged }: WorkspaceS
               ) : (
                 <span className="workspace-list-name">{workspace.name}</span>
               )}
-              {workspace.is_default ? <span className="workspace-default-badge">私人</span> : <span className="workspace-default-badge">{workspace.brand}</span>}
+              {workspace.is_default ? <span className="workspace-default-badge">私人</span> : <span className="workspace-default-badge">{workspace.is_hidden ? "隐藏" : workspace.brand}</span>}
               <div className="workspace-row-actions" onClick={(event) => event.stopPropagation()}>
-                <button
-                  disabled={!workspace.can_rename}
-                  onClick={() => setRenameInput({ id: workspace.id, value: workspace.name })}
-                  title={workspace.can_rename ? "重命名" : "默认工作区不能重命名"}
-                  type="button"
-                >
-                  <EditIcon />
-                </button>
-                <button
-                  disabled={!workspace.can_delete}
-                  onClick={() => void handleDelete(workspace)}
-                  title={workspace.can_delete ? "删除工作区" : "默认工作区不能删除"}
-                  type="button"
-                >
-                  <TrashIcon />
-                </button>
+                {workspace.can_rename && workspace.workspace_kind !== "user" ? (
+                  <button
+                    onClick={() => setManagingWorkspaceId(workspace.id)}
+                    title="成员管理"
+                    type="button"
+                  >
+                    <ShieldIcon />
+                  </button>
+                ) : null}
+                {workspace.can_rename ? (
+                  <button
+                    onClick={() => setRenameInput({ id: workspace.id, value: workspace.name })}
+                    title="重命名"
+                    type="button"
+                  >
+                    <EditIcon />
+                  </button>
+                ) : null}
+                {workspace.can_delete ? (
+                  <button
+                    onClick={() => void handleDelete(workspace)}
+                    title="删除工作区"
+                    type="button"
+                  >
+                    <TrashIcon />
+                  </button>
+                ) : null}
               </div>
             </div>
-          ))}
+          );})}
+          {customerWorkspaces.length ? <div className="workspace-list-group"><span className="workspace-list-group-title">客户</span></div> : null}
+          {customerWorkspaces.map((workspace) => {
+            const index = workspaces.findIndex((item) => item.id === workspace.id);
+            return (
+            <div
+              className={`workspace-list-item ${workspace.id === activeWorkspaceId ? "is-active" : ""} ${dragIndex === index ? "is-dragging" : ""}`}
+              draggable
+              key={workspace.id}
+              onClick={() => {
+                setActiveWorkspaceId(workspace.id);
+                onWorkspaceChanged?.(workspace.id);
+              }}
+              onDragStart={() => handleDragStart(index)}
+              onDragOver={handleDragOver}
+              onDrop={(event) => handleDrop(event, index)}
+              onDragEnd={() => setDragIndex(null)}
+              role="button"
+              tabIndex={0}
+            >
+              <ShieldIcon className="workspace-item-icon" />
+              {renameInput?.id === workspace.id ? (
+                <input
+                  autoFocus
+                  className="workspace-rename-input"
+                  onBlur={() => void commitRename()}
+                  onChange={(event) => setRenameInput({ id: workspace.id, value: event.target.value })}
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") void commitRename();
+                    if (event.key === "Escape") setRenameInput(null);
+                  }}
+                  value={renameInput.value}
+                />
+              ) : (
+                <span className="workspace-list-name">{workspace.name}</span>
+              )}
+              <span className="workspace-default-badge">客户</span>
+              <div className="workspace-row-actions" onClick={(event) => event.stopPropagation()}>
+                {workspace.can_rename ? (
+                  <button
+                    onClick={() => setManagingWorkspaceId(workspace.id)}
+                    title="成员管理"
+                    type="button"
+                  >
+                    <ShieldIcon />
+                  </button>
+                ) : null}
+                {workspace.can_rename ? (
+                  <button
+                    onClick={() => setRenameInput({ id: workspace.id, value: workspace.name })}
+                    title="重命名"
+                    type="button"
+                  >
+                    <EditIcon />
+                  </button>
+                ) : null}
+                {workspace.can_delete ? (
+                  <button
+                    onClick={() => void handleDelete(workspace)}
+                    title="删除工作区"
+                    type="button"
+                  >
+                    <TrashIcon />
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          );})}
         </div>
       ) : null}
 
@@ -369,8 +504,8 @@ export function WorkspaceSelector({ apiOptions, onWorkspaceChanged }: WorkspaceS
           <section className="project-directory-panel" onClick={(event) => event.stopPropagation()}>
             <header className="project-directory-header">
               <div>
-                <h2>项目目录</h2>
-                <p>搜索、加入、打开或新建公司项目。</p>
+                <h2>工作区目录</h2>
+                <p>搜索、打开或新建项目与受限客户情报工作区。</p>
               </div>
               <button className="prompt-panel-close" onClick={() => setDirectoryOpen(false)} type="button">×</button>
             </header>
@@ -384,17 +519,20 @@ export function WorkspaceSelector({ apiOptions, onWorkspaceChanged }: WorkspaceS
                   value={directoryQuery}
                 />
               </label>
-              <button className="project-directory-new" onClick={() => setCreating((value) => !value)} type="button">
-                <PlusIcon />
-                <span>新建项目</span>
-              </button>
+              {canCreateProject ? (
+                <button className="project-directory-new" onClick={() => setCreating((value) => !value)} type="button">
+                  <PlusIcon />
+                  <span>新建工作区</span>
+                </button>
+              ) : null}
             </div>
-            {creating ? (
+            {creating && canCreateProject ? (
               <div className="project-directory-create">
                 <select value={newBrand} onChange={(event) => setNewBrand(event.target.value)}>
                   {BRANDS.map((brand) => <option key={brand} value={brand}>{brand}</option>)}
+                  <option value={CUSTOMER_GROUP}>客户情报</option>
                 </select>
-                <input value={newName} onChange={(event) => setNewName(event.target.value)} onKeyDown={handleCreateKeyDown} placeholder="项目代号，例如 BG001" />
+                <input value={newName} onChange={(event) => setNewName(event.target.value)} onKeyDown={handleCreateKeyDown} placeholder={newBrand === CUSTOMER_GROUP ? "客户名称，例如 Lucerna" : "项目代号，例如 BG001"} />
                 <input value={newDescription} onChange={(event) => setNewDescription(event.target.value)} placeholder="项目说明，可选" />
                 <button disabled={!newName.trim()} onClick={() => void handleCreate()} type="button">创建</button>
                 {createError ? <p>{createError}</p> : null}
@@ -419,7 +557,7 @@ export function WorkspaceSelector({ apiOptions, onWorkspaceChanged }: WorkspaceS
               <div className="project-directory-results">
                 <div className="project-directory-view-header">
                   <button className="project-directory-back" onClick={() => setSelectedBrand(null)} type="button">← 返回</button>
-                  <h3>{selectedBrand} · {visibleProjects.length} 个项目</h3>
+                  <h3>{groupLabel(selectedBrand)} · {visibleProjects.length} 个工作区</h3>
                 </div>
                 {visibleProjects.length ? (
                   <div className="project-directory-rows">
@@ -440,8 +578,8 @@ export function WorkspaceSelector({ apiOptions, onWorkspaceChanged }: WorkspaceS
                       type="button"
                     >
                       <span>
-                        <strong>{group.brand}</strong>
-                        <em>{group.items.length} 个项目 · 已加入 {joinedCount}</em>
+                        <strong>{groupLabel(group.brand)}</strong>
+                        <em>{group.items.length} 个工作区 · 已加入 {joinedCount}</em>
                       </span>
                       {previewItems.length ? (
                         <small>{previewItems.map((workspace) => workspace.name).join(" / ")}</small>
@@ -455,6 +593,14 @@ export function WorkspaceSelector({ apiOptions, onWorkspaceChanged }: WorkspaceS
             )}
           </section>
         </div>
+      ) : null}
+      {managingWorkspace ? (
+        <WorkspaceMemberManagementPanel
+          apiOptions={apiOptions}
+          onChanged={async () => { await reloadWorkspaces(activeWorkspaceId); }}
+          onClose={() => setManagingWorkspaceId(null)}
+          workspace={managingWorkspace}
+        />
       ) : null}
     </div>
   );

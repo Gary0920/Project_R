@@ -81,6 +81,9 @@ def store_session_attachment(
     content: bytes,
     *,
     attachment_dir: AttachmentDirResolver,
+    source_scope: str = "session_upload",
+    source_label: str = "会话临时上传",
+    authorization_status: str = "uploaded",
 ) -> SessionAttachment:
     storage_dir = attachment_dir(db, user, session_id)
     storage_dir.mkdir(parents=True, exist_ok=True)
@@ -97,11 +100,39 @@ def store_session_attachment(
         stored_path=str(stored_path),
         content_type=safe_content_type(content_type, filename),
         size=len(content),
+        source_scope=safe_source_scope(source_scope),
+        source_label=safe_source_label(source_label),
+        authorization_status=safe_authorization_status(authorization_status),
     )
     db.add(attachment)
     db.commit()
     db.refresh(attachment)
     return attachment
+
+
+def _optional_text(value: object, fallback: str) -> str:
+    if not isinstance(value, str):
+        return fallback
+    return value
+
+
+def safe_source_scope(value: str | None) -> str:
+    normalized = _optional_text(value, "session_upload").strip().lower()
+    if normalized in {"local_private", "session_upload", "project", "company"}:
+        return normalized
+    return "session_upload"
+
+
+def safe_source_label(value: str | None) -> str:
+    label = _optional_text(value, "").strip()
+    return label[:80] or "会话临时上传"
+
+
+def safe_authorization_status(value: str | None) -> str:
+    normalized = _optional_text(value, "uploaded").strip().lower()
+    if normalized in {"pending", "authorized", "uploaded"}:
+        return normalized
+    return "uploaded"
 
 
 def list_session_attachments(db: Session, user_id: int, session_id: int) -> list[SessionAttachment]:

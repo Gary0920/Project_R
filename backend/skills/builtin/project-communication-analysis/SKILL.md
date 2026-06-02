@@ -29,6 +29,26 @@ outputs:
 references:
   - rules/项目邮件相关规则.md
   - rules/项目沟通与书面留痕原则.md
+execution:
+  mode: llm_chat_text
+  prompt: prompt.md
+  steps:
+    - id: compose_context
+      label: 组装沟通原文与项目上下文
+      tool: project_r.context.compose
+    - id: knowledge_search
+      label: 检索沟通与书面留痕规则
+      tool: knowledge.search
+    - id: llm_complete
+      label: 生成项目沟通风险分析
+      tool: llm.complete
+governance:
+  risk_level: medium
+  requires_confirmation: false
+  allowed_tools:
+    - project_r.context.compose
+    - knowledge.search
+    - llm.complete
 ---
 
 # 项目沟通风险分析

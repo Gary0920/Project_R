@@ -1,0 +1,23 @@
+[
+  {
+    "id": "five_points_relationship",
+    "query": "5Points 的关键决策人是谁，和 Synova 有什么关系？",
+    "expected_top_title_contains": "5Points",
+    "expected_top_file_contains": "5Points",
+    "expected_top_content_terms": ["Synova", "Barry", "客户关系"]
+  },
+  {
+    "id": "eighteen_mary_competitive_case",
+    "query": "18 Mary Avenue 项目为什么是价格竞争力和长期稳定性的案例？",
+    "expected_top_title_contains": "18 Mary Avenue",
+    "expected_top_file_contains": "18-Mary-Avenue",
+    "expected_top_content_terms": ["Bakulo", "价格", "长期"]
+  },
+  {
+    "id": "aaron_morris_profile",
+    "query": "Aaron Morris 是谁，关联哪个公司和项目？",
+    "expected_top_title_contains": "Aaron Morris",
+    "expected_top_file_contains": "Aaron-Morris",
+    "expected_top_content_terms": ["Binah", "VELA", "Project Manager"]
+  }
+]

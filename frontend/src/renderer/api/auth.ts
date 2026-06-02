@@ -10,3 +10,12 @@ export function updateCurrentUser(
     body: JSON.stringify(data),
   });
 }
+
+export function uploadCurrentUserAvatar(options: ApiClientOptions, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return apiRequest<CurrentUserResponse>(options, "/auth/me/avatar", {
+    method: "POST",
+    body: form,
+  });
+}

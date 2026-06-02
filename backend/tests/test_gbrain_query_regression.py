@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 from pathlib import Path
 
@@ -30,7 +31,15 @@ class GBrainQueryRegressionTests(unittest.TestCase):
         for case in self.cases:
             with self.subTest(case=case["id"]):
                 adapter = RegressionGBrainAdapter(case["mock_results_by_query"])
-                sources = KnowledgeSources(gbrain_factory=lambda: adapter).search_company_sources(case["query"])
+                previous = os.environ.get("GBRAIN_COMPANY_LOCAL_INDEX_ENABLED")
+                os.environ["GBRAIN_COMPANY_LOCAL_INDEX_ENABLED"] = "false"
+                try:
+                    sources = KnowledgeSources(gbrain_factory=lambda: adapter).search_company_sources(case["query"])
+                finally:
+                    if previous is None:
+                        os.environ.pop("GBRAIN_COMPANY_LOCAL_INDEX_ENABLED", None)
+                    else:
+                        os.environ["GBRAIN_COMPANY_LOCAL_INDEX_ENABLED"] = previous
 
                 self.assertEqual(adapter.queries, case["expected_query_variants"])
                 self.assertGreaterEqual(len(sources), 1)
@@ -46,12 +55,11 @@ class GBrainQueryRegressionTests(unittest.TestCase):
 
     def test_regression_fixture_covers_required_business_areas(self):
         ids = {case["id"] for case in self.cases}
-        self.assertIn("as1288_safety_glass", ids)
-        self.assertIn("as2047_water_penetration", ids)
-        self.assertIn("as1288_heat_soak", ids)
-        self.assertIn("vmu_customer_visit", ids)
-        self.assertIn("meeting_0515_actions", ids)
         self.assertIn("written_principle", ids)
+        self.assertIn("vmu_standard_procedure", ids)
+        self.assertIn("project_email_rule", ids)
+        self.assertIn("file_naming_rule", ids)
+        self.assertIn("accessory_order_rule", ids)
 
 
 if __name__ == "__main__":

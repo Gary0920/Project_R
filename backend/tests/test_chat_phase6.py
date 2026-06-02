@@ -4,17 +4,16 @@ import os
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
-from zipfile import ZipFile
 
 os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.NamedTemporaryFile(delete=False).name}"
 
 import api.chat as chat_api
 import core.skill_execution as skill_execution
 from core.llm import LLMProviderError, LLMResponse
+from core.web_search import WebSearchResponse, WebSearchResult
 from fastapi import HTTPException
 from models import Base, SessionLocal, engine
 from models.audit_log import AuditLog
-from models.generated_file import GeneratedFile
 from models.knowledge_review import KnowledgeReview
 from models.message import ChatMessage
 from models.notification import Notification
@@ -59,6 +58,38 @@ def fake_gbrain_company_sources():
     ]
 
 
+def fake_gbrain_think_result():
+    return {
+        "ok": True,
+        "status": "ok",
+        "source_id": "company-wiki",
+        "reply": "用车申请需要先获得审批。\n\n引用与缺口： 来源 1 来源 2",
+        "model": "gbrain-think-test",
+        "metadata": {
+            "gaps": ["缺少审批时限。"],
+            "conflicts": ["车辆申请权限在两条规则中不一致。"],
+            "warnings": ["source_scope_limited"],
+            "diagnostics": {"trace_id": "think-trace-1", "pipeline": "think"},
+        },
+        "sources": [
+            {
+                "file": "gbrain:company-wiki/rules/用车申请",
+                "source_title": "用车申请",
+                "section_path": "rules/用车申请",
+                "content": "审批要求",
+                "score": 1.0,
+            },
+            {
+                "file": "gbrain:company-wiki/__think_gaps__",
+                "source_title": "GBrain 缺口分析 / Gap Analysis",
+                "section_path": "GBrain 缺口分析 / Gap Analysis",
+                "content": "- 缺少审批时限。",
+                "score": 0.0,
+            },
+        ],
+    }
+
+
 class FakeKnowledgeSources:
     def __init__(self, sources=None, think_result=None):
         self.sources = sources or []
@@ -69,6 +100,8 @@ class FakeKnowledgeSources:
             "reply": "GBrain think disabled",
             "sources": [],
         }
+        self.search_calls = []
+        self.think_calls = []
 
     def search(
         self,
@@ -79,6 +112,14 @@ class FakeKnowledgeSources:
         forced_company_query,
         reduce_knowledge_context,
     ):
+        self.search_calls.append(
+            {
+                "content": content,
+                "workspace_id": workspace_id,
+                "forced_company_query": forced_company_query,
+                "reduce_knowledge_context": reduce_knowledge_context,
+            }
+        )
         if reduce_knowledge_context or not forced_company_query:
             return []
         return self.sources
@@ -87,6 +128,7 @@ class FakeKnowledgeSources:
         return []
 
     def think(self, db, content, *, workspace_id=None):
+        self.think_calls.append({"content": content, "workspace_id": workspace_id})
         return self.think_result
 
 
@@ -114,6 +156,7 @@ class ChatPhase6Tests(unittest.TestCase):
         self.original_skill_generated_root = skill_execution.GENERATED_FILES_ROOT
         self.original_global_base_prompt_path = chat_api.GLOBAL_BASE_PROMPT_PATH
         self.original_feedback_root = chat_api.MESSAGE_FEEDBACK_ROOT
+        self.original_run_web_search_skill = chat_api._run_web_search_skill
         self.generated_root = tempfile.TemporaryDirectory()
         self.prompt_root = tempfile.TemporaryDirectory()
         self.feedback_root = tempfile.TemporaryDirectory()
@@ -133,6 +176,7 @@ class ChatPhase6Tests(unittest.TestCase):
         skill_execution.GENERATED_FILES_ROOT = self.original_skill_generated_root
         chat_api.GLOBAL_BASE_PROMPT_PATH = self.original_global_base_prompt_path
         chat_api.MESSAGE_FEEDBACK_ROOT = self.original_feedback_root
+        chat_api._run_web_search_skill = self.original_run_web_search_skill
         self.generated_root.cleanup()
         self.prompt_root.cleanup()
         self.feedback_root.cleanup()
@@ -545,6 +589,121 @@ class ChatPhase6Tests(unittest.TestCase):
         self.assertIsNone(response["knowledge_review_id"])
         self.assertEqual(self.db.query(KnowledgeReview).count(), 0)
 
+    def test_submit_gbrain_think_review_creates_pending_knowledge_review(self):
+        user_message = ChatMessage(
+            session_id=self.session.id,
+            user_id=self.user.id,
+            role="user",
+            content="/query 用车申请怎么做",
+            status="success",
+        )
+        assistant_message = ChatMessage(
+            session_id=self.session.id,
+            user_id=self.user.id,
+            role="assistant",
+            content="用车申请需要先获得审批。",
+            status="success",
+            provider="gbrain",
+            model="gbrain-think-test",
+            rag_used=True,
+            sources_json=json.dumps(fake_gbrain_think_result()["sources"], ensure_ascii=False),
+            context_json=json.dumps(
+                {
+                    "gbrain_think": {
+                        "source_id": "company-wiki",
+                        "status": "ok",
+                        "model": "gbrain-think-test",
+                        "gap_count": 1,
+                        "conflict_count": 1,
+                        "warning_count": 1,
+                        "gaps": ["缺少审批时限。"],
+                        "conflicts": ["车辆申请权限在两条规则中不一致。"],
+                        "warnings": ["source_scope_limited"],
+                        "diagnostics": {"trace_id": "think-trace-1", "pipeline": "think"},
+                    }
+                },
+                ensure_ascii=False,
+            ),
+        )
+        self.db.add_all([user_message, assistant_message])
+        self.db.commit()
+        self.db.refresh(assistant_message)
+
+        response = chat_api.submit_gbrain_think_review(
+            self.session.id,
+            assistant_message.id,
+            chat_api.GBrainThinkReviewRequest(note="请管理员确认审批时限。"),
+            self.user,
+            self.db,
+        )
+
+        self.assertTrue(response["ok"])
+        self.assertTrue(response["created"])
+        review = self.db.get(KnowledgeReview, response["knowledge_review_id"])
+        self.assertIsNotNone(review)
+        assert review is not None
+        self.assertEqual(review.status, "pending")
+        self.assertEqual(review.source, f"gbrain_think_review:message:{assistant_message.id}")
+        self.assertIn("GBrain Think 缺口", review.content)
+        self.assertIn("缺少审批时限", review.content)
+        self.assertIn("车辆申请权限", review.content)
+        self.assertIn("source_scope_limited", review.content)
+        self.assertIn("gbrain:company-wiki/rules/用车申请", review.content)
+        self.assertIn("请管理员确认审批时限", review.content)
+        notification = (
+            self.db.query(Notification)
+            .filter(Notification.event_key == f"knowledge_review:{review.id}:pending")
+            .one()
+        )
+        self.assertEqual(notification.category, "approval")
+        audit = self.db.query(AuditLog).filter(AuditLog.action == "gbrain_think_review_submit").one()
+        self.assertIn(f"审核 {review.id}", audit.detail)
+
+        second = chat_api.submit_gbrain_think_review(
+            self.session.id,
+            assistant_message.id,
+            chat_api.GBrainThinkReviewRequest(note="第二次补充"),
+            self.user,
+            self.db,
+        )
+        self.assertFalse(second["created"])
+        self.assertEqual(second["knowledge_review_id"], review.id)
+        self.db.refresh(review)
+        self.assertIn("第二次补充", review.content)
+        self.assertEqual(
+            self.db.query(KnowledgeReview)
+            .filter(KnowledgeReview.source == f"gbrain_think_review:message:{assistant_message.id}")
+            .count(),
+            1,
+        )
+
+    def test_submit_gbrain_think_review_rejects_message_without_gap_conflict_warning(self):
+        assistant_message = ChatMessage(
+            session_id=self.session.id,
+            user_id=self.user.id,
+            role="assistant",
+            content="普通回答",
+            status="success",
+            provider="gbrain",
+            model="gbrain-think-test",
+            context_json=json.dumps({"gbrain_think": {"source_id": "company-wiki"}}, ensure_ascii=False),
+        )
+        self.db.add(assistant_message)
+        self.db.commit()
+        self.db.refresh(assistant_message)
+
+        with self.assertRaises(HTTPException) as ctx:
+            chat_api.submit_gbrain_think_review(
+                self.session.id,
+                assistant_message.id,
+                chat_api.GBrainThinkReviewRequest(),
+                self.user,
+                self.db,
+            )
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertEqual(self.db.query(KnowledgeReview).count(), 0)
+
     def test_llm_response_token_cost_maps_to_message_fields(self):
         response = FakeLLMClient().complete([{"role": "user", "content": "hello"}])
         message = ChatMessage(
@@ -595,7 +754,7 @@ class ChatPhase6Tests(unittest.TestCase):
 
         response = chat_api.send_message(
             self.session.id,
-            chat_api.SendMessageRequest(content="帮我生成标签打印文件"),
+            chat_api.SendMessageRequest(content="帮我分析客户邮件有没有 VO 风险：Builder 要求无费用变更。"),
             self.user,
             self.db,
         )
@@ -603,23 +762,30 @@ class ChatPhase6Tests(unittest.TestCase):
         self.assertEqual(response["intent"], "chat")
         self.assertEqual(response["provider"], "mock")
         self.assertIsNone(response["skill_run"])
-        self.assertEqual(self.db.query(SkillRun).filter(SkillRun.skill_name == "tag-printing").count(), 0)
+        self.assertEqual(self.db.query(SkillRun).filter(SkillRun.skill_name == "project-communication-analysis").count(), 0)
 
     def test_send_message_starts_selected_skill_without_trigger_text(self):
-        def fail_if_called(provider=None):
-            raise AssertionError("LLM should not be called for selected skill setup")
-
-        chat_api.get_llm_client = fail_if_called
+        client = FakeLLMClient()
+        chat_api.get_llm_client = lambda provider=None: client
 
         response = chat_api.send_message(
             self.session.id,
-            chat_api.SendMessageRequest(content="先按我下面的资料处理", selected_skill="tag-printing"),
+            chat_api.SendMessageRequest(content="先按我下面的资料处理", selected_skill="project-communication-analysis"),
             self.user,
             self.db,
         )
 
         self.assertEqual(response["intent"], "skill_trigger")
-        self.assertEqual(response["skill_run"]["skill_name"], "tag-printing")
+        self.assertEqual(response["provider"], "mock")
+        self.assertEqual(response["skill_run"]["skill_name"], "project-communication-analysis")
+        self.assertEqual(response["skill_run"]["status"], "completed")
+        self.assertEqual(response["agent_run"]["source_type"], "skill")
+        self.assertEqual(response["agent_run"]["status"], "completed")
+        self.assertEqual(response["context_trace"]["skill"]["skill_name"], "project-communication-analysis")
+        history = chat_api.list_messages(self.session.id, limit=50, offset=0, user=self.user, db=self.db)
+        assistant = next(item for item in history.items if item.role == "assistant")
+        self.assertEqual(assistant.skill_run["skill_name"], "project-communication-analysis")
+        self.assertEqual(assistant.skill_run["dispatch"]["mode"], "llm_chat_text")
         message = self.db.query(ChatMessage).filter(ChatMessage.role == "user").one()
         self.assertEqual(message.content, "先按我下面的资料处理")
 
@@ -641,6 +807,17 @@ class ChatPhase6Tests(unittest.TestCase):
         self.assertEqual(response["provider"], "mock")
         self.assertEqual(response["skill_run"]["skill_name"], "client-reply-drafting")
         self.assertEqual(response["skill_run"]["status"], "completed")
+        self.assertEqual(response["agent_run"]["source_type"], "skill")
+        self.assertEqual(response["agent_run"]["status"], "completed")
+        self.assertEqual(response["skill_run"]["dispatch"]["mode"], "llm_chat_text")
+        self.assertTrue(any(event["event_type"] == "execution_plan" for event in response["agent_run"]["events"]))
+        self.assertTrue(
+            any(
+                event["event_type"] == "tool_call"
+                and event["payload"].get("tool") == "llm.complete"
+                for event in response["agent_run"]["events"]
+            )
+        )
         self.assertIn("客户英文回复起草", client.last_system_prompt)
         self.assertIn("Client Reply Drafting Skill", client.last_system_prompt)
         self.assertIn("mock reply", response["reply"])
@@ -674,48 +851,79 @@ class ChatPhase6Tests(unittest.TestCase):
 
         self.assertTrue(client.last_thinking)
 
-    def test_send_message_continues_active_skill_run_and_generates_file(self):
-        chat_api.get_llm_client = lambda provider=None: (_ for _ in ()).throw(
-            AssertionError("LLM should not be called for active skill continuation")
-        )
-        chat_api.send_message(
-            self.session.id,
-            chat_api.SendMessageRequest(content="帮我生成标签打印文件", selected_skill="tag-printing"),
-            self.user,
-            self.db,
-        )
+    def test_send_message_runs_web_search_skill_when_enabled(self):
+        client = FakeLLMClient()
+        chat_api.get_llm_client = lambda provider=None: client
+        calls = []
+
+        def fake_web_search(query: str) -> WebSearchResponse:
+            calls.append(query)
+            return WebSearchResponse(
+                query=query,
+                provider="test",
+                results=[
+                    WebSearchResult(
+                        title="Project R Search Result",
+                        url="https://example.com/project-r",
+                        snippet="联网搜索返回的摘要内容。",
+                        rank=1,
+                        provider="test",
+                    )
+                ],
+            )
+
+        chat_api._run_web_search_skill = fake_web_search
 
         response = chat_api.send_message(
             self.session.id,
-            chat_api.SendMessageRequest(
-                content=(
-                    "项目名称: 项目 A\n"
-                    "项目编号: PR-A\n"
-                    "编号 | 产品名称 | 颜色 | 尺寸 | 数量\n"
-                    "T001 | 铝合金框 | 深灰色 | 1200x600mm | 2\n"
-                    "模板: 默认模板"
-                )
-            ),
+            chat_api.SendMessageRequest(content="查一下 Project_R 当前联网搜索能力", web_search=True),
             self.user,
             self.db,
         )
 
-        self.assertEqual(response["intent"], "skill_trigger")
-        self.assertEqual(response["skill_run"]["status"], "completed")
-        self.assertIsNotNone(response["generated_file"])
-        record = self.db.get(GeneratedFile, response["generated_file"]["id"])
-        self.assertTrue(Path(record.path).exists())
-        with ZipFile(record.path) as archive:
-            sheet = archive.read("xl/worksheets/sheet1.xml").decode("utf-8")
-        self.assertIn("项目 A", sheet)
-        self.assertIn("T001", sheet)
+        self.assertEqual(calls, ["查一下 Project_R 当前联网搜索能力"])
+        self.assertEqual(response["sources"][0]["source_title"], "Project R Search Result")
+        self.assertEqual(response["sources"][0]["source_file"], "https://example.com/project-r")
+        self.assertIn("联网搜索 Skill", client.last_system_prompt)
+        self.assertIn("Project R Search Result", client.last_system_prompt)
+        self.assertTrue(response["context_trace"]["model"]["web_search"])
+        self.assertEqual(response["context_trace"]["web_search"]["skill_name"], "web-search-content")
+        self.assertEqual(response["context_trace"]["web_search"]["result_count"], 1)
 
-    def test_explicit_routing_does_not_auto_generate_document_during_active_skill_collection(self):
-        chat_api.send_message(
+        assistant = (
+            self.db.query(ChatMessage)
+            .filter(ChatMessage.session_id == self.session.id, ChatMessage.role == "assistant")
+            .order_by(ChatMessage.id.desc())
+            .first()
+        )
+        self.assertTrue(assistant.rag_used)
+        self.assertEqual(assistant.sources[0]["source_locator"], "web:test:1")
+
+    def test_send_message_does_not_run_web_search_skill_when_disabled(self):
+        client = FakeLLMClient()
+        chat_api.get_llm_client = lambda provider=None: client
+
+        def fail_if_called(query: str):
+            raise AssertionError("web search should not run when disabled")
+
+        chat_api._run_web_search_skill = fail_if_called
+
+        response = chat_api.send_message(
             self.session.id,
-            chat_api.SendMessageRequest(content="帮我生成标签打印文件", selected_skill="tag-printing"),
+            chat_api.SendMessageRequest(content="普通聊天"),
             self.user,
             self.db,
+        )
+
+        self.assertEqual(response["sources"], [])
+        self.assertNotIn("联网搜索 Skill", client.last_system_prompt)
+
+    def test_explicit_routing_does_not_auto_generate_document_during_active_skill_collection(self):
+        SkillRunner.get().start_run(
+            self.db,
+            "client-reply-drafting",
+            user_id=self.user.id,
+            session_id=self.session.id,
         )
 
         response = chat_api.send_message(
@@ -808,56 +1016,20 @@ class ChatPhase6Tests(unittest.TestCase):
         self.assertFalse(assistant.rag_used)
         self.assertEqual(assistant.sources, [])
 
-    def test_query_command_uses_gbrain_company_sources(self):
-        client = FakeLLMClient()
-        chat_api.get_llm_client = lambda provider=None: client
-        chat_api.KNOWLEDGE_SOURCES = FakeKnowledgeSources(fake_gbrain_company_sources())
-
-        response = chat_api.send_message(
-            self.session.id,
-            chat_api.SendMessageRequest(content="/query 如何借用公司车辆"),
-            self.user,
-            self.db,
-        )
-
-        self.assertEqual(response["intent"], "rag_query")
-        self.assertEqual(response["sources"][0]["file"], "gbrain:company-wiki/rules/用车申请")
-        self.assertIn("借用公司车辆", client.last_system_prompt)
-
-    def test_query_think_command_uses_gbrain_think_without_llm(self):
+    def test_query_command_uses_gbrain_native_think_without_llm(self):
         def fail_if_called(provider=None):
-            raise AssertionError("LLM should not be called for /query --think")
+            raise AssertionError("LLM should not be called for /query")
 
         chat_api.get_llm_client = fail_if_called
-        chat_api.KNOWLEDGE_SOURCES = FakeKnowledgeSources(
-            think_result={
-                "ok": True,
-                "status": "ok",
-                "source_id": "company-wiki",
-                "reply": "用车申请需要先获得审批。\n\n引用与缺口： 来源 1 来源 2",
-                "model": "gbrain-think-test",
-                "sources": [
-                    {
-                        "file": "gbrain:company-wiki/rules/用车申请",
-                        "source_title": "用车申请",
-                        "section_path": "rules/用车申请",
-                        "content": "审批要求",
-                        "score": 1.0,
-                    },
-                    {
-                        "file": "gbrain:company-wiki/__think_gaps__",
-                        "source_title": "GBrain 缺口分析 / Gap Analysis",
-                        "section_path": "GBrain 缺口分析 / Gap Analysis",
-                        "content": "- 缺少审批时限。",
-                        "score": 0.0,
-                    },
-                ],
-            }
+        knowledge_sources = FakeKnowledgeSources(
+            fake_gbrain_company_sources(),
+            think_result=fake_gbrain_think_result(),
         )
+        chat_api.KNOWLEDGE_SOURCES = knowledge_sources
 
         response = chat_api.send_message(
             self.session.id,
-            chat_api.SendMessageRequest(content="/query --think 用车申请怎么做"),
+            chat_api.SendMessageRequest(content="/query 用车申请怎么做"),
             self.user,
             self.db,
         )
@@ -866,7 +1038,44 @@ class ChatPhase6Tests(unittest.TestCase):
         self.assertEqual(response["provider"], "gbrain")
         self.assertEqual(response["model"], "gbrain-think-test")
         self.assertIn("用车申请需要先获得审批", response["reply"])
-        self.assertEqual(response["sources"][1]["source_title"], "GBrain 缺口分析 / Gap Analysis")
+        self.assertEqual(response["sources"][0]["file"], "gbrain:company-wiki/rules/用车申请")
+        self.assertEqual(response["agent_run"]["source_type"], "gbrain_think")
+        self.assertEqual(response["context_trace"]["gbrain_think"]["gap_count"], 1)
+        self.assertEqual(response["context_trace"]["gbrain_think"]["conflict_count"], 1)
+        self.assertEqual(response["context_trace"]["gbrain_think"]["warning_count"], 1)
+        self.assertIn("缺少审批时限", response["context_trace"]["gbrain_think"]["gaps"][0])
+        self.assertIn("车辆申请权限", response["context_trace"]["gbrain_think"]["conflicts"][0])
+        self.assertEqual(response["context_trace"]["gbrain_think"]["warnings"], ["source_scope_limited"])
+        self.assertEqual(response["context_trace"]["gbrain_think"]["diagnostics"]["trace_id"], "think-trace-1")
+        self.assertEqual(response["agent_run"]["result"]["gbrain_think"]["gap_count"], 1)
+        self.assertEqual(knowledge_sources.think_calls[0]["content"], "用车申请怎么做")
+        self.assertEqual(knowledge_sources.search_calls, [])
+
+    def test_query_command_returns_gbrain_status_when_think_unavailable(self):
+        def fail_if_called(provider=None):
+            raise AssertionError("LLM should not be called when GBrain think is unavailable")
+
+        chat_api.get_llm_client = fail_if_called
+        knowledge_sources = FakeKnowledgeSources(fake_gbrain_company_sources())
+        chat_api.KNOWLEDGE_SOURCES = knowledge_sources
+
+        response = chat_api.send_message(
+            self.session.id,
+            chat_api.SendMessageRequest(content="/query 用车申请怎么做"),
+            self.user,
+            self.db,
+        )
+
+        self.assertEqual(response["intent"], "rag_query")
+        self.assertEqual(response["provider"], "gbrain")
+        self.assertEqual(response["model"], "think-unavailable")
+        self.assertIn("GBrain think disabled", response["reply"])
+        self.assertEqual(response["agent_run"]["source_type"], "gbrain_think")
+        self.assertEqual(response["agent_run"]["status"], "failed")
+        self.assertEqual(response["sources"], [])
+        self.assertEqual(knowledge_sources.think_calls[0]["content"], "用车申请怎么做")
+        self.assertEqual(knowledge_sources.search_calls, [])
+        self.assertEqual(response["context_trace"]["gbrain_source_id"], "company-wiki")
 
     def test_plain_chat_does_not_inject_empty_knowledge_constraint(self):
         client = FakeLLMClient()
@@ -908,40 +1117,42 @@ class ChatPhase6Tests(unittest.TestCase):
         self.assertNotIn("知识库中未检索到", client.last_system_prompt)
 
     def test_query_command_overrides_text_transformation_prompt_rag_reduction(self):
-        client = FakeLLMClient()
-        chat_api.get_llm_client = lambda provider=None: client
-        chat_api.KNOWLEDGE_SOURCES = FakeKnowledgeSources(fake_gbrain_company_sources())
+        def fail_if_called(provider=None):
+            raise AssertionError("LLM should not be called for /query even when a text prompt is selected")
 
-        with patch.dict(os.environ, {"GBRAIN_ENABLED": "false"}):
-            response = chat_api.send_message(
-                self.session.id,
-                chat_api.SendMessageRequest(
-                    content="/query 如何借用公司车辆",
-                    selected_prompt_id="company:company-work-message-polish",
-                ),
-                self.user,
-                self.db,
-            )
+        chat_api.get_llm_client = fail_if_called
+        chat_api.KNOWLEDGE_SOURCES = FakeKnowledgeSources(think_result=fake_gbrain_think_result())
+
+        response = chat_api.send_message(
+            self.session.id,
+            chat_api.SendMessageRequest(
+                content="/query 如何借用公司车辆",
+                selected_prompt_id="company:company-work-message-polish",
+            ),
+            self.user,
+            self.db,
+        )
 
         self.assertEqual(response["intent"], "rag_query")
-        self.assertEqual(response["sources"][0]["file"], "gbrain:company-wiki/rules/用车申请")
-        self.assertIn("当员工因公需借用公司车辆", client.last_system_prompt)
-        self.assertNotIn("文本变换类提示词", client.last_system_prompt)
+        self.assertEqual(response["provider"], "gbrain")
+        self.assertIn("用车申请需要先获得审批", response["reply"])
 
     def test_query_command_forces_knowledge_mode(self):
-        client = FakeLLMClient()
-        chat_api.get_llm_client = lambda provider=None: client
+        def fail_if_called(provider=None):
+            raise AssertionError("LLM should not be called for /query")
 
-        with patch.dict(os.environ, {"GBRAIN_ENABLED": "false"}):
-            response = chat_api.send_message(
-                self.session.id,
-                chat_api.SendMessageRequest(content="/query 一个完全没有命中的问题"),
-                self.user,
-                self.db,
-            )
+        chat_api.get_llm_client = fail_if_called
+
+        response = chat_api.send_message(
+            self.session.id,
+            chat_api.SendMessageRequest(content="/query 一个完全没有命中的问题"),
+            self.user,
+            self.db,
+        )
 
         self.assertEqual(response["intent"], "rag_query")
-        self.assertIn("知识库中未检索到", client.last_system_prompt)
+        self.assertEqual(response["provider"], "gbrain")
+        self.assertEqual(response["model"], "think-unavailable")
 
     def test_document_generation_text_stays_chat_without_explicit_route(self):
         response = chat_api.send_message(

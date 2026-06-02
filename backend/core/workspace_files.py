@@ -18,7 +18,21 @@ DEFAULT_WORKSPACE_DIRS = (
     "06-现场与客诉",
     "99-未归档文件",
 )
-DEFAULT_USER_WORKSPACE_DIRS = ("对话文件", "固定文件")
+DEFAULT_USER_WORKSPACE_DIRS = (
+    "常用文件",
+    "常用文件/模板",
+    "常用文件/参考资料",
+    "常用文件/图片素材",
+    "常用文件/其他",
+    "对话文件",
+)
+DEFAULT_CUSTOMER_WORKSPACE_DIRS = (
+    "01-客户档案",
+    "02-联系人与关系",
+    "03-沟通记录",
+    "04-原始资料",
+    "99-未归档文件",
+)
 DEFAULT_UNFILED_DIR = "99-未归档文件"
 MAX_WORKSPACE_UPLOAD_MB = int(os.getenv("WORKSPACE_MAX_UPLOAD_MB", "100"))
 MAX_WORKSPACE_ADMIN_UPLOAD_MB = int(os.getenv("WORKSPACE_ADMIN_MAX_UPLOAD_MB", "1024"))
@@ -52,14 +66,24 @@ def resolve_workspace_child(root: Path, rel_path: Path) -> Path:
     return target
 
 
-def member_can_mutate_file(member: WorkspaceMember, user_id: int, meta: WorkspaceFile | None) -> bool:
-    if member.role == "admin":
+def member_can_mutate_file(
+    member: WorkspaceMember,
+    user_id: int,
+    meta: WorkspaceFile | None,
+    user_role: str = "",
+) -> bool:
+    if member.role == "admin" or user_role == "admin":
         return True
     return bool(meta and meta.uploaded_by == user_id)
 
 
-def member_can_restore_file(member: WorkspaceMember, user_id: int, meta: WorkspaceFile) -> bool:
-    if member.role == "admin":
+def member_can_restore_file(
+    member: WorkspaceMember,
+    user_id: int,
+    meta: WorkspaceFile,
+    user_role: str = "",
+) -> bool:
+    if member.role == "admin" or user_role == "admin":
         return True
     return meta.uploaded_by == user_id and meta.deleted_by == user_id
 

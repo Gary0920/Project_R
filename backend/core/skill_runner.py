@@ -6,6 +6,7 @@ from typing import Any
 import yaml
 from sqlalchemy.orm import Session
 
+from core.time_utils import serialize_datetime_utc
 from models.skill_run import SkillRun
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -23,6 +24,8 @@ class SkillDefinition:
     inputs: list[dict[str, Any]]
     outputs: list[dict[str, Any]]
     references: list[str]
+    execution: dict[str, Any]
+    governance: dict[str, Any]
     path: str
 
     def to_dict(self) -> dict[str, Any]:
@@ -36,6 +39,8 @@ class SkillDefinition:
             "inputs": self.inputs,
             "outputs": self.outputs,
             "references": self.references,
+            "execution": self.execution,
+            "governance": self.governance,
             "path": self.path,
         }
 
@@ -59,6 +64,8 @@ def _parse_skill_file(path: Path) -> SkillDefinition | None:
         inputs=list(meta.get("inputs") or []),
         outputs=list(meta.get("outputs") or []),
         references=list(meta.get("references") or []),
+        execution=dict(meta.get("execution") or {}),
+        governance=dict(meta.get("governance") or {}),
         path=path.relative_to(BASE_DIR).as_posix(),
     )
 
@@ -88,22 +95,27 @@ class SkillRunner:
         self._skills = skills
         return self.list_skills()
 
-    def list_skills(self) -> list[SkillDefinition]:
+    def list_skills(self, *, include_internal: bool = False) -> list[SkillDefinition]:
         priority_order = {"high": 0, "medium": 1, "low": 2}
+        skills = self._skills.values()
+        if not include_internal:
+            skills = [skill for skill in skills if not _is_internal_skill(skill)]
         return sorted(
-            self._skills.values(),
+            skills,
             key=lambda item: (priority_order.get(item.priority, 9), item.category, item.display_name),
         )
 
     def get_skill(self, name: str) -> SkillDefinition | None:
         return self._skills.get(name)
 
-    def match_skill(self, text: str) -> dict[str, Any] | None:
+    def match_skill(self, text: str, *, include_internal: bool = False) -> dict[str, Any] | None:
         normalized = text.strip().lower()
         if not normalized:
             return None
         best: tuple[float, SkillDefinition, str] | None = None
         for skill in self._skills.values():
+            if not include_internal and _is_internal_skill(skill):
+                continue
             candidates = [skill.display_name, skill.description, *skill.trigger]
             for candidate in candidates:
                 cand = str(candidate).strip().lower()
@@ -181,6 +193,41 @@ def run_to_dict(run: SkillRun, skill: SkillDefinition | None = None) -> dict[str
         "status": run.status,
         "inputs": json.loads(run.inputs_json or "{}"),
         "missing_inputs": json.loads(run.missing_inputs_json or "[]"),
-        "created_at": run.created_at,
-        "updated_at": run.updated_at,
+        "dispatch": _skill_dispatch_plan(skill),
+        "created_at": serialize_datetime_utc(run.created_at),
+        "updated_at": serialize_datetime_utc(run.updated_at),
+    }
+
+
+def _is_internal_skill(skill: SkillDefinition) -> bool:
+    return str((skill.governance or {}).get("visibility") or "").strip().lower() == "internal"
+
+
+def _skill_dispatch_plan(skill: SkillDefinition | None) -> dict[str, Any] | None:
+    if not skill:
+        return None
+    execution = skill.execution or {}
+    governance = skill.governance or {}
+    steps = execution.get("steps") or []
+    if not isinstance(steps, list):
+        steps = []
+    if not execution and not governance:
+        return None
+    allowed_tools = governance.get("allowed_tools") or execution.get("allowed_tools") or []
+    return {
+        "mode": str(execution.get("mode") or ""),
+        "risk_level": str(governance.get("risk_level") or execution.get("risk_level") or "low"),
+        "requires_confirmation": bool(governance.get("requires_confirmation") or execution.get("requires_confirmation")),
+        "allowed_tools": [str(tool) for tool in allowed_tools if str(tool).strip()],
+        "steps": [
+            {
+                "id": str(step.get("id") or step.get("tool") or index + 1),
+                "tool": str(step.get("tool") or ""),
+                "label": str(step.get("label") or step.get("title") or step.get("tool") or "执行步骤"),
+                "risk_level": str(step.get("risk_level") or governance.get("risk_level") or "low"),
+                "requires_confirmation": bool(step.get("requires_confirmation")),
+            }
+            for index, step in enumerate(steps)
+            if isinstance(step, dict)
+        ],
     }

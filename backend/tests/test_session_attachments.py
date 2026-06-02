@@ -127,7 +127,17 @@ class SessionAttachmentTests(unittest.TestCase):
             headers=Headers({"content-type": "image/png"}),
         )
 
-        attachment = asyncio.run(chat_api.upload_session_attachment(self.session.id, upload, self.user, self.db))
+        attachment = asyncio.run(
+            chat_api.upload_session_attachment(
+                self.session.id,
+                upload,
+                self.user,
+                self.db,
+                source_scope="local_private",
+                source_label="本地私人",
+                authorization_status="authorized",
+            )
+        )
         context = chat_api._load_attachment_context(
             self.db,
             self.user.id,
@@ -138,6 +148,9 @@ class SessionAttachmentTests(unittest.TestCase):
         self.assertEqual(attachment.original_name, "clipboard.png")
         self.assertEqual(attachment.content_type, "image/png")
         self.assertGreater(attachment.size, 256 * 1024)
+        self.assertEqual(attachment.source_scope, "local_private")
+        self.assertEqual(attachment.source_label, "本地私人")
+        self.assertEqual(attachment.authorization_status, "authorized")
         self.assertTrue(Path(attachment.stored_path).exists())
         self.assertIn("clipboard.png", context)
         self.assertIn("图片", context)
@@ -167,6 +180,38 @@ class SessionAttachmentTests(unittest.TestCase):
         )
         self.assertIn("请基于这份 brief 写一封邮件", self.client.last_system_prompt)
 
+    def test_send_message_binds_selected_attachment_to_user_message_history(self):
+        attachment = chat_api.create_session_attachment(
+            self.session.id,
+            chat_api.CreateAttachmentRequest(filename="brief.md", content="请基于这份 brief 写一封邮件。"),
+            self.user,
+            self.db,
+        )
+
+        response = chat_api.send_message(
+            self.session.id,
+            chat_api.SendMessageRequest(content="帮我生成邮件", files=[str(attachment.id)]),
+            self.user,
+            self.db,
+        )
+
+        self.db.expire_all()
+        stored = self.db.query(chat_api.SessionAttachment).filter_by(id=attachment.id).one()
+        self.assertEqual(stored.message_id, response["user_message_id"])
+        self.assertEqual(response["user_attachments"][0]["id"], attachment.id)
+        self.assertEqual(response["user_attachments"][0]["message_id"], response["user_message_id"])
+        self.assertEqual(response["user_attachments"][0]["source_scope"], "session_upload")
+        self.assertEqual(response["user_attachments"][0]["authorization_status"], "uploaded")
+        self.assertEqual(response["context_trace"]["attachments"][0]["name"], "brief.md")
+
+        messages = chat_api.list_messages(self.session.id, 50, 0, self.user, self.db)
+        user_messages = [message for message in messages.items if message.role == "user"]
+        assistant_messages = [message for message in messages.items if message.role == "assistant"]
+        self.assertEqual(len(user_messages), 1)
+        self.assertEqual(user_messages[0].attachments[0].id, attachment.id)
+        self.assertEqual(user_messages[0].attachments[0].message_id, response["user_message_id"])
+        self.assertEqual(assistant_messages[0].context_trace["attachments"][0]["name"], "brief.md")
+
     def test_send_message_passes_selected_image_to_vision_model(self):
         self.client = FakeLLMClient(supports_vision=True, provider="mimo", model="mimo-v2.5-pro")
         chat_api.get_llm_client = lambda provider=None: self.client
@@ -191,6 +236,36 @@ class SessionAttachmentTests(unittest.TestCase):
         self.assertTrue(content[1]["image_url"]["url"].startswith("data:image/png;base64,"))
         self.assertIn("当前模型支持图像输入", self.client.last_system_prompt)
         self.assertNotIn("只能看到附件元数据", self.client.last_system_prompt)
+        messages = chat_api.list_messages(self.session.id, 50, 0, self.user, self.db)
+        user_message = [message for message in messages.items if message.role == "user"][0]
+        self.assertEqual(user_message.attachments[0].id, attachment.id)
+        self.assertEqual(user_message.attachments[0].content_type, "image/png")
+        file_response = chat_api.get_session_attachment_content(self.session.id, attachment.id, self.user, self.db)
+        self.assertEqual(file_response.media_type, "image/png")
+
+    def test_send_message_allows_attachment_only_image_prompt(self):
+        self.client = FakeLLMClient(supports_vision=True, provider="mimo", model="mimo-v2.5-pro")
+        chat_api.get_llm_client = lambda provider=None: self.client
+        upload = UploadFile(
+            file=io.BytesIO(b"\x89PNG\r\n\x1a\nvision-image"),
+            filename="sample.png",
+            headers=Headers({"content-type": "image/png"}),
+        )
+        attachment = asyncio.run(chat_api.upload_session_attachment(self.session.id, upload, self.user, self.db))
+
+        response = chat_api.send_message(
+            self.session.id,
+            chat_api.SendMessageRequest(content="", files=[str(attachment.id)], model_profile="mimo-v2-5-pro"),
+            self.user,
+            self.db,
+        )
+
+        content = self.client.last_messages[-1]["content"]
+        self.assertIsInstance(content, list)
+        self.assertEqual(content[0]["type"], "text")
+        self.assertIn("sample.png", content[0]["text"])
+        self.assertEqual(content[1]["type"], "image_url")
+        self.assertEqual(response["user_attachments"][0]["id"], attachment.id)
 
     def test_send_message_rejects_image_when_model_has_no_vision(self):
         upload = UploadFile(
@@ -250,6 +325,22 @@ class SessionAttachmentTests(unittest.TestCase):
         )
 
         self.assertEqual(context, "")
+
+    def test_get_session_attachment_content_returns_file_and_requires_owner(self):
+        attachment = chat_api.create_session_attachment(
+            self.session.id,
+            chat_api.CreateAttachmentRequest(filename="private.md", content="private"),
+            self.user,
+            self.db,
+        )
+
+        response = chat_api.get_session_attachment_content(self.session.id, attachment.id, self.user, self.db)
+
+        self.assertEqual(response.media_type, "text/plain")
+        self.assertEqual(Path(response.path).read_text(encoding="utf-8"), "private")
+        with self.assertRaises(chat_api.HTTPException) as raised:
+            chat_api.get_session_attachment_content(self.session.id, attachment.id, self.other, self.db)
+        self.assertEqual(raised.exception.status_code, 404)
 
     def test_cleanup_inactive_session_attachments_after_retention_window(self):
         old_session = ChatSession(

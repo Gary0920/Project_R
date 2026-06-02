@@ -10,6 +10,7 @@ export type Workspace = {
   brand: string;
   workspace_kind: string;
   is_default: boolean;
+  is_hidden: boolean;
   can_rename: boolean;
   can_delete: boolean;
   storage_path?: string;

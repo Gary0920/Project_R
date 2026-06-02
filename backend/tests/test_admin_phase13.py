@@ -8,17 +8,19 @@ os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.NamedTemporaryFile(delete=Fal
 
 import api.admin as admin_api
 import api.auth as auth_api
+from core.system_accounts import SYSTEM_ADMIN_PASSWORD, SYSTEM_ADMIN_USERNAME, ensure_system_admin
 from fastapi import HTTPException
 from models import Base, SessionLocal, engine
 from models.audit_log import AuditLog
 from models.generated_file import GeneratedFile
 from models.knowledge_review import KnowledgeReview
 from models.user import User
-from models.workspace import Workspace, WorkspaceFile
+from models.workspace import Workspace, WorkspaceFile, WorkspaceMember
 
 
 class _FakeGBrainAdapter:
     project_sync_count = 0
+    submitted_citation_fixers = []
 
     def sync_source(self, **kwargs):
         return {"status": "disabled"}
@@ -26,6 +28,10 @@ class _FakeGBrainAdapter:
     def sync_project_source(self, workspace, **kwargs):
         type(self).project_sync_count += 1
         return {"status": "ok"}
+
+    def submit_citation_fixer(self, **kwargs):
+        type(self).submitted_citation_fixers.append(kwargs)
+        return {"status": "ok", "result": {"id": 42, "name": "subagent", "status": "waiting"}}
 
 
 class AdminPhase13Tests(unittest.TestCase):
@@ -43,6 +49,7 @@ class AdminPhase13Tests(unittest.TestCase):
         self.original_gbrain_adapter = admin_api.GBrainAdapter
         admin_api.GBrainAdapter = _FakeGBrainAdapter
         _FakeGBrainAdapter.project_sync_count = 0
+        _FakeGBrainAdapter.submitted_citation_fixers = []
         self.env_backup = {
             key: os.environ.get(key)
             for key in (
@@ -97,6 +104,21 @@ class AdminPhase13Tests(unittest.TestCase):
         self.assertTrue(any(user.username == "new-user" for user in users))
         self.assertGreaterEqual(self.db.query(AuditLog).filter(AuditLog.action.like("admin_user_%")).count(), 2)
 
+    def test_admin_user_and_group_candidates_support_management_comboboxes(self):
+        self.employee.work_group = "Sales"
+        self.db.commit()
+
+        user_candidates = admin_api.list_user_candidates("emp", 30, self.admin, self.db)
+        group_candidates = admin_api.list_group_candidates("", 30, self.admin, self.db)
+
+        employee = next(item for item in user_candidates if item.username == "employee")
+        self.assertEqual(employee.nickname, "Employee")
+        self.assertEqual(employee.work_group, "Sales")
+        self.assertFalse(employee.is_system_account)
+
+        sales = next(item for item in group_candidates if item.group_name == "Sales")
+        self.assertEqual(sales.user_count, 1)
+
     def test_admin_can_reset_user_password(self):
         updated = admin_api.reset_user_password(
             self.employee.id,
@@ -109,6 +131,101 @@ class AdminPhase13Tests(unittest.TestCase):
         login = auth_api.login(auth_api.LoginRequest(username="employee", password="NewPassword123"), self.db)
         self.assertEqual(login.username, "employee")
         self.assertEqual(self.db.query(AuditLog).filter(AuditLog.action == "admin_user_reset_password").count(), 1)
+
+    def test_system_admin_is_created_repaired_and_immutable(self):
+        system_admin = ensure_system_admin(self.db)
+
+        login = auth_api.login(
+            auth_api.LoginRequest(username=SYSTEM_ADMIN_USERNAME, password=SYSTEM_ADMIN_PASSWORD),
+            self.db,
+        )
+        self.assertEqual(login.username, SYSTEM_ADMIN_USERNAME)
+        self.assertEqual(login.role, "admin")
+
+        system_admin.role = "employee"
+        system_admin.nickname = "Changed"
+        system_admin.avatar = "x"
+        system_admin.is_active = False
+        system_admin.password_hash = auth_api.pwd_context.hash("Changed123")
+        self.db.commit()
+
+        repaired = ensure_system_admin(self.db)
+        self.assertEqual(repaired.role, "admin")
+        self.assertEqual(repaired.nickname, "System Admin")
+        self.assertEqual(repaired.avatar, "")
+        self.assertTrue(repaired.is_active)
+        self.assertTrue(auth_api.pwd_context.verify(SYSTEM_ADMIN_PASSWORD, repaired.password_hash))
+
+        forbidden_calls = [
+            lambda: admin_api.update_user(
+                repaired.id,
+                admin_api.UpdateAdminUserRequest(nickname="Nope"),
+                self.admin,
+                self.db,
+            ),
+            lambda: admin_api.reset_user_password(
+                repaired.id,
+                admin_api.ResetPasswordRequest(password="Other123"),
+                self.admin,
+                self.db,
+            ),
+            lambda: admin_api.delete_user(repaired.id, self.admin, self.db),
+        ]
+        for call in forbidden_calls:
+            with self.assertRaises(HTTPException) as exc:
+                call()
+            self.assertEqual(exc.exception.status_code, 400)
+
+        with self.assertRaises(HTTPException) as exc:
+            auth_api.update_me(auth_api.UpdateCurrentUserRequest(nickname="Nope"), repaired, self.db)
+        self.assertEqual(exc.exception.status_code, 400)
+
+    def test_admin_can_delete_test_user_and_reassign_shared_project_records(self):
+        created = admin_api.create_user(
+            admin_api.CreateAdminUserRequest(
+                username="delete-me",
+                password="Password123",
+                nickname="Delete Me",
+            ),
+            self.admin,
+            self.db,
+        )
+        shared = Workspace(
+            name="Shared Project",
+            slug="shared-project",
+            description="",
+            created_by=created.id,
+            brand="BFI",
+            workspace_kind="project",
+            is_default=False,
+        )
+        self.db.add(shared)
+        self.db.commit()
+        self.db.refresh(shared)
+        self.db.add(WorkspaceMember(workspace_id=shared.id, user_id=created.id, role="admin"))
+        self.db.add(
+            WorkspaceFile(
+                workspace_id=shared.id,
+                uploaded_by=created.id,
+                relative_path="demo.txt",
+                original_name="demo.txt",
+                content_type="text/plain",
+                size=4,
+            )
+        )
+        self.db.commit()
+
+        response = admin_api.delete_user(created.id, self.admin, self.db)
+
+        self.assertTrue(response.ok)
+        self.assertIsNone(self.db.get(User, created.id))
+        self.assertIsNone(
+            self.db.query(Workspace).filter(Workspace.created_by == created.id, Workspace.workspace_kind == "user").first()
+        )
+        self.assertEqual(self.db.get(Workspace, shared.id).created_by, self.admin.id)
+        self.assertEqual(self.db.query(WorkspaceFile).filter(WorkspaceFile.workspace_id == shared.id).one().uploaded_by, self.admin.id)
+        self.assertIsNone(self.db.query(WorkspaceMember).filter(WorkspaceMember.user_id == created.id).first())
+        self.assertEqual(self.db.query(AuditLog).filter(AuditLog.action == "admin_user_delete").count(), 1)
 
     def test_employee_cannot_use_admin_endpoints(self):
         with self.assertRaises(HTTPException) as exc:
@@ -244,10 +361,95 @@ class AdminPhase13Tests(unittest.TestCase):
         self.assertEqual(meta.rag_status, "indexed")
         self.assertEqual(_FakeGBrainAdapter.project_sync_count, 1)
 
+    def test_admin_can_submit_citation_fixer_from_gbrain_answer_review(self):
+        content = (
+            "# 知识纠错候选 / Knowledge Correction Candidate\n\n"
+            "## GBrain 引用来源 / GBrain Citations\n\n"
+            "1. `rules/written-principle.md`\n"
+            "   - 标题 / Title: 书面化原则\n"
+            "   - 摘录 / Excerpt: citation issue\n\n"
+            "## 管理员处理建议 / Admin Triage Guidance\n\n"
+            "- 中文：如果只是引用格式或缺少引用，优先后续调用 GBrain citation-fixer；\n"
+        )
+        review = KnowledgeReview(
+            submitter_id=self.employee.id,
+            content=content,
+            source="gbrain_answer_correction:message:99",
+        )
+        self.db.add(review)
+        self.db.commit()
+        self.db.refresh(review)
+
+        result = admin_api.submit_review_citation_fixer(
+            review.id,
+            admin_api.ReviewCitationFixerRequest(),
+            self.admin,
+            self.db,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["tracking"]["tracked_job"]["job_id"], 42)
+        self.assertEqual(_FakeGBrainAdapter.submitted_citation_fixers[0]["page_slug"], "rules/written-principle")
+        self.assertEqual(_FakeGBrainAdapter.submitted_citation_fixers[0]["allowed_slug_prefixes"], ["rules/*"])
+        self.db.refresh(review)
+        self.assertEqual(review.status, "pending")
+        state_path = Path(self.gbrain_root.name) / "manifests" / "gbrain-citation-fixer-jobs.json"
+        self.assertTrue(state_path.exists())
+        audit = self.db.query(AuditLog).filter(AuditLog.action == "admin_knowledge_review_citation_fixer").one()
+        self.assertIn(f"review_id={review.id}", audit.detail)
+
+    def test_admin_can_submit_citation_fixer_from_gbrain_think_review(self):
+        content = (
+            "# GBrain Think 缺口 / 冲突审核候选\n\n"
+            "## GBrain 引用来源 / GBrain Citations\n\n"
+            "1. `rules/written-principle.md`\n"
+            "   - 标题 / Title: 书面化原则\n"
+            "   - 摘录 / Excerpt: citation issue\n\n"
+        )
+        review = KnowledgeReview(
+            submitter_id=self.employee.id,
+            content=content,
+            source="gbrain_think_review:message:99",
+        )
+        self.db.add(review)
+        self.db.commit()
+        self.db.refresh(review)
+
+        result = admin_api.submit_review_citation_fixer(
+            review.id,
+            admin_api.ReviewCitationFixerRequest(),
+            self.admin,
+            self.db,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(_FakeGBrainAdapter.submitted_citation_fixers[0]["page_slug"], "rules/written-principle")
+
+    def test_non_gbrain_answer_review_cannot_submit_citation_fixer(self):
+        review = KnowledgeReview(submitter_id=self.employee.id, content="候选知识", source="chat")
+        self.db.add(review)
+        self.db.commit()
+        self.db.refresh(review)
+
+        with self.assertRaises(HTTPException) as exc:
+            admin_api.submit_review_citation_fixer(
+                review.id,
+                admin_api.ReviewCitationFixerRequest(),
+                self.admin,
+                self.db,
+            )
+
+        self.assertEqual(exc.exception.status_code, 400)
+        self.assertEqual(_FakeGBrainAdapter.submitted_citation_fixers, [])
+
     def test_admin_can_list_template_skill_status(self):
         response = admin_api.list_templates(self.admin, self.db)
 
-        self.assertTrue(any(item["skill_name"] == "tag-printing" for item in response["items"]))
+        names = {item["skill_name"] for item in response["items"]}
+        self.assertIn("client-reply-drafting", names)
+        self.assertIn("project-communication-analysis", names)
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ The confirmed local upstream-source changes are:
 - OAuth client registration: allow local GBrain CLI/provider registration of agent-bound clients with tool/source/slug/budget bindings.
 - Subagent brain tools: carry the OAuth-bound source id into subagent `search/get_page/put_page` calls instead of falling back to `default`.
 - AI gateway tool loop: wrap provider-neutral JSON Schema with AI SDK `jsonSchema()` and convert provider-neutral tool results into AI SDK v6 `tool` messages for DeepSeek gateway-loop execution.
+- Think gather: add conservative CJK title-like query variants so conversational questions such as `书面化原则是什么` still retrieve the exact policy page.
 
 ## Decision
 
@@ -38,7 +39,7 @@ Any unavoidable GBrain source change must be recorded as either:
 - a patch file under `patches/gbrain/`, or
 - a named Project_R-maintained fork/submodule with pinned upstream version and patch notes.
 
-The current six local changes are recorded under `patches/gbrain/` and are treated as temporary Project_R patches until replaced by upstream configuration, an upstream PR, or a maintained fork:
+The current seven local changes are recorded under `patches/gbrain/` and are treated as temporary Project_R patches until replaced by upstream configuration, an upstream PR, or a maintained fork:
 
 - `0001-ollama-local-embedding-limits.patch`
 - `0002-recursive-chunker-local-ollama-cap.patch`
@@ -46,6 +47,7 @@ The current six local changes are recorded under `patches/gbrain/` and are treat
 - `0004-agent-bound-oauth-client-registration.patch`
 - `0005-subagent-tool-source-scope.patch`
 - `0006-chat-tool-json-schema-wrapper.patch`
+- `0007-think-gather-title-query-variants.patch`
 
 ## Consequences
 

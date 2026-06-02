@@ -4,18 +4,20 @@ from datetime import datetime, timezone
 import logging
 import os
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
 from core.gbrain import (
+    CUSTOMER_REFERENCE_SOURCE_ID,
     GBrainAdapter,
     GBrainSettings,
     load_gbrain_settings,
     project_source_id_for_workspace,
     project_source_paths_for_workspace,
 )
+from core.gbrain_customer_sources import CUSTOMER_REFERENCE_DERIVED
 from core.gbrain_ingest import _split_frontmatter, approve_pending_review_markdown
 from models.workspace import Workspace, WorkspaceFile
 
@@ -47,12 +49,31 @@ COMPANY_STANDARD_NOISE_PENALTY = 0.25
 COMPANY_RULE_SOURCE_SCORE_BOOST = 0.12
 COMPANY_RULE_NOISE_PENALTY = 0.18
 COMPANY_EXACT_TITLE_SCORE_BOOST = 0.2
+COMPANY_LOCAL_INDEX_MIN_SCORE = 8
+COMPANY_LOCAL_INDEX_BASE_SCORE = 1.18
+COMPANY_LOCAL_INDEX_MAX_CHARS = 1800
 GENERIC_COMPANY_QUERY_EXPANSIONS = {
     "windows external glazed doors AS 2047",
     "glass glazing AS 1288",
     "Australian Standard compliance requirement",
 }
 COMPANY_QUERY_EXPANSION_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (
+        ("结构图", "窗洞口", "fsl", "ssl", "structural dwg", "structural drawing"),
+        "Reading Structural DWG FSL SSL slab thickness step down window opening height",
+    ),
+    (
+        ("窗表", "窗号", "window schedule", "markup", "标注窗"),
+        "Markup Window schedule Doris window number takeoff Bluebeam",
+    ),
+    (
+        ("玻璃样品", "样品登记", "替代样品", "审批状态", "sample register", "glass sample"),
+        "SampleRegister_Glass glass sample register substitute sample approval status",
+    ),
+    (
+        ("系统性", "文件组织", "组织规则", "file organization", "system thinking"),
+        "System Thinking File Organization system rules team workflow",
+    ),
     (
         ("书面化", "留痕", "书面记录", "written record"),
         "书面化原则 留痕 written record principle",
@@ -181,9 +202,10 @@ class KnowledgeSources:
                 project_source_id = project_source_id_for_workspace(workspace)
             except ValueError:
                 project_source_id = ""
-            allowed_sources = settings.think_allowed_sources or (settings.company_source_id,)
-            if project_source_id and project_source_id in allowed_sources:
+            if project_source_id:
                 source_id = project_source_id
+        elif workspace and str(workspace.workspace_kind or "") == "customer":
+            source_id = CUSTOMER_REFERENCE_SOURCE_ID
 
         adapter = self.gbrain_factory()
         try:
@@ -232,6 +254,7 @@ class KnowledgeSources:
             "model": str(result.get("modelUsed") or "think"),
             "metadata": {
                 "gaps": result.get("gaps") if isinstance(result.get("gaps"), list) else [],
+                "conflicts": result.get("conflicts") if isinstance(result.get("conflicts"), list) else [],
                 "warnings": result.get("warnings") if isinstance(result.get("warnings"), list) else [],
                 "diagnostics": result.get("diagnostics") if isinstance(result.get("diagnostics"), dict) else {},
             },
@@ -244,9 +267,9 @@ class KnowledgeSources:
         if not workspace or not workspace.storage_path:
             return []
 
-        project_gbrain_sources = self.search_project_gbrain_sources(workspace, content)
-        if project_gbrain_sources:
-            return project_gbrain_sources
+        scoped_gbrain_sources = self.search_scoped_workspace_gbrain_sources(workspace, content)
+        if scoped_gbrain_sources:
+            return scoped_gbrain_sources
 
         root = Path(workspace.storage_path).resolve()
         if not root.exists():
@@ -300,7 +323,7 @@ class KnowledgeSources:
                 "source_title": meta.original_name,
                 "section_path": f"{workspace.name} / {Path(meta.relative_path).parent.as_posix()}",
                 "type": "workspace_file",
-                "authority_level": "project",
+                "authority_level": str(workspace.workspace_kind or "workspace"),
                 "tags": "workspace",
                 "content": excerpt,
                 "score": float(-score),
@@ -339,10 +362,42 @@ class KnowledgeSources:
         )
         return self._enrich_project_source_locations(workspace, sources)
 
+    def search_scoped_workspace_gbrain_sources(self, workspace: Workspace, content: str) -> list[dict]:
+        workspace_kind = str(workspace.workspace_kind or "project")
+        if workspace_kind == "project":
+            return self.search_project_gbrain_sources(workspace, content)
+        if workspace_kind != "customer":
+            return []
+        source_id = CUSTOMER_REFERENCE_SOURCE_ID
+        adapter = self.gbrain_factory()
+        try:
+            response = adapter.query(content, source_id=source_id, limit=5, detail="medium")
+        except Exception as exc:
+            logger.warning("GBrain customer source query failed for %s: %s", source_id, exc)
+            return []
+        if response.get("status") != "ok":
+            if response.get("status") not in {"auth_required", "disabled", "not_configured"}:
+                logger.warning(
+                    "GBrain customer source query returned %s for %s: %s",
+                    response.get("status"),
+                    source_id,
+                    response.get("error"),
+                )
+            return []
+        sources = self._normalize_gbrain_results(
+            response.get("result"),
+            default_source_id=source_id,
+            result_type="gbrain_customer_source",
+            default_authority_level="customer",
+            default_tags=f"customer,{workspace.slug}",
+        )
+        return self._enrich_customer_source_locations(workspace, sources)
+
     def search_company_sources(self, content: str) -> list[dict]:
         adapter = self.gbrain_factory()
         best_sources: dict[tuple[str, str], dict] = {}
-        for query_index, query in enumerate(self._company_query_variants(content)):
+        query_variants = self._company_query_variants(content)
+        for query_index, query in enumerate(query_variants):
             try:
                 response = adapter.query(query, limit=8, detail="medium")
             except Exception as exc:
@@ -363,6 +418,12 @@ class KnowledgeSources:
                 if query_index > 0:
                     source["score"] = self._score(source.get("score")) + COMPANY_QUERY_EXPANSION_SCORE_BOOST
                 source["score"] = self._adjust_company_score(content, source)
+                key = (source.get("file", ""), source.get("section_path", ""))
+                previous = best_sources.get(key)
+                if previous is None or self._score(source.get("score")) > self._score(previous.get("score")):
+                    best_sources[key] = source
+        if _env_bool("GBRAIN_COMPANY_LOCAL_INDEX_ENABLED", True):
+            for source in self._local_company_sources(content, query_variants):
                 key = (source.get("file", ""), source.get("section_path", ""))
                 previous = best_sources.get(key)
                 if previous is None or self._score(source.get("score")) > self._score(previous.get("score")):
@@ -432,6 +493,63 @@ class KnowledgeSources:
             )
         return sources
 
+    def _local_company_sources(self, content: str, query_variants: list[str]) -> list[dict]:
+        settings = load_gbrain_settings()
+        derived_root = settings.derived_path
+        if not derived_root.exists():
+            return []
+        tokens = _company_local_query_tokens([content, *query_variants])
+        if not tokens:
+            return []
+        scored: list[tuple[float, str, str, str, str]] = []
+        for path in derived_root.rglob("*.md"):
+            if any(part in {".git", ".pending_review"} for part in path.parts):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+                frontmatter, body = _split_frontmatter(text)
+                rel = path.relative_to(derived_root).as_posix()
+            except Exception:
+                continue
+            title = str(frontmatter.get("title") or Path(rel).stem).strip()
+            source_file = str(frontmatter.get("project_r_source_file") or "").strip()
+            title_haystack = f"{title} {source_file} {rel}".lower()
+            body_haystack = body[:8000].lower()
+            match_score = 0
+            for token in tokens:
+                if token in title_haystack:
+                    match_score += 5
+                elif token in body_haystack:
+                    match_score += 1
+            if match_score < COMPANY_LOCAL_INDEX_MIN_SCORE:
+                continue
+            excerpt = _best_company_local_excerpt(body, tokens) or body.strip()[:COMPANY_LOCAL_INDEX_MAX_CHARS]
+            slug = _local_company_slug(rel)
+            scored.append(
+                (
+                    COMPANY_LOCAL_INDEX_BASE_SCORE + min(match_score, 60) / 100,
+                    rel,
+                    title,
+                    excerpt[:COMPANY_LOCAL_INDEX_MAX_CHARS],
+                    slug,
+                )
+            )
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [
+            {
+                "file": f"gbrain:{settings.company_source_id}/{slug}",
+                "source_title": title,
+                "section_path": rel.removesuffix(".md"),
+                "type": "gbrain_company_wiki_local_index",
+                "authority_level": "company-wiki",
+                "tags": "company-wiki,local-index",
+                "content": excerpt,
+                "score": score,
+                "derived_file": rel,
+            }
+            for score, rel, title, excerpt, slug in scored[:5]
+        ]
+
     def _normalize_think_sources(self, result: dict, source_id: str) -> list[dict]:
         sources: list[dict] = []
         citations = result.get("citations")
@@ -484,10 +602,14 @@ class KnowledgeSources:
         return sources
 
     def _enrich_project_source_locations(self, workspace: Workspace, sources: list[dict]) -> list[dict]:
+        return self._enrich_workspace_source_locations(workspace, sources, project_source_paths_for_workspace(workspace)["derived"])
+
+    def _enrich_customer_source_locations(self, workspace: Workspace, sources: list[dict]) -> list[dict]:
+        return self._enrich_workspace_source_locations(workspace, sources, CUSTOMER_REFERENCE_DERIVED)
+
+    def _enrich_workspace_source_locations(self, workspace: Workspace, sources: list[dict], derived_root: Path) -> list[dict]:
         if not sources:
             return sources
-        paths = project_source_paths_for_workspace(workspace)
-        derived_root = paths["derived"]
         markdown_index = self._project_markdown_index(derived_root)
         for source in sources:
             match = self._match_project_markdown(source, derived_root, markdown_index)
@@ -668,6 +790,15 @@ def _slug_key(value: str) -> str:
     return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "-", value.lower()).strip("-")
 
 
+def _local_company_slug(rel_path: str) -> str:
+    path = PurePosixPath(rel_path).with_suffix("")
+    parts = [
+        re.sub(r"[^a-z0-9_\u4e00-\u9fff]+", "-", part.lower().replace("+", "")).strip("-")
+        for part in path.parts
+    ]
+    return "/".join(part for part in parts if part)
+
+
 def _locate_excerpt_line(lines: list[str], excerpt: str) -> int | None:
     needles = [
         _normalize_locator_text(line)
@@ -785,6 +916,52 @@ def _compact_company_rule_question(text: str) -> str:
     if compact == original or not _contains_cjk(compact):
         return ""
     return compact if len(_compact_title_match_text(compact)) >= 4 else ""
+
+
+def _company_local_query_tokens(values: list[str]) -> list[str]:
+    tokens: set[str] = set()
+    for value in values:
+        lowered = value.lower()
+        for match in re.findall(r"[a-z0-9_+-]{3,}", lowered):
+            tokens.add(match)
+        for segment in re.findall(r"[\u4e00-\u9fff]{2,}", value):
+            if len(segment) <= 4:
+                tokens.add(segment)
+                continue
+            for size in (2, 3, 4):
+                for index in range(0, len(segment) - size + 1):
+                    tokens.add(segment[index : index + size])
+    stopwords = {
+        "什么",
+        "如何",
+        "怎么",
+        "为什么",
+        "需要",
+        "应该",
+        "哪些",
+        "要求",
+        "规则",
+        "流程",
+        "status",
+        "rules",
+        "system",
+    }
+    return sorted(
+        (token for token in tokens if token not in stopwords and len(token) >= 2),
+        key=lambda token: (-len(token), token),
+    )
+
+
+def _best_company_local_excerpt(body: str, tokens: list[str]) -> str:
+    paragraphs = [paragraph.strip() for paragraph in re.split(r"\n{2,}", body) if paragraph.strip()]
+    best: tuple[int, str] | None = None
+    lowered_tokens = [token.lower() for token in tokens]
+    for paragraph in paragraphs[:80]:
+        lowered = paragraph.lower()
+        score = sum(1 for token in lowered_tokens if token in lowered)
+        if score and (best is None or score > best[0]):
+            best = (score, paragraph)
+    return best[1] if best else ""
 
 
 def _dedupe_terms(terms: list[str]) -> list[str]:

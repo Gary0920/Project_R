@@ -412,8 +412,11 @@ class GBrainConfigTests(unittest.TestCase):
         self.assertFalse(arguments["expand"])
 
     def test_company_query_expands_chinese_terms_when_keyword_only_search_misses(self):
-        adapter = FakeGBrainQueryAdapter("safety glass")
-        sources = KnowledgeSources(gbrain_factory=lambda: adapter).search_company_sources("安全玻璃有哪些要求")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            adapter = FakeGBrainQueryAdapter("safety glass")
+            env = self._env_for_root(Path(temp_dir))
+            with patch.dict(os.environ, env, clear=True):
+                sources = KnowledgeSources(gbrain_factory=lambda: adapter).search_company_sources("安全玻璃有哪些要求")
 
         self.assertEqual(len(adapter.queries), 2)
         self.assertEqual(adapter.queries[0], "安全玻璃有哪些要求")
@@ -421,9 +424,11 @@ class GBrainConfigTests(unittest.TestCase):
         self.assertEqual(sources[0]["file"], "gbrain:company-wiki/standards/as-1288")
 
     def test_company_query_expansion_can_be_disabled(self):
-        adapter = FakeGBrainQueryAdapter("safety glass")
-        with patch.dict(os.environ, {"GBRAIN_COMPANY_QUERY_EXPANSION_ENABLED": "false"}):
-            sources = KnowledgeSources(gbrain_factory=lambda: adapter).search_company_sources("安全玻璃有哪些要求")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            adapter = FakeGBrainQueryAdapter("safety glass")
+            env = self._env_for_root(Path(temp_dir), GBRAIN_COMPANY_QUERY_EXPANSION_ENABLED="false")
+            with patch.dict(os.environ, env, clear=True):
+                sources = KnowledgeSources(gbrain_factory=lambda: adapter).search_company_sources("安全玻璃有哪些要求")
 
         self.assertEqual(adapter.queries, ["安全玻璃有哪些要求"])
         self.assertEqual(sources, [])
@@ -508,6 +513,127 @@ class GBrainConfigTests(unittest.TestCase):
         self.assertNotIn("source_id", arguments)
         self.assertEqual(result["result"]["answer"], "Use written approval.")
 
+    def test_think_uses_project_source_client_manifest_without_env_allowlist(self):
+        think_payload = {
+            "result": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(
+                            {
+                                "answer": "Use this project's approved record.",
+                                "citations": [{"page_slug": "meetings/kickoff", "row_num": None}],
+                                "gaps": [],
+                                "warnings": [],
+                                "modelUsed": "deepseek",
+                            }
+                        ),
+                    }
+                ]
+            },
+            "jsonrpc": "2.0",
+            "id": 1,
+        }
+        sse = f"event: message\ndata: {json.dumps(think_payload)}\n\n"
+        captured = {}
+
+        def fake_urlopen(request, timeout):
+            if request.full_url.endswith("/token"):
+                captured["token_body"] = request.data.decode("utf-8")
+                return FakeHttpResponse('{"access_token":"project-token","expires_in":3600,"token_type":"Bearer"}')
+            captured["mcp_authorization"] = request.get_header("Authorization")
+            captured["mcp_body"] = json.loads(request.data.decode("utf-8"))
+            return FakeHttpResponse(sse)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_source_id = "project-bfi-7"
+            manifests = root / "manifests"
+            manifests.mkdir(parents=True)
+            (manifests / "gbrain-think-source-clients.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "clients": {
+                            project_source_id: {
+                                "source_id": project_source_id,
+                                "name": "project-r-think-project-bfi-7",
+                                "client_id": "project-think-client",
+                                "client_secret": "project-secret",
+                                "scope": "read write",
+                                "token_auth_method": "client_secret_post",
+                                "allowed_sources": [project_source_id],
+                                "created_at": "2026-06-01T00:00:00+00:00",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            env = self._env_for_root(
+                root,
+                GBRAIN_ENABLED="true",
+                GBRAIN_BASE_URL="http://127.0.0.1:3131",
+                GBRAIN_THINK_ENABLED="true",
+                GBRAIN_THINK_SOURCE_SCOPE_VERIFIED="true",
+                GBRAIN_THINK_ALLOWED_SOURCES="company-wiki",
+            )
+            with patch.dict(os.environ, env, clear=True), patch("core.gbrain.urlopen", side_effect=fake_urlopen):
+                result = GBrainAdapter().think("项目启动会结论是什么", source_id=project_source_id)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["source_id"], project_source_id)
+        self.assertIn("client_id=project-think-client", captured["token_body"])
+        self.assertIn("client_secret=project-secret", captured["token_body"])
+        self.assertEqual(captured["mcp_authorization"], "Bearer project-token")
+        self.assertEqual(captured["mcp_body"]["params"]["name"], "think")
+        self.assertNotIn("source_id", captured["mcp_body"]["params"]["arguments"])
+        self.assertEqual(result["source_scope"]["allowed_sources"], [project_source_id])
+        self.assertEqual(result["source_scope"]["credential_source"], "manifest")
+
+    def test_ensure_project_think_client_registers_and_persists_manifest(self):
+        stdout = (
+            'OAuth client registered: "project-r-think-project-bfi-7"\n'
+            "  Client ID:           generated-client\n"
+            "  Client Secret:       generated-secret\n"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            cli_root = root / "gbrain"
+            (cli_root / "src" / "commands").mkdir(parents=True)
+            (cli_root / "src" / "commands" / "auth.ts").write_text("// fake", encoding="utf-8")
+            env = self._env_for_root(
+                root,
+                GBRAIN_ENABLED="true",
+                GBRAIN_CLI_WORKDIR=str(cli_root),
+                GBRAIN_THINK_ENABLED="true",
+                GBRAIN_THINK_SOURCE_SCOPE_VERIFIED="true",
+            )
+            with patch.dict(os.environ, env, clear=True):
+                adapter = GBrainAdapter()
+                with patch.object(
+                    adapter,
+                    "_run_cli_exclusive",
+                    return_value={
+                        "status": "ok",
+                        "result": {"stdout": stdout, "stderr": ""},
+                        "service_restart": {"reason": "register_think_source_client"},
+                    },
+                ) as run_cli:
+                    result = adapter.ensure_think_source_client("project-bfi-7")
+
+            manifest = json.loads((root / "manifests" / "gbrain-think-source-clients.json").read_text(encoding="utf-8"))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["client_id"], "generated-client")
+        self.assertEqual(result["client_secret"], "generated-secret")
+        self.assertEqual(manifest["clients"]["project-bfi-7"]["client_id"], "generated-client")
+        self.assertEqual(manifest["clients"]["project-bfi-7"]["client_secret"], "generated-secret")
+        args = run_cli.call_args.args[0]
+        self.assertIn("register-client", args)
+        self.assertIn("--federated-read", args)
+        self.assertIn("project-bfi-7", args)
+
     def test_citation_fixer_uses_agent_oauth_and_submit_agent(self):
         agent_payload = {
             "result": {
@@ -563,6 +689,32 @@ class GBrainConfigTests(unittest.TestCase):
         self.assertIn("citation-fixer", arguments["prompt"])
         self.assertIn("rules/written-principle", arguments["prompt"])
         self.assertIn("KnowledgeReview id: 7", arguments["prompt"])
+
+    def test_get_page_calls_gbrain_mcp_get_page(self):
+        captured = {}
+
+        def fake_urlopen(request, timeout=0):
+            del timeout
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return FakeHttpResponse(json.dumps({"result": {"content": "ok"}}))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            env = self._env_for_root(
+                root,
+                GBRAIN_ENABLED="true",
+                GBRAIN_BASE_URL="http://127.0.0.1:3131",
+                GBRAIN_SERVICE_BEARER_TOKEN="service-token",
+            )
+            with patch.dict(os.environ, env, clear=True), patch("core.gbrain.urlopen", side_effect=fake_urlopen):
+                result = GBrainAdapter().get_page("reviews/citation-fixer-smoke/project-r-citation-fixer-smoke")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(captured["body"]["params"]["name"], "get_page")
+        self.assertEqual(
+            captured["body"]["params"]["arguments"]["slug"],
+            "reviews/citation-fixer-smoke/project-r-citation-fixer-smoke",
+        )
 
     def test_citation_fixer_refuses_until_agent_oauth_is_enabled(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -228,11 +228,13 @@ Skill 调用必须遵守 Project_R 的统一上下文优先级：
 
 1. `backend/prompt_presets/global-base-prompt.md` 公司全局底层规则
 2. 会话选择提示词 / Agent 模式提示
-3. 会话临时附件
+3. 会话临时附件（本地私人文件必须经用户授权后才可进入 Skill 上下文）
 4. 当前工作区项目资料 / GBrain source 检索结果
 5. 用户问题与补参输入
 
 全局底层规则是后端强制注入内容，不属于用户可切换提示词；项目资料或附件与全局规则冲突时，以全局规则为准。
+
+Skill 不得默认读取用户本地私人工作区。只有用户在当前会话中明确选择附件、确认发送片段/摘要/原文件，或明确保存到项目资料后，Skill 才能使用对应内容。保存到项目资料后的副本按项目权限、审计和 GBrain 项目 source 规则治理。
 
 ### 8.3 模板路径
 
@@ -289,7 +291,7 @@ uvicorn main:app --reload
 ## 十一、参考资料
 
 - 本规范的 Skill 示例参见 `backend/skills/builtin/<example>/SKILL.md`
-- 当前端到端样板：`backend/skills/builtin/tag-printing/SKILL.md`
+- 标签打印源文件生成已退役，不再作为端到端样板或测试目标。
 - 业务工作流清单：根目录 `Project_R 业务工作流清单.md`
 - 产品范围：根目录 `Project_R PRD.md`
 - 阶段进度：根目录 `Project_R 开发流程.md`

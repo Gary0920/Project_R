@@ -372,10 +372,11 @@ PS C:\Windows\System32> bun --version
 - [x] 工作区文件上传。
 - [x] 工作区文件删除/回收区。
 - [x] 工作区文件权限：成员可上传；成员只能删除自己上传的文件；管理员可删除所有文件。
+- [x] 项目工作区权限：系统管理员新建项目；私人空间只对本人可见；公司项目默认对所有有效用户开放；隐藏项目仅对系统管理员、成员管理中显式添加的人员或授权组别可见；普通成员不显示项目重命名入口；项目管理员通过工作区列表盾牌按钮打开独立成员管理面板，维护人员、组别、隐藏状态和 scoped admin。
 - [x] 工作区文件操作审计日志。
 - [x] 工作区文件变更触发项目子库/RAG 索引刷新。
 
-> 实现状态：Phase 9B + P9 工作区文件管理竖切片已完成代码实现，并在 2026-05-27 补齐输入区模型选择、思考开关、提示词/Skill 工具区、来源预览、暗色主题和设置页细节优化：工作区简单 `+` 创建入口、工作区/对话分区文字、侧栏收起图标模式、右上角提示词/置顶/并排入口、三来源提示词调用面板、会话级 system prompt 发送、本机自定义提示词 Electron `userData` JSON 存储、后端持久化置顶、Chat/Agent 空状态分离、Agent 工作区文件面板、工作区多文件上传、100MB 单文件限制、删除进入回收区、恢复/永久删除、成员/管理员删除权限、文件操作审计、项目资料索引 pending/indexed 状态与项目对话作用域检索。已通过 `backend` 全量 `unittest discover -s tests`（73 tests OK）、新增模型/聊天相关测试、`frontend` 的 `bun run typecheck` 与 `bun run build`。仍需 Gary 在 Electron 窗口中做真实拖拽上传、回收区、索引刷新按钮、项目对话引用效果和暗色主题视觉验收。
+> 实现状态：Phase 9B + P9 工作区文件管理竖切片已完成代码实现，并在 2026-05-27 补齐输入区模型选择、思考开关、提示词/Skill 工具区、来源预览、暗色主题和设置页细节优化：工作区简单 `+` 创建入口、工作区/对话分区文字、侧栏收起图标模式、右上角提示词/置顶/并排入口、三来源提示词调用面板、会话级 system prompt 发送、本机自定义提示词 Electron `userData` JSON 存储、后端持久化置顶、Chat/Agent 空状态分离、Agent 工作区文件面板、工作区多文件上传、100MB 单文件限制、删除进入回收区、恢复/永久删除、成员/管理员删除权限、文件操作审计、项目资料索引 pending/indexed 状态与项目对话作用域检索。2026-06-01 已补独立项目工作区成员管理面板、项目重命名按钮权限隐藏、私人空间 owner-only 和系统管理员/项目管理员权限边界；成员管理入口位于工作区列表盾牌按钮，不占用项目文件面板。已通过 `backend` 全量 `unittest discover -s tests`（73 tests OK）、新增模型/聊天相关测试、`frontend` 的 `bun run typecheck` 与 `bun run build`。仍需 Gary 在 Electron 窗口中做真实拖拽上传、回收区、索引刷新按钮、项目对话引用效果和暗色主题视觉验收。
 
 **下一步开发建议**：
 - [x] 优先做工作区文件管理手工验收与细节修正：真实 Office/PDF/图片/文本多文件上传、100MB 超限提示、回收区恢复冲突、成员/管理员权限按钮显示。
@@ -431,6 +432,7 @@ PS C:\Windows\System32> bun --version
 - [x] 建立 GBrain 查询质量回归集第一版：固定 AS 1288、AS 2047、VMU、0515 会议、书面化原则等真实问题、期望 source、期望引用片段，并提供离线测试与真实服务回归脚本；PGLite 重建后 `书面化原则是什么` 排序退化已通过中文规则/流程类标题化查询变体修复并重新跑通真实回归。
 - [x] 接入项目级 source：`workspace_data/project/{品牌}/{项目代号}` 映射到独立 GBrain source，并强制权限 scope。
   - 2026-05-31 已完成一键录入真实样本闭环并补齐项目 extractor MVP：稳定 source id `project-{brand}-{workspace_id}`、项目 `derived/` 路径、管理员 `project_sources` 状态、项目查询显式 source scope、`POST /workspaces/{id}/knowledge/ingest`、异步 `POST /workspaces/{id}/knowledge/ingest/async`、Project_R extractor classifier、manifest 分类字段、项目文件面板“一键录入项目知识库”按钮和待录入数量。项目资料默认不走管理员审核，不进入公司库；文字资料/DOCX/普通 PDF、复杂 PDF/图纸 MiMo 视觉提炼、图片/截图 MiMo 提炼、MP4 自动/长视频分段转写会议、说话人/术语纠错、EML 邮件线程和 EML 附件递归均可编译到项目 `derived/` 并在 GBrain sync 成功后标记 `indexed`。真实样本为 `backend/workspace_data/project/BFI/GBrain验收项目-001/`：synthetic 报价 Markdown、VO08 变更 PDF、建筑图纸 PDF、短 MP4 会议录音、长 MP4 音频类视频、审批流程截图、EML 邮件和 4 个邮件 PNG 附件全部编译，manifest 为 `total=11, compiled=11, pending_extractor_capability=0, pending_transcription=0, failed=0`；长视频分 11 段转写并生成说话人/术语纠错 transcript。验证：`venv\Scripts\python.exe -m pytest -q` 通过，191 passed、6 subtests passed；`bun run typecheck` 通过。
+- [ ] 设计客户情报 / 客户画像 source：`workspace_data/customer/` 作为客户资料源根，每个客户/账号映射独立 `customer-*` GBrain source。客户画像是受限业务情报，不写入 `company-wiki`；后续需补客户工作区权限、营销组访问控制、客户资料 extractor、人物画像 / 决策链 / 关系强弱 / 偏好风险 Markdown 结构、GBrain graph/timeline 展示和客户 source Think 回归。
 - [ ] 接入 GBrain `think` 到正式回答层，解决 source scope / OAuth client 或 MCP 调用方式。
   - 2026-05-30 已完成 guarded adapter 第一版：`GBrainAdapter.think()` 支持 source-scoped OAuth client_credentials、`/query --think ...` 与 `/think ...` 显式入口、citations/gaps/warnings 来源面板归一化，并新增后端测试。已补齐本地上游 patch `patches/gbrain/0003-think-source-scope-gather-and-takes.patch`：`runThink()` -> `runGather()` -> hybrid/takes/graph 均传递 source scope，PGLite/Postgres takes keyword/vector SQL 过滤 `pages.source_id`，并通过 GBrain `bun run typecheck` 与相关 Bun 测试。已创建 `company-wiki` source-scoped OAuth client 并跑通真实 MCP `think`，返回 `status=ok`、token-bound source scope 生效；配置 `GBRAIN_THINK_MODEL=deepseek:deepseek-chat` 后，`书面化原则是什么` 可返回 DeepSeek 综合答案、`warnings=[]` 和 citation。已新增 `backend/scripts/gbrain_think_regression.py` 与离线测试固定第一条真实服务回归。未勾选原因：当前只验证了 company-wiki 显式 `think`，仍需项目 source think scope、扩展答案/引用/gap 回归和前端 gap/conflict 展示。
 - [ ] 接入音视频会议提炼：转录、术语纠错、时间戳回链、会议知识提炼、按 source scope 入库。
@@ -489,7 +491,7 @@ PS C:\Windows\System32> bun --version
 - [x] 成员可上传文件到工作区目录；上传文件大小、类型、数量需有限制
 - [x] 成员只能删除自己上传的文件；工作区管理员可删除所有文件
 - [x] 删除优先软删除或移入工作区回收区，不直接物理删除
-- [x] 支持有限层级目录：显示目录树、新建文件夹、上传到指定文件夹、删除文件；删除文件夹仅允许空文件夹；不支持拖拽移动和递归删除
+- [x] 支持有限层级目录：显示目录树、新建文件夹、上传到指定文件夹、删除文件；删除文件夹仅允许空文件夹；用户侧不再使用“移动到路径”输入，文件移动采用 Windows 风格剪切 / 复制 / 粘贴或单项拖拽，第一版不做多选
 - [x] 上传、删除、恢复、永久删除、新建/删除空文件夹等操作写入审计日志
 - [x] 文件变更后可触发项目子库/RAG 索引刷新状态更新；项目对话只读取当前项目、未删除、已索引的文本类资料
 
@@ -497,7 +499,7 @@ PS C:\Windows\System32> bun --version
 
 > 实现状态：10A/10B 旧 RAG / Wiki Router / Chroma 主路径已被 GBrain 主线取代。正式知识库问答只通过 `/query ...` 或等价知识库 Skill 调用 GBrain `company-wiki` / 项目 source；Project_R 当前由 GBrain `query` 返回引用片段，再由当前聊天模型组织答案。当前已补齐 GBrain 查询回归、项目 source adapter、项目真实样本一键录入闭环、复杂 PDF/建筑图纸 MiMo 视觉提炼、图片/截图提炼、MP4 自动/长视频分段转写、说话人/术语纠错、EML 邮件线程提炼、EML 附件递归、项目内引用定位、异步项目录入队列、显式 `think` adapter、PDF 结构化提炼、音视频 transcript 侧车 MVP、GBrain 维护任务第一版、答案反馈纠错审核 MVP、submit_agent 绑定冒烟和只读 inline subagent 执行烟测。仍未完成：`think` 默认回答层、置信度/绝对时间戳回链、区域级图片引用、文件预览 UI、citation-fixer 改写型执行流和真实维护任务长跑。
 > 10C 实现状态：会话临时附件已从小型文本第一版扩展为文件级临时附件，保留 `SessionAttachment`、`POST/GET/DELETE /chat/sessions/{id}/attachments`，新增 `POST /chat/sessions/{id}/attachments/upload` multipart 上传。前端输入区支持附件按钮选择、复制粘贴图片/文件、拖拽到对话区并显示可移除 chip；单文件临时附件限制为 20MB，超过建议改用项目文件。发送消息时，文本类附件和可提取文本的 PDF 注入正文摘录；图片附件在支持图像输入的 MiMo profile 下会以 OpenAI-compatible `image_url` content block 投递给模型，DeepSeek 等不支持多模态的模型会提示切换。视频/音频附件当前明确提示尚未接入理解，不再静默当作可解析内容。会话超过 3 天未活跃后自动清理临时附件；删除会话时同步删除附件。仍未完成附件向量化/分块检索、OCR、复杂预览和附件引用定位。
-> 10E 实现状态：已完成 P9 工作区文件管理竖切片，新增/升级 `WorkspaceFile` 元数据、`POST /workspaces/{id}/files/upload` 多文件上传、兼容旧 `POST /workspaces/{id}/files`、`DELETE /workspaces/{id}/files?path=` 软删除到 `.trash`、`POST /workspaces/{id}/files/restore`、`DELETE /workspaces/{id}/files/permanent?file_id=`、`POST /workspaces/{id}/knowledge/refresh`、`POST /workspaces/{id}/knowledge/ingest/async`；前端工作区文件面板支持多文件选择/拖拽上传、100MB 单文件前置校验、项目文件/回收区切换、恢复/永久删除、异步一键录入项目知识库。权限规则为成员只能删除自己上传的文件，工作区管理员可删除所有文件；路径使用相对路径并防止 `../`、绝对路径与符号链接逃逸；上传、删除、恢复、永久删除、文件夹操作均写审计日志。项目对话已接入当前项目 GBrain source，并已支持复杂 PDF/图纸、图片/截图、MP4 自动/长视频分段转写、EML、EML 附件递归和引用定位；文件预览和更完整项目质量回归仍为下一阶段补齐项。已通过后端全量 `pytest` 与前端 `bun run typecheck`。
+> 10E 实现状态：已完成 P9 工作区文件管理竖切片，新增/升级 `WorkspaceFile` 元数据、`POST /workspaces/{id}/files/upload` 多文件上传、兼容旧 `POST /workspaces/{id}/files`、`DELETE /workspaces/{id}/files?path=` 软删除到 `.trash`、`POST /workspaces/{id}/files/restore`、`DELETE /workspaces/{id}/files/permanent?file_id=`、`POST /workspaces/{id}/knowledge/refresh`、`POST /workspaces/{id}/knowledge/ingest/async`、`POST /workspaces/{id}/paths/copy`；前端工作区文件面板支持多文件选择/拖拽上传、100MB 单文件前置校验、项目文件/回收区切换、恢复/永久删除、异步一键录入项目知识库、单项剪切 / 复制 / 粘贴和单项拖拽移动。权限规则为成员只能删除、重命名、剪切或移动自己上传的文件，工作区管理员可修改所有文件；系统管理员可进入全部项目/客户类共享工作区；公司项目默认对所有有效用户开放；隐藏项目仅对系统管理员、成员管理中显式添加的人员或授权组别可搜索和进入；工作区管理员是 scoped admin，不等同于系统管理员。路径使用相对路径并防止 `../`、绝对路径与符号链接逃逸；上传、删除、恢复、永久删除、文件夹操作、重命名、移动和复制均写审计日志。用户侧文件移动已退役“移动到路径”输入，第一版不做多选。项目对话已接入当前项目 GBrain source，并已支持复杂 PDF/图纸、图片/截图、MP4 自动/长视频分段转写、EML、EML 附件递归和引用定位；文件预览和更完整项目质量回归仍为下一阶段补齐项。本轮文件操作修改已通过 `backend` 的 `tests/test_workspace_files.py`、`frontend` 的 `bun run typecheck` / `bun run build`，并用 headless Chrome 验证右键菜单不再显示“移动到”。
 > 10D 实现状态：Phase 9B 已提前落地工作区文件树第一版，10E/P9 已进一步补齐上传、删除/回收区、权限、审计与项目资料索引状态。下一步重点从“文件管理闭环”转向“文件内容解析与可信引用闭环”。
 
 ---
@@ -524,24 +526,24 @@ PS C:\Windows\System32> bun --version
 
 ---
 
-## 第十二阶段：第一个业务 Skill（U03 标签打印端到端验证）
+## 第十二阶段：业务 Skill 底座与真实业务 Skill 验收
 
-**目标**：用已存在的 `backend/skills/builtin/tag-printing/` 作为第一个完整业务 Skill，验证 Project_R 的差异化能力：用户显式选择业务 Skill 后，系统收集输入并生成标准化业务输出。自然语言自动触发待 Skills 完整后恢复。
+**目标**：保留已经完成的 Skill 底座，改用真实业务 Skill 验证 Project_R 的差异化能力：用户显式选择业务 Skill 后，系统收集输入并生成标准化业务输出。自然语言自动触发待 Skills 完整后恢复。早期 U03 标签打印样板已确认退役，不再作为测试目标或业务能力示例。
 
-**实施方式**：不要一开始做“任意 Skill 平台”。先把 U03 做成可运行样板，再把样板沉淀成 `skill_runner` 的接口。
+**实施方式**：不要一开始做“任意 Skill 平台”。先用真实业务 Skill 跑通显式选择、补参、执行状态、结果展示和文件下载等底座能力，再沉淀通用接口。
 
 **任务清单**：
-- [ ] 对齐 `tag-printing/SKILL.md` 与 `docs/agents/skills-design.md`：补齐触发条件、必填输入、输出文件类型、错误处理、示例输入输出
+- [x] 退役 `tag-printing` 相关代码、测试和文档入口，不再让普通用户或测试流程看到标签打印 Skill
 - [x] 编写 `core/skill_runner.py` 的最小接口：`list_skills()`、`match_skill(user_text)`、`start_run(skill_id, user_id, session_id)`、`submit_input(run_id, payload)`
 - [x] 编写 `api/skills.py`：列出可用 Skill、启动 Skill、提交输入、查询运行状态；所有接口校验 JWT 与用户权限
 - [x] 将 `core/intent.py` 的 `skill_trigger` 与 Skill 元数据打通的历史能力已验证；当前显式路由阶段禁用自然语言自动触发，改为前端 Skill 面板/`selected_skill` 显式启动
-- [x] 实现 U03 的最小输出：根据项目参数生成可下载文件；若依赖 Excel 模板，则复用第十一阶段的文件生成与下载机制（当前为无模板 `.xlsx` tracer bullet）
+- [x] 实现 SkillRun、Skill 元数据加载、显式启动和补参底座
 - [x] 前端聊天区支持 Skill 多轮输入：缺少字段时继续追问，字段齐全后执行，并展示结果卡片（当前采用对话式补参，不做表单化字段面板）
-- [ ] 端到端测试：手动选择 U03 Skill → 补充项目信息 → 生成标签打印源文件 → 下载后内容符合样例（已完成后端 chat API + `.xlsx` 包结构测试；真实 UI 下载和 Excel 人工打开验收待补）
+- [ ] 端到端测试：手动选择真实业务 Skill → 补充必要信息 → 生成状态或结果卡片 → 如有文件输出则下载后内容符合样例
 
-**完成标志**：U03 标签打印能由用户显式选择并完成输出；`skill_runner` 可以复用到第二个业务 Skill；业务工作流清单中 U03 状态与 SKILL.md 链接同步更新。后续恢复自动意图识别时，再补自然语言触发验收。
+**完成标志**：标签打印 Skill 已从用户入口、测试目标和业务文档中退役；至少一个真实业务 Skill 能由用户显式选择并完成结果展示；`skill_runner` 可以复用到后续业务 Skill；业务工作流清单状态与 SKILL.md 链接同步更新。后续恢复自动意图识别时，再补自然语言触发验收。
 
-> 实现状态：Phase 12 已完成 Skill 底座与 U03 无模板输出 tracer bullet：新增 `SkillRun` 表、`core/skill_runner.py` 加载 `backend/skills/builtin/*/SKILL.md` 元数据并支持列表、匹配、启动运行和补充输入；新增 `core/skill_execution.py` 执行 U03 输出；新增 `api/skills.py`，提供 `GET /skills`、`POST /skills/match`、`POST /skills/runs`、`POST /skills/runs/{id}/inputs`、`GET /skills/runs/{id}` 与管理员 `POST /skills/reload`。当前显式路由阶段，聊天不会根据自然语言自动命中 `skill_trigger`；用户必须通过前端 Skill 面板或 `selected_skill` 启动 U03 并追问缺字段。会话中存在收集中的 SkillRun 时，用户下一条消息会被解析为对话式补参，字段齐全后生成真实 `.xlsx` 文件并复用 `/documents/{id}/download` 下载。前端已显示 Skill 运行卡片和生成文件卡片。当前未完成：正式套用用户 Excel 模板、真实 Excel 人工打开验收和端到端 UI 下载验收；后续 Skills 完整后再恢复 Chat 自动发现意图。
+> 实现状态：Phase 12 已完成 Skill 底座：新增 `SkillRun` 表、`core/skill_runner.py` 加载 `backend/skills/builtin/*/SKILL.md` 元数据并支持列表、匹配、启动运行和补充输入；新增 `api/skills.py`，提供 `GET /skills`、`POST /skills/match`、`POST /skills/runs`、`POST /skills/runs/{id}/inputs`、`GET /skills/runs/{id}` 与管理员 `POST /skills/reload`。当前显式路由阶段，聊天不会根据自然语言自动命中 `skill_trigger`；用户必须通过前端 Skill 面板或 `selected_skill` 启动真实业务 Skill。早期 U03 标签打印无模板输出 tracer bullet 已确认退役，相关 Skill 文件、dispatcher 工具入口、前端示例入口和测试目标已删除，后续以真实业务 Skill 补端到端 UI 验收。
 
 ---
 
@@ -717,9 +719,42 @@ PS C:\Windows\System32> bun --version
 
 ---
 
+## 第二十一阶段：本地私人工作区与 Local Agent Worker MVP
+
+**目标**：把默认私人工作区从后端托管模型调整为 local-first；第一版只打通本地私人资料读取、预处理、发送前授权和保存到项目资料的边界，不做完整自主本地 Agent。
+
+**任务清单**：
+- [x] 在 Electron 侧建立本地私人工作区根目录，标准安装默认使用用户 Documents 下的 `Project_R/私人空间`，Electron `userData` 只保存 manifest、配置、授权记录和索引状态
+- [x] 私人空间按单机单用户设计，不做成员权限、共享审计或多人协作；项目/公司资料仍走后端权限与审计
+- [ ] 如后续提供免安装/便携版，允许把私人空间根目录配置为软件目录旁的 `Project_R-Data/私人空间`；标准安装包和自动更新形态不得把私人资料放进应用安装目录内部
+- [x] 定义本地文件 manifest：记录路径标识、文件名、类型、大小、hash、更新时间、来源标签和最近授权状态，不把绝对路径上传为普通聊天内容
+- [x] 实现 Local Agent Worker 健康状态与能力声明：可用、不可用、授权目录、支持的解析类型、最近错误
+- [x] 前端附件来源标识区分 `本地私人`、`会话临时上传`、`项目资料`、`公司知识库`，消息发送后仍能查看已发送图片/文件和来源
+- [x] 本地文件预处理第一版支持 Markdown / TXT / 可读 PDF 文本提取、图片缩略图、基础预览和摘要/片段候选
+- [x] 发送前授权卡片显示将发送的文件、片段/摘要/原文件形式、目标范围、保留策略和是否进入后端
+- [x] 文本类私人文件默认只发送摘要或片段；用户明确选择后才上传原文件
+- [x] 图片类私人附件投递多模态模型前，明确提示图片会进入后端模型链路，并在聊天记录中保留可点击预览
+- [x] “保存到项目资料”走二次确认和复制流程，复制到当前项目 `99-未归档文件` 后写入项目文件审计日志
+- [x] 后端 API 区分本地私人文件元数据、临时任务上传、项目文件和公司知识文件，避免把临时上传误入 GBrain source
+- [x] 本地 Worker 不可用时允许降级为后端临时附件上传，但界面必须提示这是临时上传处理，不是私人工作区同步
+- [x] 验证私人文件预处理主要发生在本机；后端只接收已授权片段、摘要或原文件上传任务
+
+**本阶段明确不做**：
+- 不扫描整块硬盘，不后台自动索引用户任意目录
+- 不做私人工作区自动云同步、备份或多设备复制
+- 不做本地 LLM、本地 GBrain source 或离线问答
+- 不做任意 shell 命令执行、无人值守桌面自动化或直接写公司/项目后端路径
+- 不允许客户端绕过 Project_R 后端权限调用公司模型 Key、项目资料或公司知识库
+
+**完成标志**：用户可以在私人空间选择本地文件并看到预览/摘要候选；发送前清楚知道哪些内容会上传到后端；发送后聊天记录能查看已发送图片/文件；私人文件默认不出现在后端项目文件、公司知识库或 GBrain source 中；用户显式保存到项目资料后，项目副本受项目权限、审计、回收区和一键录入规则治理。
+
+> 实现状态：2026-05-31 已确认设计方向并写入 `CONTEXT.md` 与 `docs/adr/0012-local-first-private-workspace-and-hybrid-agent-execution.md`。Electron 私人空间目录、manifest 和 Local Worker 能力状态已抽到 `frontend/src/main/private-workspace.ts`，默认根目录为用户 Documents 下的 `Project_R/私人空间`，配置写入 `userData/private-workspace/config.json`，manifest 写入 `userData/private-workspace/manifest.json`，记录相对路径、文件名、类型、大小、SHA256、更新时间、来源标签和最近授权状态。preload 已暴露读取、选择、打开、恢复默认、读取 manifest、快捷投放、从私人空间选择文件、授权状态和 Worker 状态 IPC；设置页“通用 / 私人空间”可查看、打开、选择、恢复默认、快捷投放，并显示 Worker 可用性、授权根目录、支持解析类型和最近错误。聊天输入区支持从私人空间添加本地 pending 附件，未确认授权前禁止发送；发送前显示来源、授权状态、发送形式、目标范围、大小和本地预处理摘要。Local Worker 预处理支持 Markdown/TXT 文本摘录、可读 PDF 文本 MVP 抽取、图片本机预览和通用文件元数据；Chat 模式文本和可读 PDF 默认只发送本地摘录，图片会在确认后进入后端模型链路并在消息中保留可点击预览，Agent 模式按会话临时附件上传并沿用 3 天清理机制。用户可二次确认后把待发送私人文件复制到当前项目 `99-未归档文件`，项目副本走项目文件上传接口、审计、回收区和后续项目 GBrain source 规则，私人空间原文件不移动、不同步。后端会话附件已补 `source_scope/source_label/authorization_status`，临时附件目录固定为 `session_attachments`，不会自动进入项目资料、公司知识库或 GBrain。验证：`frontend bun run test:private-workspace` 覆盖默认目录、快捷投放、重名不覆盖、manifest 无绝对路径、文本/PDF/图片预处理、授权状态和项目复制语义；`frontend bun run typecheck`、`frontend bun run build`、后端 `tests/test_session_attachments.py tests/test_workspace_files.py` 均通过。后续项：如提供免安装/便携版，再补 `Project_R-Data/私人空间` 根目录策略；真实 Electron 点击流可作为发版前人工验收补截图。
+
+---
+
 ## 规划能力总览
 
-完成以上 20 个阶段后，系统应具备以下能力。状态以本文件各阶段 checklist 为准，未完成阶段不得因出现在本表而视为已交付。
+完成以上阶段后，系统应具备以下能力。状态以本文件各阶段 checklist 为准，未完成阶段不得因出现在本表而视为已交付。
 
 | 能力 | 状态 |
 |---|---|
@@ -739,7 +774,8 @@ PS C:\Windows\System32> bun --version
 | 异步通知中心 | Phase 18 已完成代码级 MVP；项目知识一键录入已接入异步 job 完成/失败通知 |
 | 钉钉 Bot 集成 | Phase 16 后补，非现阶段必要实现 |
 | 内网服务器无人值守运行 | Phase 19 暂缓，待 Mac mini 机器准备到位 |
-| 客户端打包与内网更新 | Phase 20 待实现 |
+| 客户端打包与内网更新 | Phase 20 代码级准备已完成；另一台 Windows 安装测试和正式更新仓库登记待补 |
+| 本地私人工作区 / Local Agent Worker | Phase 21 第一版闭环已实现并通过脚本/测试验证；便携版根目录策略和发版前真人点击验收待补 |
 
 ---
 

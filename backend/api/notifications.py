@@ -7,6 +7,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
+from api.time_models import UTCDateTimeModel
 from core.notification_service import notify_system_risk_alert
 from models import get_db
 from models.notification import Notification
@@ -15,7 +16,7 @@ from models.user import User
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
 
-class NotificationResponse(BaseModel):
+class NotificationResponse(UTCDateTimeModel):
     id: int
     type: str
     category: str

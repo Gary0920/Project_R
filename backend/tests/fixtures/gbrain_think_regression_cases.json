@@ -13,5 +13,76 @@
     "expected_citation_contains": "rules/书面化原则",
     "min_citations": 1,
     "max_warnings": 0
+  },
+  {
+    "id": "customer_five_points_think",
+    "description": "Unified customer source think should answer about 5Points without mixing unrelated customers.",
+    "query": "5Points 的关键决策人是谁，和 Synova 有什么关系？",
+    "source_id": "customer-reference",
+    "expected_model_contains": "deepseek",
+    "expected_answer_terms_any": [
+      "5Points",
+      "Synova",
+      "Barry"
+    ],
+    "expected_citation_contains": "5points",
+    "forbidden_answer_terms": [
+      "18 Mary Avenue",
+      "Aaron Morris",
+      "VELA"
+    ],
+    "forbidden_citation_contains_any": [
+      "18-mary",
+      "aaron-morris"
+    ],
+    "min_citations": 1,
+    "max_warnings": 0
+  },
+  {
+    "id": "customer_18_mary_think",
+    "description": "Unified customer source think should answer about 18 Mary Avenue without mixing unrelated customer records.",
+    "query": "18 Mary Avenue 项目为什么是价格竞争力和长期稳定性的案例？",
+    "source_id": "customer-reference",
+    "expected_model_contains": "deepseek",
+    "expected_answer_terms_any": [
+      "18 Mary Avenue",
+      "Bakulo",
+      "长期"
+    ],
+    "expected_citation_contains": "18-mary",
+    "forbidden_answer_terms": [
+      "5Points",
+      "Aaron Morris",
+      "VELA"
+    ],
+    "forbidden_citation_contains_any": [
+      "5points",
+      "aaron-morris"
+    ],
+    "min_citations": 1,
+    "max_warnings": 0
+  },
+  {
+    "id": "customer_aaron_morris_think",
+    "description": "Unified customer source think should answer about Aaron Morris without mixing unrelated customer records.",
+    "query": "Aaron Morris 是谁，关联哪个公司和项目？",
+    "source_id": "customer-reference",
+    "expected_model_contains": "deepseek",
+    "expected_answer_terms_any": [
+      "Aaron Morris",
+      "Binah",
+      "VELA"
+    ],
+    "expected_citation_contains": "aaron-morris",
+    "forbidden_answer_terms": [
+      "5Points",
+      "18 Mary Avenue"
+    ],
+    "forbidden_citation_contains_any": [
+      "5points",
+      "18-mary"
+    ],
+    "min_citations": 1,
+    "max_warnings": 0
   }
 ]

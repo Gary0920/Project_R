@@ -23,6 +23,8 @@ DEFAULT_GBRAIN_CLI_WORKDIR = PROJECT_ROOT / "reference" / "gbrain-master"
 DEFAULT_COMPANY_SOURCE_NAME = "Project_R Company Wiki"
 PROJECT_SOURCE_ID_MAX_LENGTH = 32
 PROJECT_SOURCE_ID_PREFIX = "project"
+CUSTOMER_SOURCE_ID_PREFIX = "customer"
+CUSTOMER_REFERENCE_SOURCE_ID = "customer-reference"
 EMBEDDING_PROVIDER_ENV = {
     "openai": "OPENAI_API_KEY",
     "zeroentropyai": "ZEROENTROPY_API_KEY",
@@ -95,6 +97,20 @@ def _env_csv(name: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
+def _first_csv_value(value: str | None) -> str:
+    if not value:
+        return ""
+    return next((item.strip() for item in value.split(",") if item.strip()), "")
+
+
+def _apply_gbrain_provider_env(env: dict[str, str]) -> dict[str, str]:
+    if not env.get("DEEPSEEK_API_KEY"):
+        deepseek_key = _first_csv_value(env.get("DEEPSEEK_API_KEYS"))
+        if deepseek_key:
+            env["DEEPSEEK_API_KEY"] = deepseek_key
+    return env
+
+
 def _env_path(name: str, default: Path) -> Path:
     raw = os.getenv(name)
     if not raw:
@@ -128,6 +144,7 @@ class GBrainSettings:
     think_oauth_scope: str = "read write"
     think_oauth_token_auth_method: str = "client_secret_post"
     think_allowed_sources: tuple[str, ...] = field(default_factory=tuple)
+    think_project_clients_enabled: bool = True
     think_model: str = ""
     think_rounds: int = 1
     think_timeout_seconds: float = 90.0
@@ -165,6 +182,10 @@ class GBrainSettings:
     def service_log_path(self) -> Path:
         return self.manifests_path / "gbrain-http-service.log"
 
+    @property
+    def think_source_clients_path(self) -> Path:
+        return self.manifests_path / "gbrain-think-source-clients.json"
+
 
 def load_gbrain_settings() -> GBrainSettings:
     return GBrainSettings(
@@ -194,6 +215,7 @@ def load_gbrain_settings() -> GBrainSettings:
         ).strip()
         or "client_secret_post",
         think_allowed_sources=_env_csv("GBRAIN_THINK_ALLOWED_SOURCES"),
+        think_project_clients_enabled=_env_bool("GBRAIN_THINK_PROJECT_CLIENTS_ENABLED", True),
         think_model=os.getenv("GBRAIN_THINK_MODEL", "").strip(),
         think_rounds=max(1, _env_int("GBRAIN_THINK_ROUNDS", 1)),
         think_timeout_seconds=max(5.0, _env_float("GBRAIN_THINK_TIMEOUT_SECONDS", 90.0)),
@@ -304,6 +326,17 @@ def project_source_id_for_workspace(workspace: Any) -> str:
     return f"{PROJECT_SOURCE_ID_PREFIX}-{brand}-{suffix}"
 
 
+def customer_source_id_for_workspace(workspace: Any) -> str:
+    workspace_id = getattr(workspace, "id", None)
+    if not isinstance(workspace_id, int) or workspace_id <= 0:
+        raise ValueError("customer workspace must be persisted before creating a GBrain source id")
+    slug = _source_id_segment(str(getattr(workspace, "slug", "") or getattr(workspace, "name", "") or "customer"), fallback="customer")
+    suffix = str(workspace_id)
+    max_slug_len = PROJECT_SOURCE_ID_MAX_LENGTH - len(CUSTOMER_SOURCE_ID_PREFIX) - len(suffix) - 2
+    slug = slug[: max(1, max_slug_len)].strip("-") or "customer"
+    return f"{CUSTOMER_SOURCE_ID_PREFIX}-{slug}-{suffix}"
+
+
 def project_source_paths_for_workspace(workspace: Any) -> dict[str, Path]:
     storage_path = str(getattr(workspace, "storage_path", "") or "").strip()
     if storage_path:
@@ -312,6 +345,21 @@ def project_source_paths_for_workspace(workspace: Any) -> dict[str, Path]:
         brand = str(getattr(workspace, "brand", "") or "BFI").strip().upper() or "BFI"
         slug = str(getattr(workspace, "slug", "") or getattr(workspace, "name", "") or "project").strip() or "project"
         root = (BASE_DIR / "workspace_data" / "project" / brand / slug).resolve()
+    return {
+        "root": root,
+        "raw": root,
+        "derived": root / "derived",
+        "manifests": root / "manifests",
+    }
+
+
+def customer_source_paths_for_workspace(workspace: Any) -> dict[str, Path]:
+    storage_path = str(getattr(workspace, "storage_path", "") or "").strip()
+    if storage_path:
+        root = Path(storage_path).resolve()
+    else:
+        slug = str(getattr(workspace, "slug", "") or getattr(workspace, "name", "") or "customer").strip() or "customer"
+        root = (BASE_DIR / "workspace_data" / "customer" / slug).resolve()
     return {
         "root": root,
         "raw": root,
@@ -338,6 +386,24 @@ def ensure_project_gbrain_environment(workspace: Any, settings: GBrainSettings |
     }
 
 
+def ensure_customer_gbrain_environment(workspace: Any, settings: GBrainSettings | None = None) -> dict[str, Any]:
+    settings = settings or load_gbrain_settings()
+    paths = customer_source_paths_for_workspace(workspace)
+    errors: list[str] = []
+    for key in ("root", "derived", "manifests"):
+        _ensure_directory(paths[key], errors)
+    git_status = _ensure_local_git_repo(paths["derived"], settings.local_git_enabled)
+    if git_status.get("error"):
+        errors.append(f"local git: {git_status['error']}")
+    return {
+        "ok": not errors,
+        "source_id": customer_source_id_for_workspace(workspace),
+        "paths": {key: _path_status(path) for key, path in paths.items()},
+        "local_git": git_status,
+        "errors": errors,
+    }
+
+
 def project_source_registration_plan(workspace: Any) -> dict[str, Any]:
     source_id = project_source_id_for_workspace(workspace)
     paths = project_source_paths_for_workspace(workspace)
@@ -355,11 +421,27 @@ def project_source_registration_plan(workspace: Any) -> dict[str, Any]:
     }
 
 
+def customer_source_registration_plan(workspace: Any) -> dict[str, Any]:
+    source_id = customer_source_id_for_workspace(workspace)
+    paths = customer_source_paths_for_workspace(workspace)
+    name = f"Project_R Customer - {getattr(workspace, 'name', source_id)}"
+    return {
+        "source_id": source_id,
+        "name": name,
+        "path": str(paths["derived"].resolve()),
+        "federated": False,
+        "operator_command": (
+            f"gbrain sources add {source_id} "
+            f"--path {paths['derived'].resolve()} "
+            f"--name \"{name}\" --no-federated"
+        ),
+    }
+
+
 class GBrainAdapter:
     def __init__(self, settings: GBrainSettings | None = None):
         self.settings = settings or load_gbrain_settings()
-        self._think_oauth_access_token = ""
-        self._think_oauth_expires_at = 0.0
+        self._think_oauth_tokens: dict[str, tuple[str, float]] = {}
         self._agent_oauth_access_token = ""
         self._agent_oauth_expires_at = 0.0
 
@@ -482,8 +564,94 @@ class GBrainAdapter:
             self.source_registration_plan(),
         )
 
+    def source_status(self, registration_plan: dict[str, Any]) -> dict[str, Any]:
+        return self._source_status(
+            str(registration_plan["source_id"]),
+            Path(registration_plan["path"]).resolve(),
+            registration_plan,
+        )
+
+    def ensure_source(self, registration_plan: dict[str, Any]) -> dict[str, Any]:
+        before = self.source_status(registration_plan)
+        if before.get("registered") and before.get("path_matches"):
+            return {
+                "ok": True,
+                "registration": {"status": "already_registered", "ok": True},
+                "source": before,
+            }
+        if before.get("status") in {"auth_required", "disabled", "not_configured"}:
+            return {
+                "ok": False,
+                "registration": {
+                    "status": "skipped",
+                    "ok": False,
+                    "error": before.get("error") or "GBrain service is not ready for source registration",
+                },
+                "source": before,
+            }
+        registration = self.register_source(registration_plan)
+        after = self.source_status(registration_plan) if registration.get("ok") else before
+        return {
+            "ok": bool(registration.get("ok")),
+            "registration": registration,
+            "source": after,
+        }
+
+    def register_source(self, registration_plan: dict[str, Any]) -> dict[str, Any]:
+        cli_file = self.settings.cli_workdir / "src" / "cli.ts"
+        if not cli_file.exists():
+            return {
+                "ok": False,
+                "status": "cli_unavailable",
+                "error": f"GBrain CLI not found at {cli_file}",
+                "expected": registration_plan,
+            }
+        args = [
+            self.settings.bun_executable,
+            "src/cli.ts",
+            "sources",
+            "add",
+            str(registration_plan["source_id"]),
+            "--path",
+            str(registration_plan["path"]),
+            "--name",
+            str(registration_plan["name"]),
+        ]
+        if registration_plan.get("federated"):
+            args.append("--federated")
+        else:
+            args.append("--no-federated")
+        result = self._run_cli_exclusive(args, reason=f"register_source:{registration_plan['source_id']}", timeout=120)
+        return {
+            "ok": result.get("status") == "ok",
+            "status": result.get("status"),
+            "expected": registration_plan,
+            "result": result.get("result"),
+            "error": result.get("error"),
+            "service_restart": result.get("service_restart"),
+        }
+
+    def sync_registered_source(
+        self,
+        registration_plan: dict[str, Any],
+        *,
+        full: bool = False,
+        no_pull: bool = True,
+        no_embed: bool = False,
+    ) -> dict[str, Any]:
+        return self.sync_source(
+            source_id=str(registration_plan["source_id"]),
+            repo_path=Path(registration_plan["path"]),
+            full=full,
+            no_pull=no_pull,
+            no_embed=no_embed,
+        )
+
     def project_source_registration_plan(self, workspace: Any) -> dict[str, Any]:
         return project_source_registration_plan(workspace)
+
+    def customer_source_registration_plan(self, workspace: Any) -> dict[str, Any]:
+        return customer_source_registration_plan(workspace)
 
     def project_source_status(self, workspace: Any) -> dict[str, Any]:
         if str(getattr(workspace, "workspace_kind", "project") or "project") != "project":
@@ -571,6 +739,100 @@ class GBrainAdapter:
         no_embed: bool = False,
     ) -> dict[str, Any]:
         plan = project_source_registration_plan(workspace)
+        return self.sync_source(
+            source_id=plan["source_id"],
+            repo_path=Path(plan["path"]),
+            full=full,
+            no_pull=no_pull,
+            no_embed=no_embed,
+        )
+
+    def customer_source_status(self, workspace: Any) -> dict[str, Any]:
+        if str(getattr(workspace, "workspace_kind", "") or "") != "customer":
+            return {
+                "status": "not_customer",
+                "registered": False,
+                "expected": None,
+                "source": {},
+            }
+        plan = customer_source_registration_plan(workspace)
+        return self._source_status(
+            plan["source_id"],
+            Path(plan["path"]).resolve(),
+            plan,
+        )
+
+    def ensure_customer_source(self, workspace: Any) -> dict[str, Any]:
+        environment = ensure_customer_gbrain_environment(workspace, self.settings)
+        before = self.customer_source_status(workspace)
+        if before.get("registered") and before.get("path_matches"):
+            return {
+                "ok": environment.get("ok"),
+                "environment": environment,
+                "registration": {"status": "already_registered", "ok": True},
+                "source": before,
+            }
+        if before.get("status") in {"auth_required", "disabled", "not_configured"}:
+            return {
+                "ok": False,
+                "environment": environment,
+                "registration": {
+                    "status": "skipped",
+                    "ok": False,
+                    "error": before.get("error") or "GBrain service is not ready for customer source registration",
+                },
+                "source": before,
+            }
+        registration = self.register_customer_source(workspace)
+        after = self.customer_source_status(workspace) if registration.get("ok") else before
+        return {
+            "ok": bool(environment.get("ok") and registration.get("ok")),
+            "environment": environment,
+            "registration": registration,
+            "source": after,
+        }
+
+    def register_customer_source(self, workspace: Any) -> dict[str, Any]:
+        plan = customer_source_registration_plan(workspace)
+        cli_file = self.settings.cli_workdir / "src" / "cli.ts"
+        if not cli_file.exists():
+            return {
+                "ok": False,
+                "status": "cli_unavailable",
+                "error": f"GBrain CLI not found at {cli_file}",
+                "expected": plan,
+            }
+        args = [
+            self.settings.bun_executable,
+            "src/cli.ts",
+            "sources",
+            "add",
+            plan["source_id"],
+            "--path",
+            plan["path"],
+            "--name",
+            plan["name"],
+            "--no-federated",
+        ]
+        result = self._run_cli_exclusive(args, reason="register_customer_source", timeout=120)
+        return {
+            "ok": result.get("status") == "ok",
+            "status": result.get("status"),
+            "expected": plan,
+            "result": result.get("result"),
+            "error": result.get("error"),
+            "service_restart": result.get("service_restart"),
+        }
+
+    def sync_customer_source(
+        self,
+        workspace: Any,
+        *,
+        full: bool = False,
+        no_pull: bool = True,
+        no_embed: bool = False,
+    ) -> dict[str, Any]:
+        plan = customer_source_registration_plan(workspace)
         return self.sync_source(
             source_id=plan["source_id"],
             repo_path=Path(plan["path"]),
@@ -686,7 +948,7 @@ class GBrainAdapter:
                 "error": f"GBrain CLI not found at {cli_file}",
             }
 
-        env = os.environ.copy()
+        env = _apply_gbrain_provider_env(os.environ.copy())
         env["GBRAIN_HOME"] = str(self.settings.home_path.resolve())
         env.setdefault("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
         # Project_R uses DATABASE_URL for its own SQLite app DB; GBrain CLI
@@ -1047,6 +1309,17 @@ class GBrainAdapter:
     def _think_allowed_sources(self) -> tuple[str, ...]:
         return self.settings.think_allowed_sources or (self.settings.company_source_id,)
 
+    @staticmethod
+    def _is_project_source_id(source_id: str) -> bool:
+        return source_id.startswith(f"{PROJECT_SOURCE_ID_PREFIX}-")
+
+    @staticmethod
+    def _is_customer_source_id(source_id: str) -> bool:
+        return source_id == CUSTOMER_REFERENCE_SOURCE_ID or source_id.startswith(f"{CUSTOMER_SOURCE_ID_PREFIX}-")
+
+    def _supports_auto_think_source_client(self, source_id: str) -> bool:
+        return self._is_project_source_id(source_id) or self._is_customer_source_id(source_id)
+
     def _think_source_gate(self, target_source_id: str) -> dict[str, Any] | None:
         if not self.settings.think_enabled:
             return {
@@ -1063,45 +1336,294 @@ class GBrainAdapter:
                     "Current upstream think gather does not thread sourceId/allowedSources through every retrieval stream."
                 ),
             }
-        allowed_sources = self._think_allowed_sources()
-        if target_source_id not in allowed_sources:
-            return {
-                "status": "source_not_allowed",
-                "source_id": target_source_id,
-                "allowed_sources": list(allowed_sources),
-                "error": "Requested GBrain think source is not listed in GBRAIN_THINK_ALLOWED_SOURCES",
-            }
-        if not self.settings.think_oauth_client_id or not self.settings.think_oauth_client_secret:
-            return {
-                "status": "oauth_required",
-                "source_id": target_source_id,
-                "error": "GBRAIN_THINK_OAUTH_CLIENT_ID and GBRAIN_THINK_OAUTH_CLIENT_SECRET are required",
-            }
         return None
 
-    def _get_think_bearer_token(self, target_source_id: str) -> tuple[str | None, dict[str, Any] | None]:
+    def _resolve_think_client_credentials(
+        self,
+        target_source_id: str,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        allowed_sources = self._think_allowed_sources()
+        if target_source_id in allowed_sources:
+            if not self.settings.think_oauth_client_id or not self.settings.think_oauth_client_secret:
+                return {}, {
+                    "status": "oauth_required",
+                    "source_id": target_source_id,
+                    "error": "GBRAIN_THINK_OAUTH_CLIENT_ID and GBRAIN_THINK_OAUTH_CLIENT_SECRET are required",
+                }
+            return {
+                "source": "env",
+                "source_id": target_source_id,
+                "client_id": self.settings.think_oauth_client_id,
+                "client_secret": self.settings.think_oauth_client_secret,
+                "scope": self.settings.think_oauth_scope,
+                "token_auth_method": self.settings.think_oauth_token_auth_method,
+                "allowed_sources": list(allowed_sources),
+                "cache_key": f"env:{self.settings.think_oauth_client_id}",
+            }, None
+
+        if self._supports_auto_think_source_client(target_source_id):
+            if not self.settings.think_project_clients_enabled:
+                return {}, {
+                    "status": "source_not_allowed",
+                    "source_id": target_source_id,
+                    "allowed_sources": list(allowed_sources),
+                    "error": "Managed GBrain think OAuth clients are disabled",
+                }
+            client = self.ensure_think_source_client(target_source_id)
+            if not client.get("ok"):
+                return {}, {
+                    "status": client.get("status") or "oauth_required",
+                    "source_id": target_source_id,
+                    "error": client.get("error") or "Unable to prepare source-scoped GBrain think OAuth client",
+                }
+            return {
+                "source": "manifest",
+                "source_id": target_source_id,
+                "client_id": str(client["client_id"]),
+                "client_secret": str(client["client_secret"]),
+                "scope": str(client.get("scope") or self.settings.think_oauth_scope),
+                "token_auth_method": str(
+                    client.get("token_auth_method") or self.settings.think_oauth_token_auth_method
+                ),
+                "allowed_sources": [target_source_id],
+                "cache_key": f"manifest:{target_source_id}:{client['client_id']}",
+            }, None
+
+        return {}, {
+            "status": "source_not_allowed",
+            "source_id": target_source_id,
+            "allowed_sources": list(allowed_sources),
+            "error": "Requested GBrain think source is not listed in GBRAIN_THINK_ALLOWED_SOURCES",
+        }
+
+    def ensure_think_source_client(self, source_id: str) -> dict[str, Any]:
+        source_id = str(source_id or "").strip()
+        if not source_id:
+            return {"ok": False, "status": "invalid_source", "error": "source_id is required"}
+        if not self._supports_auto_think_source_client(source_id):
+            return {
+                "ok": False,
+                "status": "unsupported_source",
+                "source_id": source_id,
+                "error": "Automatic GBrain think OAuth client registration is only enabled for managed project/customer sources",
+            }
+
+        manifest = self._load_think_source_clients_manifest()
+        if manifest.get("status") != "ok":
+            return {**manifest, "ok": False, "source_id": source_id}
+
+        clients = manifest["clients"]
+        existing = clients.get(source_id)
+        if self._is_valid_think_source_client(existing, source_id):
+            return {
+                "ok": True,
+                "status": "already_registered",
+                "source_id": source_id,
+                **existing,
+            }
+
+        registered = self.register_think_source_client(source_id)
+        if not registered.get("ok"):
+            return registered
+
+        client_record = {
+            "source_id": source_id,
+            "name": registered["name"],
+            "client_id": registered["client_id"],
+            "client_secret": registered["client_secret"],
+            "scope": self.settings.think_oauth_scope,
+            "token_auth_method": self.settings.think_oauth_token_auth_method,
+            "allowed_sources": [source_id],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        clients[source_id] = client_record
+        written = self._write_think_source_clients_manifest(clients)
+        if written.get("status") != "ok":
+            return {
+                "ok": False,
+                "status": written.get("status"),
+                "source_id": source_id,
+                "error": written.get("error"),
+            }
+        return {
+            "ok": True,
+            "status": "registered",
+            **client_record,
+            "service_restart": registered.get("service_restart"),
+        }
+
+    def register_think_source_client(self, source_id: str) -> dict[str, Any]:
+        cli_file = self.settings.cli_workdir / "src" / "commands" / "auth.ts"
+        if not cli_file.exists():
+            return {
+                "ok": False,
+                "status": "cli_unavailable",
+                "source_id": source_id,
+                "error": f"GBrain auth CLI not found at {cli_file}",
+            }
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        name = f"project-r-think-{source_id}-{timestamp}"
+        args = [
+            self.settings.bun_executable,
+            "run",
+            "src/commands/auth.ts",
+            "register-client",
+            name,
+            "--grant-types",
+            "client_credentials",
+            "--scopes",
+            self.settings.think_oauth_scope,
+            "--source",
+            source_id,
+            "--federated-read",
+            source_id,
+            "--token-endpoint-auth-method",
+            self.settings.think_oauth_token_auth_method,
+        ]
+        result = self._run_cli_exclusive(args, reason="register_think_source_client", timeout=90)
+        combined_output = "\n".join(
+            part
+            for part in (
+                (result.get("result") or {}).get("stdout"),
+                (result.get("result") or {}).get("stderr"),
+            )
+            if isinstance(part, str) and part
+        )
+        if result.get("status") != "ok":
+            redacted = self._redact_oauth_registration_output(combined_output or str(result.get("error") or ""))
+            return {
+                "ok": False,
+                "status": result.get("status") or "cli_error",
+                "source_id": source_id,
+                "name": name,
+                "error": redacted[-1000:] or "gbrain register-client failed",
+                "service_restart": result.get("service_restart"),
+            }
+        try:
+            client_id, client_secret = self._parse_oauth_registration_output(combined_output)
+        except ValueError as exc:
+            return {
+                "ok": False,
+                "status": "invalid_registration_output",
+                "source_id": source_id,
+                "name": name,
+                "error": str(exc),
+                "result": {
+                    "stdout": self._redact_oauth_registration_output((result.get("result") or {}).get("stdout") or ""),
+                    "stderr": self._redact_oauth_registration_output((result.get("result") or {}).get("stderr") or ""),
+                },
+                "service_restart": result.get("service_restart"),
+            }
+        return {
+            "ok": True,
+            "status": "ok",
+            "source_id": source_id,
+            "name": name,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "result": {
+                "stdout": self._redact_oauth_registration_output((result.get("result") or {}).get("stdout") or ""),
+                "stderr": self._redact_oauth_registration_output((result.get("result") or {}).get("stderr") or ""),
+            },
+            "service_restart": result.get("service_restart"),
+        }
+
+    def _load_think_source_clients_manifest(self) -> dict[str, Any]:
+        path = self.settings.think_source_clients_path
+        if not path.exists():
+            return {"status": "ok", "clients": {}}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return {"status": "invalid_manifest", "error": str(exc), "path": str(path.resolve())}
+        if not isinstance(payload, dict):
+            return {"status": "invalid_manifest", "error": "manifest root is not an object", "path": str(path.resolve())}
+        clients = payload.get("clients")
+        if not isinstance(clients, dict):
+            clients = {}
+        return {"status": "ok", "clients": clients}
+
+    def _write_think_source_clients_manifest(self, clients: dict[str, Any]) -> dict[str, Any]:
+        path = self.settings.think_source_clients_path
+        payload = {
+            "version": 1,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "clients": clients,
+        }
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(tmp, path)
+            return {"status": "ok", "path": str(path.resolve())}
+        except OSError as exc:
+            return {"status": "write_failed", "error": str(exc), "path": str(path.resolve())}
+
+    def _is_valid_think_source_client(self, client: Any, source_id: str) -> bool:
+        if not isinstance(client, dict):
+            return False
+        if client.get("source_id") != source_id:
+            return False
+        if not isinstance(client.get("client_id"), str) or not client.get("client_id").strip():
+            return False
+        if not isinstance(client.get("client_secret"), str) or not client.get("client_secret").strip():
+            return False
+        allowed_sources = client.get("allowed_sources")
+        return isinstance(allowed_sources, list) and source_id in allowed_sources
+
+    @staticmethod
+    def _parse_oauth_registration_output(output: str) -> tuple[str, str]:
+        client_id_match = re.search(r"Client ID:\s*(\S+)", output)
+        client_secret_match = re.search(r"Client Secret:\s*(\S+)", output)
+        if not client_id_match:
+            raise ValueError("GBrain register-client output did not include a Client ID")
+        if not client_secret_match or client_secret_match.group(1).startswith("<"):
+            raise ValueError("GBrain register-client output did not include a confidential Client Secret")
+        return client_id_match.group(1).strip(), client_secret_match.group(1).strip()
+
+    @staticmethod
+    def _redact_oauth_registration_output(output: str) -> str:
+        return re.sub(r"(Client Secret:\s*)\S+", r"\1<redacted>", output)
+
+    def _get_think_bearer_token(
+        self,
+        target_source_id: str,
+    ) -> tuple[str | None, dict[str, Any] | None, dict[str, Any] | None]:
         gate = self._think_source_gate(target_source_id)
         if gate:
-            return None, gate
-        if self._think_oauth_access_token and time.time() < self._think_oauth_expires_at:
-            return self._think_oauth_access_token, None
-        token_response = self._fetch_think_oauth_token()
+            return None, gate, None
+
+        credentials, credential_error = self._resolve_think_client_credentials(target_source_id)
+        if credential_error:
+            return None, credential_error, None
+
+        cache_key = str(credentials["cache_key"])
+        cached = self._think_oauth_tokens.get(cache_key)
+        if cached and time.time() < cached[1]:
+            return cached[0], None, credentials
+
+        token_response = self._fetch_oauth_token(
+            client_id=str(credentials["client_id"]),
+            client_secret=str(credentials["client_secret"]),
+            scope=str(credentials["scope"]),
+            token_auth_method=str(credentials["token_auth_method"]),
+        )
         if token_response.get("status") != "ok":
-            return None, {**token_response, "source_id": target_source_id}
+            return None, {**token_response, "source_id": target_source_id}, credentials
         token = str(token_response.get("access_token") or "")
         if not token:
             return None, {
                 "status": "invalid_response",
                 "source_id": target_source_id,
                 "error": "GBrain OAuth token response did not include access_token",
-            }
+            }, credentials
         try:
             expires_in = int(token_response.get("expires_in") or 3600)
         except (TypeError, ValueError):
             expires_in = 3600
-        self._think_oauth_access_token = token
-        self._think_oauth_expires_at = time.time() + max(30, expires_in - 30)
-        return token, None
+        self._think_oauth_tokens[cache_key] = (token, time.time() + max(30, expires_in - 30))
+        return token, None, credentials
 
     def _fetch_think_oauth_token(self) -> dict[str, Any]:
         return self._fetch_oauth_token(
@@ -1208,7 +1730,7 @@ class GBrainAdapter:
         until: str | None = None,
     ) -> dict[str, Any]:
         target_source_id = source_id or self.settings.company_source_id
-        token, gate_error = self._get_think_bearer_token(target_source_id)
+        token, gate_error, credentials = self._get_think_bearer_token(target_source_id)
         if gate_error:
             return gate_error
 
@@ -1236,8 +1758,9 @@ class GBrainAdapter:
             "source_id": target_source_id,
             "source_scope": {
                 "verified": self.settings.think_source_scope_verified,
-                "allowed_sources": list(self._think_allowed_sources()),
+                "allowed_sources": list((credentials or {}).get("allowed_sources") or self._think_allowed_sources()),
                 "scope_is_token_bound": True,
+                "credential_source": (credentials or {}).get("source"),
             },
         }
 
@@ -1347,6 +1870,71 @@ class GBrainAdapter:
             queue=queue,
         )
 
+    def get_page(self, slug: str, *, include_deleted: bool = False) -> dict[str, Any]:
+        arguments: dict[str, Any] = {"slug": slug}
+        if include_deleted:
+            arguments["include_deleted"] = True
+        return self._call_mcp_tool("get_page", arguments)
+
+    def graph_context(
+        self,
+        slug: str,
+        *,
+        source_id: str | None = None,
+        depth: int = 2,
+        direction: str = "both",
+        link_type: str | None = None,
+        include_timeline: bool = True,
+        include_backlinks: bool = True,
+    ) -> dict[str, Any]:
+        target_source_id = source_id or self.settings.company_source_id
+        token, gate_error, credentials = self._get_think_bearer_token(target_source_id)
+        if gate_error:
+            return gate_error
+        clean_slug = str(slug or "").strip().removesuffix(".md")
+        if not clean_slug:
+            return {"status": "invalid_request", "error": "slug is required"}
+        traversal_arguments: dict[str, Any] = {
+            "slug": clean_slug,
+            "depth": max(1, min(int(depth or 2), 10)),
+            "direction": direction if direction in {"in", "out", "both"} else "both",
+        }
+        if link_type:
+            traversal_arguments["link_type"] = str(link_type).strip()
+        response: dict[str, Any] = {
+            "status": "ok",
+            "method": "mcp",
+            "source_id": target_source_id,
+            "slug": clean_slug,
+            "source_scope": {
+                "verified": self.settings.think_source_scope_verified,
+                "allowed_sources": list((credentials or {}).get("allowed_sources") or self._think_allowed_sources()),
+                "scope_is_token_bound": True,
+                "credential_source": (credentials or {}).get("source"),
+            },
+            "traverse_graph": self._call_mcp_tool(
+                "traverse_graph",
+                traversal_arguments,
+                bearer_token=token,
+                timeout_seconds=max(self.settings.timeout_seconds, 15.0),
+            ),
+        }
+        if include_timeline:
+            response["timeline"] = self._call_mcp_tool(
+                "get_timeline",
+                {"slug": clean_slug},
+                bearer_token=token,
+                timeout_seconds=max(self.settings.timeout_seconds, 15.0),
+            )
+        if include_backlinks:
+            response["backlinks"] = self._call_mcp_tool(
+                "get_backlinks",
+                {"slug": clean_slug},
+                bearer_token=token,
+                timeout_seconds=max(self.settings.timeout_seconds, 15.0),
+            )
+        return response
+
     def _build_citation_fixer_prompt(
         self,
         *,
@@ -1436,7 +2024,7 @@ class GBrainAdapter:
         if no_embed:
             args.append("--no-embed")
 
-        env = os.environ.copy()
+        env = _apply_gbrain_provider_env(os.environ.copy())
         env["GBRAIN_HOME"] = str(self.settings.home_path.resolve())
         env.setdefault("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
         env.pop("DATABASE_URL", None)
@@ -1493,7 +2081,7 @@ class GBrainAdapter:
         }
 
     def _run_cli_exclusive(self, args: list[str], *, reason: str, timeout: int) -> dict[str, Any]:
-        env = os.environ.copy()
+        env = _apply_gbrain_provider_env(os.environ.copy())
         env["GBRAIN_HOME"] = str(self.settings.home_path.resolve())
         env.setdefault("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
         env.pop("DATABASE_URL", None)

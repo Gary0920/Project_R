@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { ChatSearchResultResponse, ChatSessionResponse } from "../api/types";
+import { parseApiDate } from "../utils/time";
 
 export type SearchResult = ChatSessionResponse & {
   workspace_name?: string;
@@ -92,7 +93,7 @@ function formatTime(value: string) {
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+  }).format(parseApiDate(value));
 }
 
 function getPreviewText(result: ChatSearchResultResponse | SearchResult) {

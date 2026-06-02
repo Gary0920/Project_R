@@ -1,4 +1,5 @@
-import { app, BrowserWindow, Menu, ipcMain, screen, shell } from "electron";
+import { app, BrowserWindow, Menu, ipcMain, screen, shell, dialog } from "electron";
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +9,7 @@ import {
   type UpdateDownloadInput as UpdateDownloadJobInput,
   type UpdateProgress,
 } from "./update-download.js";
+import { createPrivateWorkspaceService, type PrivateWorkspaceFileRecord } from "./private-workspace.js";
 
 type WindowState = {
   width: number;
@@ -35,6 +37,7 @@ type UpdateDownloadInput = Omit<UpdateDownloadJobInput, "downloadsDir">;
 
 type UpdateInstallInput = {
   filePath: string;
+  version?: string;
   dryRun?: boolean;
 };
 
@@ -80,6 +83,13 @@ function getUpdateDownloadsDir() {
   return join(app.getPath("userData"), "updates");
 }
 
+function getPrivateWorkspaceService() {
+  return createPrivateWorkspaceService({
+    userDataDir: app.getPath("userData"),
+    documentsDir: app.getPath("documents"),
+  });
+}
+
 function readUserPrompts(): UserPrompt[] {
   const promptsPath = getUserPromptsPath();
   if (!existsSync(promptsPath)) {
@@ -105,19 +115,53 @@ function emitUpdateProgress(sender: Electron.WebContents, progress: UpdateProgre
   }
 }
 
-async function installDownloadedUpdate(input: UpdateInstallInput) {
+async function installDownloadedUpdate(input: UpdateInstallInput, sender?: Electron.WebContents) {
   const filePath = input.filePath?.trim();
   if (!filePath || !existsSync(filePath)) {
     throw new Error("安装包不存在");
   }
+  const version = input.version ?? "";
+  const emitInstallProgress = (message: string) => {
+    if (!sender || sender.isDestroyed()) return;
+    sender.send("updates:progress", {
+      version,
+      status: "installing",
+      receivedBytes: 0,
+      totalBytes: 0,
+      percent: 100,
+      bytesPerSecond: 0,
+      filePath,
+      message,
+      dryRun: Boolean(input.dryRun),
+    } satisfies UpdateProgress);
+  };
   if (input.dryRun) {
+    emitInstallProgress("dry-run: 静默安装与重启已模拟");
     return { ok: true, dryRun: true };
   }
-  const errorMessage = await shell.openPath(filePath);
-  if (errorMessage) {
-    throw new Error(errorMessage);
-  }
-  setTimeout(() => app.quit(), 500);
+  emitInstallProgress("正在静默安装更新，完成后会自动重启应用...");
+  const child = spawn(filePath, ["/S", "--force-run"], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  child.on("error", (error) => {
+    if (sender && !sender.isDestroyed()) {
+      sender.send("updates:progress", {
+        version,
+        status: "error",
+        receivedBytes: 0,
+        totalBytes: 0,
+        percent: 0,
+        bytesPerSecond: 0,
+        filePath,
+        message: error.message || "静默安装启动失败",
+        dryRun: false,
+      } satisfies UpdateProgress);
+    }
+  });
+  child.unref();
+  setTimeout(() => app.quit(), 800);
   return { ok: true, dryRun: false };
 }
 
@@ -298,6 +342,68 @@ app.whenReady().then(() => {
     writeUserPrompts(prompts);
     return prompts;
   });
+  ipcMain.handle("private-workspace:get-config", () => getPrivateWorkspaceService().readConfig());
+  ipcMain.handle("private-workspace:get-worker-status", () => getPrivateWorkspaceService().getWorkerStatus());
+  ipcMain.handle("private-workspace:choose-root", async () => {
+    const service = getPrivateWorkspaceService();
+    const current = service.readConfig();
+    const options: Electron.OpenDialogOptions = {
+      title: "选择 Project_R 本机文件处理目录",
+      defaultPath: current.rootPath,
+      properties: ["openDirectory", "createDirectory"],
+    };
+    const window = getMainWindow();
+    const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
+    if (result.canceled || !result.filePaths[0]) {
+      return current;
+    }
+    return service.setRoot(result.filePaths[0]);
+  });
+  ipcMain.handle("private-workspace:open-root", async () => {
+    const config = getPrivateWorkspaceService().readConfig();
+    const errorMessage = await shell.openPath(config.rootPath);
+    if (errorMessage) {
+      throw new Error(errorMessage);
+    }
+    return config;
+  });
+  ipcMain.handle("private-workspace:reset-root", () => {
+    const service = getPrivateWorkspaceService();
+    return service.setRoot(service.getDefaultRoot());
+  });
+  ipcMain.handle("private-workspace:get-manifest", () => getPrivateWorkspaceService().readManifest());
+  ipcMain.handle("private-workspace:quick-drop", async () => {
+    const options: Electron.OpenDialogOptions = {
+      title: "快速添加本机文件到 Project_R",
+      properties: ["openFile", "multiSelections"],
+    };
+    const window = getMainWindow();
+    const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
+    if (result.canceled || !result.filePaths.length) {
+      return { records: getPrivateWorkspaceService().readManifest(), added: [] };
+    }
+    const service = getPrivateWorkspaceService();
+    const added = service.copyFilesToInbox(result.filePaths);
+    return { records: service.readManifest(), added };
+  });
+  ipcMain.handle("private-workspace:choose-files", async () => {
+    const service = getPrivateWorkspaceService();
+    const options: Electron.OpenDialogOptions = {
+      title: "选择本机文件添加到对话",
+      properties: ["openFile", "multiSelections"],
+    };
+    const window = getMainWindow();
+    const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
+    if (result.canceled || !result.filePaths.length) {
+      return [];
+    }
+    return service.readFilePayloads(result.filePaths);
+  });
+  ipcMain.handle("private-workspace:set-authorization", (_event, input: { ids?: string[]; status?: PrivateWorkspaceFileRecord["lastAuthorizationStatus"] }) => {
+    const ids = Array.isArray(input?.ids) ? input.ids.filter((item): item is string => typeof item === "string") : [];
+    const status = input?.status === "uploaded" || input?.status === "authorized" ? input.status : "pending";
+    return getPrivateWorkspaceService().setAuthorization(ids, status);
+  });
   ipcMain.handle("updates:get-current-version", () => app.getVersion());
   ipcMain.handle("updates:download", async (event, input: UpdateDownloadInput) => {
     const payload = (input ?? {}) as UpdateDownloadInput;
@@ -321,10 +427,10 @@ app.whenReady().then(() => {
       return { ok: false, message };
     }
   });
-  ipcMain.handle("updates:install", async (_event, input: UpdateInstallInput) => {
+  ipcMain.handle("updates:install", async (event, input: UpdateInstallInput) => {
     const payload = (input ?? {}) as UpdateInstallInput;
     try {
-      return await installDownloadedUpdate(payload);
+      return await installDownloadedUpdate(payload, event.sender);
     } catch (error) {
       return { ok: false, message: error instanceof Error ? error.message : "启动安装器失败" };
     }
