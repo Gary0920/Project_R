@@ -2,7 +2,9 @@ param(
     [int]$BackendPort = 8000,
     [int[]]$FrontendPorts = @(5173, 5174, 5175),
     [switch]$NoFrontend,
-    [switch]$NoBackend
+    [switch]$NoBackend,
+    [switch]$Lan,
+    [switch]$FirewallRule
 )
 
 $ErrorActionPreference = "Stop"
@@ -44,6 +46,19 @@ function Stop-ListenersOnPort {
     foreach ($listener in $listeners) {
         Stop-ProcessSafe -ProcessId $listener.OwningProcess -Reason "listening on port $Port"
     }
+}
+
+function Get-PrimaryIPv4 {
+    try {
+        $route = Get-NetRoute -DestinationPrefix "0.0.0.0/0" |
+            Sort-Object RouteMetric, InterfaceMetric |
+            Select-Object -First 1
+        if ($null -eq $route) { return $null }
+        $addr = Get-NetIPAddress -AddressFamily IPv4 -InterfaceIndex $route.InterfaceIndex |
+            Where-Object { $_.IPAddress -notlike "169.254.*" -and $_.IPAddress -ne "127.0.0.1" } |
+            Select-Object -First 1
+        return $addr.IPAddress
+    } catch { return $null }
 }
 
 function Stop-ProjectDevProcesses {
@@ -144,16 +159,42 @@ foreach ($port in $FrontendPorts) {
 Wait-PortFree -Port $BackendPort
 
 if (-not $NoBackend) {
+    $HostIp = if ($Lan) { "0.0.0.0" } else { "127.0.0.1" }
+    if ($Lan) {
+        $primaryIp = Get-PrimaryIPv4
+        if ($primaryIp) {
+            Write-Host "LAN mode - LAN URL for testers: http://${primaryIp}:$BackendPort" -ForegroundColor Green
+        }
+        if ($FirewallRule) {
+            try {
+                $ident = [Security.Principal.WindowsIdentity]::GetCurrent()
+                $princ = [Security.Principal.WindowsPrincipal]::new($ident)
+                if ($princ.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+                    $rName = "Project_R Backend LAN Test ($BackendPort)"
+                    if (-not (Get-NetFirewallRule -DisplayName $rName -ErrorAction SilentlyContinue)) {
+                        New-NetFirewallRule -DisplayName $rName -Direction Inbound -Action Allow -Protocol TCP -LocalPort $BackendPort -Profile Private | Out-Null
+                        Write-Host "Added Windows Firewall rule: $rName" -ForegroundColor Green
+                    }
+                } else {
+                    Write-Warning "Firewall rule not added (not running as Administrator)."
+                }
+            } catch { Write-Warning "Firewall rule check failed: $_" }
+        }
+    }
+
     Write-Step "Starting backend on port $BackendPort"
     Start-Process powershell.exe -ArgumentList @(
         "-NoExit",
         "-ExecutionPolicy", "Bypass",
         "-Command",
-        "cd `"$BackendDir`"; .\venv\Scripts\python.exe -m uvicorn main:app --reload --host 127.0.0.1 --port $BackendPort"
+        "cd `"$BackendDir`"; .\venv\Scripts\python.exe -m uvicorn main:app --reload --host $HostIp --port $BackendPort"
     ) -WorkingDirectory $BackendDir
 
     Wait-HttpOk -Url "http://127.0.0.1:$BackendPort/health"
     Write-Host "Backend ready: http://127.0.0.1:$BackendPort" -ForegroundColor Green
+    if ($Lan -and $primaryIp) {
+        Write-Host "Backend also reachable at: http://${primaryIp}:$BackendPort" -ForegroundColor Green
+    }
 }
 
 if (-not $NoFrontend) {
@@ -169,4 +210,8 @@ if (-not $NoFrontend) {
 }
 
 Write-Step "Done"
-Write-Host "Backend URL for frontend settings: http://127.0.0.1:$BackendPort" -ForegroundColor Green
+if ($Lan -and $primaryIp) {
+        Write-Host "LAN URL for testers: http://${primaryIp}:$BackendPort" -ForegroundColor Green
+    } else {
+        Write-Host "Backend URL for frontend settings: http://127.0.0.1:$BackendPort" -ForegroundColor Green
+    }

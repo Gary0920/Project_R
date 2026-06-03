@@ -80,34 +80,10 @@ import { SettingsModal } from "../components/SettingsModal";
 import { TabBar } from "../components/TabBar";
 import { WorkspaceSelector } from "../components/WorkspaceSelector";
 import { WorkspaceFilePanel } from "../components/WorkspaceFilePanel";
+import { copyText, downloadGeneratedFile } from "../components/chat/ChatMessageList";
+import { AppWorkspaceChrome } from "../components/chat/AppWorkspaceChrome";
+import { ChatConversationPane } from "../components/chat/ChatConversationPane";
 import { PROJECT_R_BUILTIN_PROMPT } from "../constants/prompts";
-import {
-  AgentIcon,
-  BellIcon,
-  BrainIcon,
-  ChatIcon,
-  ChevronDownIcon,
-  CopyIcon,
-  EditIcon,
-  GlobeIcon,
-  LogoutIcon,
-  MoreIcon,
-  MoveIcon,
-  PaperclipIcon,
-  PinIcon,
-  PlusIcon,
-  PromptIcon,
-  RefreshIcon,
-  SearchIcon,
-  SendIcon,
-  SettingsIcon,
-  SplitIcon,
-  StopIcon,
-  TrashIcon,
-  WorkspaceIcon,
-  XmarkIcon,
-} from "../components/LineIcons";
-
 type SplitPaneKey = "left" | "right";
 type UtilityPanel = "workspace" | "prompt" | "skills" | "source";
 type RenameScope = "header" | "sidebar";
@@ -794,674 +770,6 @@ function makeLocalMessage(
     created_at: now,
     ...extras,
   };
-}
-
-function markdownToPlainText(value: string) {
-  return value
-    .replace(/```[a-zA-Z0-9_-]*\n([\s\S]*?)```/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/^\s*>\s?/gm, "")
-    .replace(/^\s*[-*+]\s+/gm, "")
-    .replace(/^\s*\d+\.\s+/gm, "")
-    .replace(/[*_~]{1,3}/g, "")
-    .trim();
-}
-
-async function copyText(value: string, cleanMarkdown = false) {
-  const text = cleanMarkdown ? markdownToPlainText(value) : value;
-  if (!text) return;
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return;
-    }
-  } catch {
-    // Fall back to the legacy copy path below. Some embedded browsers deny Clipboard API.
-  }
-
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.setAttribute("readonly", "true");
-  textarea.style.position = "fixed";
-  textarea.style.top = "-9999px";
-  textarea.style.left = "-9999px";
-  textarea.style.opacity = "0";
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-  const ok = document.execCommand("copy");
-  document.body.removeChild(textarea);
-  if (!ok) {
-    throw new Error("Clipboard copy failed");
-  }
-}
-
-async function downloadGeneratedFile(baseUrl: string, token: string | null, file: GeneratedFileResponse) {
-  const response = await fetch(`${baseUrl}${file.download_url}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  if (!response.ok) {
-    throw new Error("文件下载失败");
-  }
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = file.filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-  URL.revokeObjectURL(url);
-}
-
-function generatedFileKindLabel(file: GeneratedFileResponse) {
-  const mime = (file.mime_type || "").toLowerCase();
-  const name = (file.filename || "").toLowerCase();
-  if (mime.includes("word") || name.endsWith(".docx")) return "已生成 Word 文档";
-  if (mime.includes("spreadsheet") || name.endsWith(".xlsx")) return "已生成 Excel 文件";
-  if (mime.includes("presentation") || name.endsWith(".pptx")) return "已生成演示文稿";
-  if (mime.includes("pdf") || name.endsWith(".pdf")) return "已生成 PDF 文件";
-  return "已生成文件";
-}
-
-function renderGeneratedFileCard(file: GeneratedFileResponse, onDownload: (file: GeneratedFileResponse) => void) {
-  return (
-    <div className="message-file-card">
-      <div>
-        <strong>{file.filename}</strong>
-        <span>{generatedFileKindLabel(file)}</span>
-      </div>
-      <button
-        className="message-file-download"
-        onClick={() => onDownload(file)}
-        type="button"
-      >
-        下载
-      </button>
-    </div>
-  );
-}
-
-function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-  URL.revokeObjectURL(url);
-}
-
-function isImageAttachmentResponse(attachment: SessionAttachmentResponse) {
-  return (attachment.content_type || "").toLowerCase().startsWith("image/");
-}
-
-function attachmentKindLabel(attachment: SessionAttachmentResponse) {
-  const kind = getAttachmentKind(attachment.original_name, attachment.content_type || "");
-  if (kind === "image") return "IMG";
-  if (kind === "pdf") return "PDF";
-  if (kind === "text") return "TXT";
-  return "FILE";
-}
-
-function MessageAttachments({
-  attachments,
-  apiOptions,
-}: {
-  attachments?: SessionAttachmentResponse[];
-  apiOptions: ApiClientOptions;
-}) {
-  const visibleAttachments = attachments ?? [];
-  if (!visibleAttachments.length) return null;
-  return (
-    <div className={`message-attachments ${visibleAttachments.length === 1 ? "is-single" : ""}`}>
-      {visibleAttachments.map((attachment) =>
-        isImageAttachmentResponse(attachment) ? (
-          <MessageAttachmentImage attachment={attachment} apiOptions={apiOptions} key={attachment.id} />
-        ) : (
-          <MessageAttachmentFile attachment={attachment} apiOptions={apiOptions} key={attachment.id} />
-        ),
-      )}
-    </div>
-  );
-}
-
-function MessageAttachmentImage({
-  attachment,
-  apiOptions,
-}: {
-  attachment: SessionAttachmentResponse;
-  apiOptions: ApiClientOptions;
-}) {
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [loadFailed, setLoadFailed] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    let objectUrl: string | null = null;
-    setImageUrl(null);
-    setLoadFailed(false);
-    fetchSessionAttachmentBlob(apiOptions, attachment.session_id, attachment.id, controller.signal)
-      .then((blob) => {
-        objectUrl = URL.createObjectURL(blob);
-        setImageUrl(objectUrl);
-      })
-      .catch((error: unknown) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) setLoadFailed(true);
-      });
-    return () => {
-      controller.abort();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [apiOptions.baseUrl, apiOptions.token, apiOptions.onUnauthorized, attachment.id, attachment.session_id]);
-
-  useEffect(() => {
-    if (!previewOpen) return;
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setPreviewOpen(false);
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [previewOpen]);
-
-  return (
-    <>
-      <button
-        className={`message-attachment-image ${loadFailed ? "is-failed" : ""}`}
-        disabled={!imageUrl}
-        onClick={() => imageUrl ? setPreviewOpen(true) : undefined}
-        title={imageUrl ? `点击预览图片 · ${attachmentSourceLabel(attachment)}` : attachment.original_name}
-        type="button"
-      >
-        {imageUrl ? (
-          <>
-            <img alt={attachment.original_name} src={imageUrl} />
-            <span className="message-attachment-image-source">{attachmentSourceLabel(attachment)}</span>
-          </>
-        ) : (
-          <span>{loadFailed ? "图片加载失败" : "图片加载中"}</span>
-        )}
-      </button>
-      {previewOpen && imageUrl ? (
-        <div className="attachment-lightbox-backdrop" onClick={() => setPreviewOpen(false)} role="presentation">
-          <div className="attachment-lightbox" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
-            <button className="attachment-lightbox-close" onClick={() => setPreviewOpen(false)} title="关闭预览" type="button">
-              <XmarkIcon />
-            </button>
-            <img alt={attachment.original_name} src={imageUrl} />
-            <div className="attachment-lightbox-footer">
-              <span>{attachment.original_name} · {attachmentSourceLabel(attachment)}</span>
-              <button
-                onClick={() => void fetchSessionAttachmentBlob(apiOptions, attachment.session_id, attachment.id)
-                  .then((blob) => downloadBlob(blob, attachment.original_name))
-                  .catch(() => {})}
-                type="button"
-              >
-                下载
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-    </>
-  );
-}
-
-function MessageAttachmentFile({
-  attachment,
-  apiOptions,
-}: {
-  attachment: SessionAttachmentResponse;
-  apiOptions: ApiClientOptions;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const kind = getAttachmentKind(attachment.original_name, attachment.content_type || "");
-  const canPreview = kind === "pdf" || kind === "text";
-  const sourceLabel = attachmentSourceLabel(attachment);
-  async function handleOpenAttachment() {
-    setBusy(true);
-    setFailed(false);
-    try {
-      const blob = await fetchSessionAttachmentBlob(apiOptions, attachment.session_id, attachment.id);
-      if (canPreview) {
-        const url = URL.createObjectURL(blob);
-        window.open(url, "_blank", "noopener,noreferrer");
-        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      } else {
-        downloadBlob(blob, attachment.original_name);
-      }
-    } catch {
-      setFailed(true);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <button
-      className="message-attachment-file"
-      disabled={busy}
-      onClick={() => void handleOpenAttachment()}
-      title={failed ? "附件打开失败" : canPreview ? "打开预览" : "下载附件"}
-      type="button"
-    >
-      <span className={`message-attachment-file-kind is-${kind}`}>{attachmentKindLabel(attachment)}</span>
-      <span className="message-attachment-file-main">
-        <strong>{attachment.original_name}</strong>
-        <small>{failed ? "打开失败" : `${sourceLabel} · ${formatAttachmentSize(attachment.size)} · ${canPreview ? "打开预览" : "下载"}`}</small>
-      </span>
-    </button>
-  );
-}
-
-function renderSourceRefTag(
-  label: string,
-  index: number,
-  key: string,
-  sources?: ChatSourceResponse[],
-  onSelectSource?: (preview: SourcePreview) => void,
-) {
-  const source = sources?.[index - 1];
-  const title = source
-    ? `${source.source_title || source.file}\n${source.section_path || source.file}\n${source.content.slice(0, 120)}`
-    : `来源 ${index}`;
-  return (
-    <button
-      className="message-source-ref"
-      disabled={!source}
-      key={key}
-      onClick={() => source ? onSelectSource?.({ index, source }) : undefined}
-      title={title}
-      type="button"
-    >
-      {label.includes("Doc") ? label : `[${index}]`}
-    </button>
-  );
-}
-
-function renderInlineMarkdown(
-  text: string,
-  keyPrefix: string,
-  sources?: ChatSourceResponse[],
-  onSelectSource?: (preview: SourcePreview) => void,
-): ReactNode[] {
-  const nodes: ReactNode[] = [];
-  const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\[\[[^\]]+\]\]|[（(]\s*来源\s*\d+\s*[）)]|来源\s*\d+)/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      nodes.push(text.slice(lastIndex, match.index));
-    }
-    const token = match[0];
-    if (token.startsWith("**")) {
-      nodes.push(<strong key={`${keyPrefix}-strong-${match.index}`}>{token.slice(2, -2)}</strong>);
-    } else if (token.startsWith("`")) {
-      nodes.push(<code className="message-inline-code" key={`${keyPrefix}-code-${match.index}`}>{token.slice(1, -1)}</code>);
-    } else if (/来源\s*\d+/.test(token)) {
-      const sourceIndex = Number(token.match(/\d+/)?.[0] ?? "0");
-      nodes.push(renderSourceRefTag(`[${sourceIndex}]`, sourceIndex, `${keyPrefix}-source-${match.index}`, sources, onSelectSource));
-    } else {
-      nodes.push(<span className="message-wikilink" key={`${keyPrefix}-wiki-${match.index}`}>{token}</span>);
-    }
-    lastIndex = match.index + token.length;
-  }
-  if (lastIndex < text.length) {
-    nodes.push(text.slice(lastIndex));
-  }
-  return nodes;
-}
-
-function isMarkdownTable(lines: string[]) {
-  return lines.length >= 2 && lines[0].includes("|") && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(lines[1]);
-}
-
-function renderMarkdownTable(
-  lines: string[],
-  key: string,
-  sources?: ChatSourceResponse[],
-  onSelectSource?: (preview: SourcePreview) => void,
-) {
-  const parseRow = (line: string) => line.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map((cell) => cell.trim());
-  const headers = parseRow(lines[0]);
-  const rows = lines.slice(2).filter((line) => line.includes("|")).map(parseRow);
-  return (
-    <div className="message-table-wrap" key={key}>
-      <table className="message-table">
-        <thead>
-          <tr>{headers.map((header, index) => <th key={`${key}-h-${index}`}>{renderInlineMarkdown(header, `${key}-h-${index}`, sources, onSelectSource)}</th>)}</tr>
-        </thead>
-        <tbody>
-          {rows.map((row, rowIndex) => (
-            <tr key={`${key}-r-${rowIndex}`}>
-              {row.map((cell, cellIndex) => <td key={`${key}-r-${rowIndex}-${cellIndex}`}>{renderInlineMarkdown(cell, `${key}-r-${rowIndex}-${cellIndex}`, sources, onSelectSource)}</td>)}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function renderMarkdownText(
-  text: string,
-  keyPrefix: string,
-  sources?: ChatSourceResponse[],
-  onSelectSource?: (preview: SourcePreview) => void,
-) {
-  const blocks = text.split(/\n{2,}/g).filter((block) => block.trim().length > 0);
-  return blocks.map((block, blockIndex) => {
-    const key = `${keyPrefix}-block-${blockIndex}`;
-    const lines = block.split("\n").filter((line) => line.trim().length > 0);
-    const firstLine = lines[0]?.trim() ?? "";
-
-    if (isMarkdownTable(lines)) {
-      return renderMarkdownTable(lines, key, sources, onSelectSource);
-    }
-    if (lines.every((line) => /^\s*-{3,}\s*$/.test(line))) {
-      return <hr className="message-divider" key={key} />;
-    }
-    if (/^#{1,4}\s+/.test(firstLine)) {
-      const level = Math.min(4, firstLine.match(/^#+/)?.[0].length ?? 3);
-      const headingContent = renderInlineMarkdown(firstLine.replace(/^#{1,4}\s+/, ""), key, sources, onSelectSource);
-      if (level === 1) return <h1 className="message-heading" key={key}>{headingContent}</h1>;
-      if (level === 2) return <h2 className="message-heading" key={key}>{headingContent}</h2>;
-      if (level === 3) return <h3 className="message-heading" key={key}>{headingContent}</h3>;
-      return <h4 className="message-heading" key={key}>{headingContent}</h4>;
-    }
-    if (lines.every((line) => /^\s*[-*]\s+/.test(line))) {
-      return (
-        <ul className="message-list" key={key}>
-          {lines.map((line, index) => <li key={`${key}-${index}`}>{renderInlineMarkdown(line.replace(/^\s*[-*]\s+/, ""), `${key}-${index}`, sources, onSelectSource)}</li>)}
-        </ul>
-      );
-    }
-    if (lines.every((line) => /^\s*\d+\.\s+/.test(line))) {
-      return (
-        <ol className="message-list" key={key}>
-          {lines.map((line, index) => <li key={`${key}-${index}`}>{renderInlineMarkdown(line.replace(/^\s*\d+\.\s+/, ""), `${key}-${index}`, sources, onSelectSource)}</li>)}
-        </ol>
-      );
-    }
-    if (lines.every((line) => /^\s*>\s?/.test(line))) {
-      return <blockquote className="message-quote" key={key}>{lines.map((line, index) => <p key={`${key}-${index}`}>{renderInlineMarkdown(line.replace(/^\s*>\s?/, ""), `${key}-${index}`, sources, onSelectSource)}</p>)}</blockquote>;
-    }
-    return (
-      <p className="message-paragraph" key={key}>
-        {lines.map((line, index) => (
-          <span key={`${key}-${index}`}>
-            {renderInlineMarkdown(line, `${key}-${index}`, sources, onSelectSource)}
-            {index < lines.length - 1 ? <br /> : null}
-          </span>
-        ))}
-      </p>
-    );
-  });
-}
-
-function renderMessageContent(
-  content: string,
-  sources?: ChatSourceResponse[],
-  onSelectSource?: (preview: SourcePreview) => void,
-) {
-  const nodes: ReactNode[] = [];
-  const pattern = /```([A-Za-z0-9_-]+)?\n?([\s\S]*?)```/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  let index = 0;
-  while ((match = pattern.exec(content)) !== null) {
-    const before = content.slice(lastIndex, match.index);
-    if (before.trim()) {
-      nodes.push(...renderMarkdownText(before, `text-${index}`, sources, onSelectSource));
-    }
-    const language = match[1]?.trim();
-    const code = match[2].trim();
-    nodes.push(
-      <MessageCodeBlock code={code} key={`code-${index}`} language={language} />,
-    );
-    lastIndex = pattern.lastIndex;
-    index += 1;
-  }
-  const rest = content.slice(lastIndex);
-  if (rest.trim()) {
-    nodes.push(...renderMarkdownText(rest, `text-${index}`, sources, onSelectSource));
-  }
-  return nodes;
-}
-
-function MessageCodeBlock({ code, language }: { code: string; language?: string }) {
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
-
-  useEffect(() => {
-    if (copyState === "idle") return;
-    const timer = window.setTimeout(() => setCopyState("idle"), 1600);
-    return () => window.clearTimeout(timer);
-  }, [copyState]);
-
-  async function handleCopyCode() {
-    try {
-      await copyText(code);
-      setCopyState("copied");
-    } catch {
-      setCopyState("failed");
-    }
-  }
-
-  return (
-    <div className="message-code-block">
-      <div className="message-code-toolbar">
-        <span>{language || "可复制内容"}</span>
-        <button
-          className={`message-code-copy ${copyState !== "idle" ? `is-${copyState}` : ""}`}
-          onClick={() => void handleCopyCode()}
-          title={copyState === "copied" ? "已复制" : copyState === "failed" ? "复制失败" : "复制"}
-          type="button"
-        >
-          {copyState === "copied" ? <span className="message-action-check">✓</span> : <CopyIcon />}
-          {copyState === "copied" ? "已复制" : copyState === "failed" ? "复制失败" : "复制"}
-        </button>
-      </div>
-      <pre className="message-code"><code>{code}</code></pre>
-    </div>
-  );
-}
-
-function renderSkillRunCard(
-  skillRun: SkillRunResponse,
-  options: {
-    showGeneratedFile?: boolean;
-    onDownloadGeneratedFile?: (file: GeneratedFileResponse) => void;
-  } = {},
-) {
-  const missingFields = skillRun.missing_inputs
-    .map((item) => String(item.label ?? item.name ?? "待补充字段"))
-    .filter(Boolean);
-  const dispatchSteps = Array.isArray(skillRun.dispatch?.steps) ? skillRun.dispatch.steps as Array<Record<string, unknown>> : [];
-  return (
-    <div className="message-skill-card">
-      <div className="message-skill-header">
-        <strong>{skillRun.skill?.display_name ?? skillRun.skill_name}</strong>
-        <span>{skillRun.status === "completed" ? "已完成" : skillRun.status === "ready" ? "待执行" : skillRun.status === "failed" ? "失败" : "收集中"}</span>
-      </div>
-      {dispatchSteps.length ? (
-        <div className="message-skill-dispatch">
-          {dispatchSteps.map((step, index) => (
-            <span key={`${String(step.id ?? index)}-${String(step.tool ?? "")}`}>
-              {String(step.label ?? step.tool ?? "执行步骤")}
-            </span>
-          ))}
-        </div>
-      ) : null}
-      {missingFields.length ? (
-        <div className="message-skill-fields">
-          {missingFields.map((field) => (
-            <span key={field}>{field}</span>
-          ))}
-        </div>
-      ) : null}
-      {options.showGeneratedFile !== false && skillRun.generated_file && options.onDownloadGeneratedFile ? (
-        renderGeneratedFileCard(skillRun.generated_file, options.onDownloadGeneratedFile)
-      ) : skillRun.generated_file ? (
-        <div className="message-skill-output">{skillRun.generated_file.filename}</div>
-      ) : null}
-    </div>
-  );
-}
-
-function agentRunStatusLabel(status: string) {
-  if (status === "completed") return "已完成";
-  if (status === "failed") return "失败";
-  if (status === "waiting") return "等待输入";
-  if (status === "queued") return "排队中";
-  if (status === "cancelled") return "已取消";
-  return "执行中";
-}
-
-function agentEventStatusLabel(status: string) {
-  if (status === "completed") return "完成";
-  if (status === "failed") return "失败";
-  if (status === "waiting") return "等待";
-  if (status === "queued") return "排队";
-  return "进行中";
-}
-
-function renderAgentRunCard(agentRun: AgentRunResponse) {
-  const events = agentRun.events ?? [];
-  return (
-    <div className={`message-agent-run-card is-${agentRun.status}`}>
-      <div className="message-agent-run-header">
-        <span className="message-agent-run-icon"><AgentIcon /></span>
-        <div>
-          <strong>{agentRun.title}</strong>
-          <span>{agentRunStatusLabel(agentRun.status)}</span>
-        </div>
-      </div>
-      {events.length ? (
-        <ol className="message-agent-event-list">
-          {events.map((event) => (
-            <li className={`message-agent-event is-${event.status}`} key={event.id}>
-              <span className="message-agent-event-dot" />
-              <div>
-                <div className="message-agent-event-title">
-                  <strong>{event.title}</strong>
-                  <small>{agentEventStatusLabel(event.status)}</small>
-                </div>
-                {event.detail ? <p>{event.detail}</p> : null}
-              </div>
-            </li>
-          ))}
-        </ol>
-      ) : null}
-      {agentRun.error_message ? <p className="message-agent-run-error">{agentRun.error_message}</p> : null}
-    </div>
-  );
-}
-
-function hasContextTrace(contextTrace: ChatContextTraceResponse | null | undefined) {
-  if (!contextTrace) return false;
-  return Boolean(
-    contextTrace.attachments?.length ||
-    contextTrace.knowledge?.source_count ||
-    contextTrace.prompt?.selected_prompt_id ||
-    contextTrace.prompt?.system_prompt_provided ||
-    contextTrace.skill?.skill_name ||
-    contextTrace.gbrain_think?.gap_count ||
-    contextTrace.gbrain_think?.conflict_count ||
-    contextTrace.gbrain_think?.warning_count ||
-    contextTrace.model?.model,
-  );
-}
-
-function renderContextTraceCard(
-  contextTrace: ChatContextTraceResponse | null | undefined,
-  options: { onSubmitGBrainThinkReview?: () => void; gbrainThinkReviewBusy?: boolean } = {},
-) {
-  if (!hasContextTrace(contextTrace) || !contextTrace) return null;
-  const attachments = contextTrace.attachments ?? [];
-  const sources = contextTrace.knowledge?.sources ?? [];
-  const prompt = contextTrace.prompt;
-  const model = contextTrace.model;
-  const gbrainThink = contextTrace.gbrain_think;
-  const gbrainGaps = gbrainThink?.gaps?.filter(Boolean) ?? [];
-  const gbrainConflicts = gbrainThink?.conflicts?.filter(Boolean) ?? [];
-  const gbrainWarnings = gbrainThink?.warnings?.filter(Boolean) ?? [];
-  const modelBadges = [
-    model?.model,
-    model?.thinking ? "思考" : null,
-    model?.web_search ? "联网搜索" : null,
-  ].filter(Boolean).join(" · ");
-  return (
-    <div className="message-context-trace">
-      <div className="message-context-trace-header">
-        <strong>本轮上下文</strong>
-        {modelBadges ? <span>{modelBadges}</span> : null}
-      </div>
-      <div className="message-context-trace-grid">
-        {attachments.length ? (
-          <div className="message-context-trace-section">
-            <span>附件</span>
-            {attachments.slice(0, 4).map((attachment) => (
-              <small key={`${attachment.id}-${attachment.name}`}>{attachment.name ?? `附件 ${attachment.id}`}</small>
-            ))}
-            {attachments.length > 4 ? <small>另有 {attachments.length - 4} 个附件</small> : null}
-          </div>
-        ) : null}
-        {sources.length || contextTrace.knowledge?.source_count ? (
-          <div className="message-context-trace-section">
-            <span>知识来源</span>
-            {sources.slice(0, 4).map((source) => (
-              <small key={`${source.index}-${source.file}`}>{source.section_path || source.source_title || source.file}</small>
-            ))}
-            {(contextTrace.knowledge?.source_count ?? 0) > sources.length ? (
-              <small>共 {contextTrace.knowledge?.source_count} 个来源</small>
-            ) : null}
-          </div>
-        ) : null}
-        {gbrainThink && (gbrainGaps.length || gbrainConflicts.length || gbrainWarnings.length) ? (
-          <div className="message-context-trace-section is-gbrain-think">
-            <span>
-              GBrain 推理状态
-              {options.onSubmitGBrainThinkReview ? (
-                <button
-                  className="message-context-trace-action"
-                  disabled={options.gbrainThinkReviewBusy}
-                  onClick={options.onSubmitGBrainThinkReview}
-                  type="button"
-                >
-                  {options.gbrainThinkReviewBusy ? "提交中" : "提交审核"}
-                </button>
-              ) : null}
-            </span>
-            {gbrainConflicts.map((item, index) => (
-              <small className="is-conflict" key={`gbrain-conflict-${index}`}>冲突：{item}</small>
-            ))}
-            {gbrainGaps.map((item, index) => (
-              <small className="is-gap" key={`gbrain-gap-${index}`}>缺口：{item}</small>
-            ))}
-            {gbrainWarnings.map((item, index) => (
-              <small className="is-warning" key={`gbrain-warning-${index}`}>警告：{item}</small>
-            ))}
-          </div>
-        ) : null}
-        {(prompt?.selected_prompt_id || prompt?.system_prompt_provided || contextTrace.skill?.skill_name) ? (
-          <div className="message-context-trace-section">
-            <span>提示词 / Skill</span>
-            {prompt?.selected_prompt_id ? <small>{prompt.selected_prompt_id}</small> : null}
-            {contextTrace.skill?.display_name || contextTrace.skill?.skill_name ? (
-              <small>{contextTrace.skill.display_name || contextTrace.skill.skill_name}</small>
-            ) : null}
-            {prompt?.system_prompt_provided ? <small>{prompt.system_prompt_preview || "已使用会话提示词"}</small> : null}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
 }
 
 export function AppPage() {
@@ -2983,83 +2291,6 @@ export function AppPage() {
     setSessionSending(sessionId, false);
   }
 
-const WHIMSICAL_WORDS = [
-    "Discombobulating", "Concocting", "Moonwalking", "Mulling",
-    "Purring", "Doodling", "Pondering", "Exploring", "Discovering",
-    "Brewing", "Unraveling", "Daydreaming", "Juggling",
-    "Tinkering", "Marinating", "Orchestrating", "Harmonizing",
-  "Contemplating", "Synthesizing", "Twiddling",
-];
-
-function getRandomWord(prev?: string): string {
-    const pool = prev ? WHIMSICAL_WORDS.filter((w) => w !== prev) : WHIMSICAL_WORDS;
-    return pool[Math.floor(Math.random() * pool.length)];
-  }
-
-  function LoadingPlaceholder() {
-    const [word, setWord] = useState(() => getRandomWord());
-
-    useEffect(() => {
-      let prev = word;
-      const interval = window.setInterval(() => {
-        const next = getRandomWord(prev);
-        prev = next;
-        setWord(next);
-      }, 2000);
-      return () => window.clearInterval(interval);
-    }, []);
-
-    return (
-      <article className="message-row message-row-assistant message-row-loading">
-        <span className="message-avatar assistant-avatar is-text">R</span>
-        <div className="message-body">
-          <div className="message-meta">
-            <div className="message-name-line">
-              <span className="message-role-label">{APP_NAME}</span>
-            </div>
-          </div>
-          <div className="message-bubble">
-            <div className="loading-placeholder-inner">
-              <svg className="pl" viewBox="0 0 128 128" width="128" height="128" xmlns="http://www.w3.org/2000/svg">
-                <circle className="pl__ring pl__ring--a" cx="64" cy="64" r="56" fill="none" strokeWidth="16" transform="rotate(90,64,64)" />
-                <circle className="pl__ring pl__ring--b" cx="64" cy="64" r="56" fill="none" strokeWidth="16" transform="rotate(90,64,64)" />
-                <circle className="pl__ring pl__ring--c" cx="64" cy="64" r="56" fill="none" strokeWidth="16" transform="rotate(90,64,64)" />
-                <circle className="pl__ring pl__ring--d" cx="64" cy="64" r="56" fill="none" strokeWidth="16" transform="rotate(90,64,64)" />
-              </svg>
-              <span className="loading-placeholder-text">{word}…</span>
-            </div>
-          </div>
-        </div>
-      </article>
-    );
-  }
-
-  function InlineLoadingPlaceholder() {
-    const [word, setWord] = useState(() => getRandomWord());
-
-    useEffect(() => {
-      let prev = word;
-      const interval = window.setInterval(() => {
-        const next = getRandomWord(prev);
-        prev = next;
-        setWord(next);
-      }, 2000);
-      return () => window.clearInterval(interval);
-    }, []);
-
-    return (
-      <div className="loading-placeholder-inner loading-placeholder-inline">
-        <svg className="pl" viewBox="0 0 128 128" width="128" height="128" xmlns="http://www.w3.org/2000/svg">
-          <circle className="pl__ring pl__ring--a" cx="64" cy="64" r="56" fill="none" strokeWidth="16" transform="rotate(90,64,64)" />
-          <circle className="pl__ring pl__ring--b" cx="64" cy="64" r="56" fill="none" strokeWidth="16" transform="rotate(90,64,64)" />
-          <circle className="pl__ring pl__ring--c" cx="64" cy="64" r="56" fill="none" strokeWidth="16" transform="rotate(90,64,64)" />
-          <circle className="pl__ring pl__ring--d" cx="64" cy="64" r="56" fill="none" strokeWidth="16" transform="rotate(90,64,64)" />
-        </svg>
-        <span className="loading-placeholder-text">{word}...</span>
-      </div>
-    );
-  }
-
   async function handleSend() {
     const content = draft.trim();
     if ((!content && !pendingAttachments.length) || activeSessionIsSending) return;
@@ -3682,701 +2913,6 @@ function getRandomWord(prev?: string): string {
     }
   }
 
-  function renderEmptyState(isSplitPane: boolean) {
-    if (isSplitPane) {
-      return (
-        <div className="empty-chat empty-chat-compact">
-          <span className="empty-chat-mark">R</span>
-          <h2>选择一个对话</h2>
-          <p>先点击这个区域，再从左侧会话列表选择要放进来的对话。</p>
-        </div>
-      );
-    }
-    if (mode === "agent") {
-      return (
-        <div className={`empty-agent ${sideBySideOpen ? "is-split-mode" : ""}`}>
-          <div className="empty-agent-copy">
-            <span className="empty-chat-mark">R</span>
-            <h2>{activeWorkspace ? `在「${activeWorkspace.name}」开始 Agent` : "选择项目后开始 Agent"}</h2>
-            <p>直接说明你要整理、核对或生成的业务结果。</p>
-          </div>
-        </div>
-      );
-    }
-    return (
-      <div className="empty-chat">
-        <span className="empty-chat-mark">R</span>
-        <h2>{activeWorkspace ? `在「${activeWorkspace.name}」开始聊天` : "从一个问题开始"}</h2>
-        <p>询问规范、整理资料，或把当前工作流交给 Project_R 梳理成可执行步骤。</p>
-      </div>
-    );
-  }
-
-  function renderMessageVersionBar(message: ChatMessage) {
-    const versions = message.versions?.length ? message.versions : [];
-    if (versions.length <= 1) return null;
-    const activeIndex = Math.max(0, versions.findIndex((version) => version.active_version || version.id === message.id));
-    const previous = versions[Math.max(0, activeIndex - 1)];
-    const next = versions[Math.min(versions.length - 1, activeIndex + 1)];
-    const isBusy = messageActionBusyId === message.id;
-    return (
-      <div className="message-version-bar">
-        <button
-          className="message-version-btn"
-          disabled={activeIndex <= 0 || isBusy}
-          onClick={() => previous ? void handleActivateVersion(message, previous) : undefined}
-          type="button"
-        >
-          &lt;
-        </button>
-        <span>{activeIndex + 1} / {versions.length}</span>
-        <button
-          className="message-version-btn"
-          disabled={activeIndex >= versions.length - 1 || isBusy}
-          onClick={() => next ? void handleActivateVersion(message, next) : undefined}
-          type="button"
-        >
-          &gt;
-        </button>
-      </div>
-    );
-  }
-
-  function renderMessageCard(message: ChatMessage) {
-    const isEditing = editingMessageId === message.id;
-    const isBusy = messageActionBusyId === message.id;
-    const hasMessageBubble = Boolean(message.content.trim()) || Boolean(message.isTyping) || Boolean(message.isRegenerating);
-    return (
-      <article className={`message-row message-row-${message.role} ${message.status === "failed" ? "message-row-failed" : ""}`} key={message.id}>
-        {message.role === "assistant" ? (
-          <span className="message-avatar assistant-avatar is-text">R</span>
-        ) : (
-          renderAvatar(currentUser?.avatar, currentUser?.nickname, 30, serverUrl)
-        )}
-        <div className="message-body">
-          <div className="message-meta">
-            <div className="message-name-line">
-              <span className="message-role-label">{message.role === "user" ? currentUser?.nickname ?? "你" : APP_NAME}</span>
-              {message.role === "assistant" && message.model ? <span className="model-badge">{message.model}</span> : null}
-              <time className="message-time">{formatClockTime(message.created_at)}</time>
-            </div>
-          </div>
-          {isEditing ? (
-            <div className="message-edit-box">
-              <textarea
-                autoFocus
-                onChange={(event) => setEditingDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-                    event.preventDefault();
-                    void handleSubmitEditedMessage(message);
-                  }
-                  if (event.key === "Escape") {
-                    setEditingMessageId(null);
-                    setEditingDraft("");
-                  }
-                }}
-                value={editingDraft}
-              />
-              <div className="message-edit-actions">
-                <span>Ctrl + Enter 提交</span>
-                <button className="btn-secondary" onClick={() => {
-                  setEditingMessageId(null);
-                  setEditingDraft("");
-                }} type="button">取消</button>
-                <button className="btn-primary" disabled={isBusy || !editingDraft.trim()} onClick={() => void handleSubmitEditedMessage(message)} type="button">
-                  提交
-                </button>
-              </div>
-            </div>
-          ) : (
-            <>
-              <MessageAttachments attachments={message.attachments} apiOptions={apiOptions} />
-              {hasMessageBubble ? (
-                <div className="message-bubble">
-                  {message.isRegenerating ? (
-                    <InlineLoadingPlaceholder />
-                  ) : (
-                    renderMessageContent(message.content, message.sources ?? [], (preview) => {
-                      setSourcePreview({ ...preview, sessionId: message.session_id });
-                      setUtilityPanel("source");
-                    })
-                  )}
-                  {message.isTyping && !message.isRegenerating ? <span className="typing-caret" /> : null}
-                </div>
-              ) : null}
-            </>
-          )}
-          {renderMessageVersionBar(message)}
-          {message.sources?.length ? (
-            <div className="message-sources">
-              <span className="message-sources-title">引用来源</span>
-              {message.sources.map((source, index) => (
-                <button
-                  className="message-source-item"
-                  key={`${source.file}-${index}`}
-                  onClick={() => {
-                    setSourcePreview({ index: index + 1, source, sessionId: message.session_id });
-                    setUtilityPanel("source");
-                  }}
-                  type="button"
-                >
-                  <span className="message-source-index">[{index + 1}]</span>
-                  <span className="message-source-path">{source.section_path || source.source_title}</span>
-                  <span className="message-source-file">{source.file}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-          {message.role === "assistant" ? renderContextTraceCard(message.context_trace, {
-            gbrainThinkReviewBusy: messageActionBusyId === message.id,
-            onSubmitGBrainThinkReview: message.context_trace?.gbrain_think
-              ? () => void handleSubmitGBrainThinkReview(message)
-              : undefined,
-          }) : null}
-          {message.generated_file ? (
-            renderGeneratedFileCard(
-              message.generated_file,
-              (file) => void downloadGeneratedFile(serverUrl, token, file),
-            )
-          ) : null}
-          {message.agent_run ? renderAgentRunCard(message.agent_run) : null}
-          {message.skill_run ? renderSkillRunCard(message.skill_run, {
-            showGeneratedFile: !message.generated_file,
-            onDownloadGeneratedFile: (file) => void downloadGeneratedFile(serverUrl, token, file),
-          }) : null}
-          {message.agent_suggestion ? (
-            <div className="message-agent-suggestion">
-              <div className="message-agent-suggestion-copy">
-                <strong>建议切换到 Agent</strong>
-                <span>{message.agent_suggestion.reason}</span>
-              </div>
-              <button
-                className="message-agent-suggestion-btn"
-                onClick={() => handleSwitchToAgent(message.id)}
-                type="button"
-              >
-                <AgentIcon />
-                <span>切换</span>
-              </button>
-            </div>
-          ) : null}
-          {message.role === "assistant" && message.feedback_rating ? (
-            <div className="message-feedback-status">
-              <span>已评分 {message.feedback_rating}/5</span>
-              {message.feedback_comment ? <small>含意见</small> : null}
-            </div>
-          ) : null}
-          <div className={`message-actions ${copiedMessageId === message.id ? "has-copy-success" : ""}`}>
-            <button
-              className={`message-action-btn ${copiedMessageId === message.id ? "is-copied" : ""}`}
-              onClick={() => void handleCopyMessage(message)}
-              title={copiedMessageId === message.id ? "已复制" : "复制"}
-              type="button"
-            >
-              {copiedMessageId === message.id ? <span className="message-action-check">✓</span> : <CopyIcon />}
-            </button>
-            {message.role === "assistant" ? (
-              <button
-                className="message-action-btn"
-                disabled={message.isOptimistic || isBusy}
-                onClick={() => openRegenerateDialog(message)}
-                title="重新生成"
-                type="button"
-              >
-                <RefreshIcon />
-              </button>
-            ) : null}
-            {message.role === "user" ? (
-              <button
-                className="message-action-btn"
-                disabled={message.isOptimistic || isBusy}
-                onClick={() => startEditingMessage(message)}
-                title="编辑并开启新分支"
-                type="button"
-              >
-                <EditIcon />
-              </button>
-            ) : null}
-            {message.role === "assistant" ? (
-              <button className="message-action-btn" onClick={() => handleSwitchToAgent(message.id)} title="切换到 Agent" type="button"><AgentIcon /></button>
-            ) : null}
-            {message.role === "assistant" ? (
-              <button
-                className={`message-action-btn ${message.feedback_rating ? "is-rated" : ""}`}
-                disabled={message.isOptimistic || isBusy}
-                onClick={() => openFeedbackDialog(message)}
-                title="评分与意见"
-                type="button"
-              >
-                <span className="message-action-star">★</span>
-              </button>
-            ) : null}
-            <button
-              className="message-action-btn"
-              disabled={message.isOptimistic || isBusy}
-              onClick={() => requestDeleteMessageContext(message)}
-              title="删除当前问答"
-              type="button"
-            >
-              <TrashIcon />
-            </button>
-          </div>
-          {message.status === "failed" ? <p className="message-error">AI 服务暂时不可用</p> : null}
-        </div>
-      </article>
-    );
-  }
-
-  function renderComposer(isActivePane: boolean, paneSessionId: number | null) {
-    if (!isActivePane) {
-      return <div className="composer-inactive-hint">点击此侧后继续输入</div>;
-    }
-    const sessionIsSending = paneSessionId ? Boolean(sendingSessions[paneSessionId]) : false;
-    const localPrivateAttachments = pendingAttachments.filter(isLocalPrivatePendingAttachment);
-    const unauthorizedLocalAttachmentCount = localPrivateAttachments.filter((attachment) => attachment.authorization_status !== "authorized").length;
-    const hasUnauthorizedLocalAttachments = unauthorizedLocalAttachmentCount > 0;
-    const hasLocalPrivateImages = localPrivateAttachments.some((attachment) => attachment.kind === "image");
-    const canSendMessage = Boolean(draft.trim() || pendingAttachments.length) && !hasUnauthorizedLocalAttachments;
-    const sendButtonTitle = sessionIsSending
-      ? "停止生成 (Esc)"
-      : hasUnauthorizedLocalAttachments
-        ? "请先确认本机选择文件"
-        : "发送";
-    return (
-      <div className="composer-wrap">
-        <div className="composer" ref={composerRef}>
-          {localPrivateAttachments.length ? (
-            <div className={`composer-attachment-consent ${hasUnauthorizedLocalAttachments ? "is-pending" : "is-authorized"}`}>
-              <div className="composer-attachment-consent-copy">
-                  <strong>本机选择文件</strong>
-                <span>
-                  {hasUnauthorizedLocalAttachments
-                    ? `${unauthorizedLocalAttachmentCount} 个文件来自本机选择，发送前需确认。Chat 模式文本默认只发送摘录；Agent 模式会把选中文件作为后端临时文件处理。${hasLocalPrivateImages ? " 图片确认后会上传给后端模型链路用于多模态理解。" : ""}`
-                    : "已确认本次发送授权；这些文件不会自动进入项目资料或公司知识库。"}
-                </span>
-              </div>
-              <button
-                disabled={!hasUnauthorizedLocalAttachments}
-                onClick={authorizeLocalPrivateAttachments}
-                type="button"
-              >
-                {hasUnauthorizedLocalAttachments ? "确认本次发送" : "已确认"}
-              </button>
-            </div>
-          ) : null}
-          {pendingAttachments.length ? (
-            <div className="composer-attachments">
-              {pendingAttachments.map((attachment) => (
-                <div
-                  className={`composer-attachment-chip is-${attachment.kind} is-${attachment.source_scope} ${attachment.authorization_status === "authorized" ? "is-authorized" : ""}`}
-                  key={pendingAttachmentKey(attachment)}
-                  title={attachment.original_name}
-                >
-                  <span className="composer-attachment-badge">{attachment.input_source === "workspace_reference" ? "引用" : "附件"}</span>
-                  {attachment.previewUrl ? (
-                    <img alt="" className="composer-attachment-thumb" src={attachment.previewUrl} />
-                  ) : (
-                    <span className="composer-attachment-kind">
-                      {attachment.kind === "pdf" ? "PDF" : attachment.kind === "text" ? "TXT" : <PaperclipIcon />}
-                    </span>
-                  )}
-                  <span className="composer-attachment-name">{attachment.original_name}</span>
-                  <small className="composer-attachment-meta">
-                    {attachmentSourceLabel(attachment)} · {pendingAttachmentStatusLabel(attachment)} · {pendingAttachmentSendFormLabel(attachment, mode)} · {pendingAttachmentTargetLabel(mode)} · {formatAttachmentSize(attachment.size)}
-                  </small>
-                  {attachment.preprocess?.summary ? (
-                    <em>{attachment.preprocess.summary}</em>
-                  ) : null}
-                  <button
-                    aria-label={`移除附件：${attachment.original_name}`}
-                    className="composer-attachment-remove"
-                    onClick={() => void handleRemovePendingAttachment(attachment)}
-                    title="移除附件"
-                    type="button"
-                  >
-                    <XmarkIcon />
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : null}
-          {isUploadingAttachments ? <div className="composer-uploading">附件处理中...</div> : null}
-          {(!selectedPromptIsDefault || selectedSkill || selectedBuiltinCommand) ? (
-            <div className="composer-context-row">
-              {!selectedPromptIsDefault ? (
-                <button
-                  className="composer-context-chip composer-context-chip-prompt"
-                  onClick={clearPromptSelection}
-                  title="移除提示词"
-                  type="button"
-                >
-                  <span className="composer-context-chip-icon"><PromptIcon /></span>
-                  <strong>{selectedPrompt.name}</strong>
-                  <small>提示词</small>
-                </button>
-              ) : null}
-              {selectedBuiltinCommand ? (
-                <button
-                  className="composer-context-chip composer-context-chip-command"
-                  onClick={() => {
-                    setSelectedBuiltinCommand(null);
-                    textareaRef.current?.focus();
-                  }}
-                  title="移除内置命令"
-                  type="button"
-                >
-                  <span className="composer-context-chip-icon">/</span>
-                  <strong>{selectedBuiltinCommand.displayName}</strong>
-                  <small>内置命令</small>
-                </button>
-              ) : null}
-              {selectedSkill ? (
-                <button
-                  className="composer-context-chip composer-context-chip-skill"
-                  onClick={() => {
-                    setSelectedSkill(null);
-                    textareaRef.current?.focus();
-                  }}
-                  title="移除 Skill"
-                  type="button"
-                >
-                  <span className="composer-context-chip-icon">/</span>
-                  <strong>{selectedSkill.display_name}</strong>
-                  <small>{getSkillScopeLabel(selectedSkill)}</small>
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-          {skillPanelVisible ? (
-            <div className="skill-candidate-panel" role="listbox">
-              <div className="skill-candidate-panel-header">
-                <span>选择指令或 Skill</span>
-                <kbd>/</kbd>
-              </div>
-              {slashCandidates.length > 0 ? (
-                slashCandidates.map((candidate, index) => {
-                  const isCommand = candidate.kind === "command";
-                  const label = isCommand ? candidate.command.displayName : candidate.skill.display_name;
-                  const description = isCommand ? candidate.command.description : candidate.skill.description;
-                  const scope = isCommand ? candidate.command.scope : getSkillScopeLabel(candidate.skill);
-                  const key = isCommand ? `command-${candidate.command.name}` : `skill-${candidate.skill.name}`;
-                  return (
-                  <button
-                    key={key}
-                    className={`skill-candidate-item ${index === skillPanelIndex ? "is-active" : ""}`}
-                    onClick={() => insertSlashCandidate(candidate)}
-                    onMouseEnter={() => setSkillPanelIndex(index)}
-                    role="option"
-                    type="button"
-                  >
-                    <span className="skill-candidate-icon">{isCommand ? "/" : "◆"}</span>
-                    <span className="skill-candidate-copy">
-                      <span className="skill-candidate-title">
-                        <strong>{label}</strong>
-                        <span>{description}</span>
-                      </span>
-                    </span>
-                    <span className="skill-candidate-scope">{scope}</span>
-                  </button>
-                  );
-                })
-              ) : (
-                <div className="skill-candidate-empty">没有匹配的指令或 Skill</div>
-              )}
-            </div>
-          ) : null}
-          <textarea
-            onChange={(event) => {
-              const value = event.target.value;
-              const caret = event.target.selectionStart ?? value.length;
-              setDraft(value);
-              clearSelectedSkillIfMissing(value);
-              syncSlashCommand(value, caret);
-            }}
-            onClick={(event) => syncSlashCommand(event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
-            onKeyDown={handleKeyDown}
-            onPaste={handleComposerPaste}
-            placeholder="输入消息，Enter 发送，Shift+Enter 换行"
-            ref={textareaRef}
-            rows={1}
-            value={draft}
-          />
-          <div className="composer-toolbar">
-            <div className="composer-left-tools">
-              <input
-                className="hidden-file-input"
-                multiple
-                onChange={(event) => void handleSelectAttachmentFiles(event.target.files)}
-                ref={fileInputRef}
-                type="file"
-              />
-                <button
-                  className="composer-tool-icon"
-                  data-tooltip={isUploadingAttachments ? "附件处理中" : "添加会话临时附件"}
-                  disabled={isUploadingAttachments}
-                  onClick={() => fileInputRef.current?.click()}
-                title="添加会话临时附件"
-                type="button"
-                >
-                  <PaperclipIcon />
-                </button>
-                <button
-                  className="composer-tool-icon"
-                  data-tooltip={isUploadingAttachments ? "附件处理中" : "从本机选择文件"}
-                  disabled={isUploadingAttachments}
-                  onClick={() => void handleChoosePrivateWorkspaceFiles()}
-                  title="从本机选择文件"
-                  type="button"
-                >
-                  <WorkspaceIcon />
-                </button>
-              <div className="composer-config-group" aria-label="模型配置">
-                <div className="composer-model-select" ref={modelSelectRef}>
-                  <button
-                    aria-label={`选择模型：${selectedModelOption?.label ?? (modelsLoading ? "加载模型" : "选择模型")}`}
-                    aria-expanded={modelMenuOpen}
-                    className="composer-model-button"
-                    data-tooltip="切换模型"
-                    onClick={() => setModelMenuOpen((value) => !value)}
-                    title="选择模型"
-                    type="button"
-                  >
-                    <SettingsIcon />
-                    <span className="composer-model-label">{selectedModelOption?.label ?? (modelsLoading ? "加载模型" : "选择模型")}</span>
-                    <ChevronDownIcon />
-                  </button>
-                  {modelMenuOpen ? (
-                    <div className="model-dropdown-menu" role="listbox" aria-label="选择模型">
-                      <div className="menu-group-title">已配置模型</div>
-                      <div className="menu-items-list">
-                        {modelOptions.map((option) => {
-                          const selected = option.key === selectedModelOption?.key;
-                          return (
-                            <div
-                              aria-selected={selected}
-                              className={`menu-item ${selected ? "active" : ""}`}
-                              key={option.key}
-                              onClick={() => {
-                                setSelectedModelKey(option.key);
-                                setModelMenuOpen(false);
-                                textareaRef.current?.focus();
-                              }}
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter" || event.key === " ") {
-                                  event.preventDefault();
-                                  setSelectedModelKey(option.key);
-                                  setModelMenuOpen(false);
-                                  textareaRef.current?.focus();
-                                }
-                              }}
-                              role="option"
-                              tabIndex={0}
-                            >
-                              <div className="item-text-container">
-                                <div className="item-title">{option.label}</div>
-                                <div className="item-description">{option.description}</div>
-                              </div>
-                              {selected ? <div className="item-check-icon" aria-hidden="true">✓</div> : null}
-                            </div>
-                          );
-                        })}
-                        {modelsLoading ? (
-                          <div className="model-menu-empty">读取模型配置...</div>
-                        ) : null}
-                        {!modelsLoading && modelOptions.length === 0 ? (
-                          <div className="model-menu-empty">{modelConfigError || "暂无已配置模型"}</div>
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-                <div className="composer-mode-toggles" aria-label="对话增强开关">
-                  <button
-                    aria-label={thinkingEnabled ? "关闭深度思考" : "开启深度思考"}
-                    aria-pressed={thinkingEnabled}
-                    className={`composer-mode-toggle is-thinking ${thinkingEnabled ? "is-active" : ""}`}
-                    data-tooltip={thinkingEnabled ? "关闭深度思考" : "开启深度思考"}
-                    onClick={() => setThinkingEnabled((value) => !value)}
-                    title="深度思考"
-                    type="button"
-                  >
-                    <BrainIcon />
-                    <span className="composer-button-label">深度思考</span>
-                  </button>
-                  <button
-                    aria-label={webSearchEnabled ? "关闭联网搜索" : "开启联网搜索"}
-                    aria-pressed={webSearchEnabled}
-                    className={`composer-mode-toggle is-search ${webSearchEnabled ? "is-active" : ""}`}
-                    data-tooltip={webSearchEnabled ? "关闭联网搜索" : "开启联网搜索"}
-                    onClick={toggleWebSearch}
-                    title="联网搜索"
-                    type="button"
-                  >
-                    <GlobeIcon />
-                    <span className="composer-button-label">联网搜索</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-            <div className="composer-right-tools">
-              <div className="composer-toolbox-group" aria-label="Agent 工具箱">
-                <button
-                  aria-label="提示词"
-                  className={`composer-tool-button ${utilityPanel === "prompt" ? "is-active" : ""}`}
-                  data-tooltip="提示词"
-                  onClick={() => setUtilityPanel((value) => value === "prompt" ? null : "prompt")}
-                  title={`提示词：${selectedPrompt.name}`}
-                  type="button"
-                >
-                  <PromptIcon />
-                  <span className="composer-button-label">提示词</span>
-                </button>
-                <button
-                  aria-label="技能"
-                  className={`composer-tool-button ${utilityPanel === "skills" ? "is-active" : ""}`}
-                  data-tooltip="Skills"
-                  onClick={() => setUtilityPanel((value) => value === "skills" ? null : "skills")}
-                  title="Skills"
-                  type="button"
-                >
-                  <AgentIcon />
-                  <span className="composer-button-label">技能</span>
-                </button>
-              </div>
-              <button
-                className={`composer-send ${sessionIsSending ? "is-stopping" : ""}`}
-                disabled={(!canSendMessage && !sessionIsSending) || isUploadingAttachments}
-                onClick={() => sessionIsSending ? handleCancelSend(paneSessionId) : void handleSend()}
-                title={sendButtonTitle}
-                type="button"
-              >
-                {sessionIsSending ? <StopIcon /> : <SendIcon />}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  function renderConversationPane(pane: SplitPaneKey) {
-    const paneSessionId = sideBySideOpen ? splitPaneSessionIds[pane] : activeSessionId;
-    const paneSession = paneSessionId ? sessions.find((session) => session.id === paneSessionId) ?? null : null;
-    const paneMessages = paneSessionId ? messagesBySession[paneSessionId] ?? [] : [];
-    const isActivePane = !sideBySideOpen || activeSplitPane === pane;
-    const isEmptySplitPane = sideBySideOpen && !paneSessionId;
-    const isAttachmentDragOver = attachmentDragTargetPane === pane;
-
-    return (
-      <div
-        className={`chat-conversation-pane ${isActivePane ? "is-active" : ""} ${isAttachmentDragOver ? "is-attachment-drag-over" : ""}`}
-        onDragEnter={(event) => handleAttachmentDragEnter(event, pane)}
-        onDragLeave={(event) => handleAttachmentDragLeave(event, pane)}
-        onDragOver={(event) => handleAttachmentDragOver(event, pane)}
-        onDrop={(event) => handleAttachmentDrop(event, pane, paneSessionId)}
-        onClick={() => activateConversationPane(pane, paneSessionId)}
-        key={pane}
-      >
-        {isAttachmentDragOver ? (
-          <div className="attachment-drop-overlay">
-            <div>
-              <PaperclipIcon />
-              <strong>释放以添加到当前对话</strong>
-              <span>图片随本条消息发送，文本和 PDF 作为会话临时附件处理。</span>
-            </div>
-          </div>
-        ) : null}
-        <header className="chat-header">
-          <div className="chat-header-title">
-            <span className="chat-header-mode-icon">{mode === "agent" ? <AgentIcon /> : <ChatIcon />}</span>
-            {paneSession && renameInput?.id === paneSession.id && renameInput.scope === "header" ? (
-              <input
-                autoFocus
-                className="chat-title-input"
-                onBlur={() => void commitRename()}
-                onChange={(event) => setRenameInput({ id: paneSession.id, value: event.target.value, scope: "header" })}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") void commitRename();
-                  if (event.key === "Escape") setRenameInput(null);
-                }}
-                onClick={(event) => event.stopPropagation()}
-                onMouseDown={(event) => event.stopPropagation()}
-                ref={titleInputRef}
-                value={renameInput.value}
-              />
-            ) : (
-              <button
-                className="chat-title-button"
-                disabled={!paneSession}
-                onMouseDown={(event) => {
-                  if (!paneSession) return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  handleRenameSession(paneSession.id, "header");
-                }}
-                onKeyDown={(event) => {
-                  if (!paneSession) return;
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    handleRenameSession(paneSession.id, "header");
-                  }
-                }}
-                type="button"
-              >
-                <h1>{paneSession ? formatSessionDisplayTitle(paneSession.title) : (sideBySideOpen ? `${pane === "left" ? "左侧" : "右侧"}对话` : "新会话")}</h1>
-                {paneSession ? <EditIcon /> : null}
-              </button>
-            )}
-            {sideBySideOpen ? <span className="chat-workspace-chip">{isActivePane ? "当前输入区" : "点击激活"}</span> : null}
-            {activeWorkspace && !sideBySideOpen ? <span className="chat-workspace-chip">{activeWorkspace.name}</span> : null}
-          </div>
-          <div className="chat-header-actions">
-            <button
-              className={`icon-button ${paneSession?.is_pinned ? "is-active" : ""}`}
-              disabled={!paneSession}
-              onClick={() => paneSession ? void handlePinSession(paneSession.id) : undefined}
-              title={paneSession?.is_pinned ? "取消置顶" : "置顶"}
-              type="button"
-            >
-              <PinIcon />
-            </button>
-            <button
-              aria-pressed={sideBySideOpen}
-              className={`icon-button ${sideBySideOpen ? "is-active" : ""}`}
-              onClick={handleToggleSideBySide}
-              title={sideBySideOpen ? "关闭对话并排" : "左右并排两个对话"}
-              type="button"
-            >
-              <SplitIcon />
-            </button>
-            <button
-              className={`icon-button ${utilityPanel === "workspace" ? "is-active" : ""}`}
-              onClick={() => setUtilityPanel((value) => value === "workspace" ? null : "workspace")}
-              title={utilityPanel === "workspace" ? (activeWorkspace?.workspace_kind === "user" ? "关闭个人文件" : "关闭项目文件") : (activeWorkspace?.workspace_kind === "user" ? "个人文件" : "项目文件")}
-              type="button"
-            >
-              <WorkspaceIcon />
-            </button>
-            {paneSession ? (
-              <button className="icon-button" onClick={() => setDeleteConfirmSessionId(paneSession.id)} title="删除当前会话" type="button">
-                <TrashIcon />
-              </button>
-            ) : null}
-          </div>
-        </header>
-
-        <div className="message-scroll" ref={isActivePane ? scrollRef : undefined}>
-          {paneMessages.length === 0 ? renderEmptyState(isEmptySplitPane) : null}
-          {paneMessages.map(renderMessageCard)}
-          {paneSessionId && sendingSessions[paneSessionId] ? <LoadingPlaceholder /> : null}
-        </div>
-
-        {renderComposer(isActivePane, paneSessionId)}
-      </div>
-    );
-  }
-
   function handleSelectSkillFromSidePanel(skill: SkillResponse) {
     setSelectedSkill(skill);
     setSelectedBuiltinCommand(null);
@@ -4387,778 +2923,246 @@ function getRandomWord(prev?: string): string {
     window.requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
-  function renderUtilityResizeHandle(onMouseDown: (event: MouseEvent<HTMLDivElement>) => void, label: string) {
-    return (
-      <div
-        aria-label={label}
-        aria-orientation="vertical"
-        className="utility-resize-handle"
-        onMouseDown={onMouseDown}
-        role="separator"
-        title={label}
-      />
-    );
+  const conversationPaneController = {
+    activeSessionId,
+    activeSplitPane,
+    activeWorkspace,
+    apiOptions,
+    attachmentDragTargetPane,
+    copiedMessageId,
+    currentUser,
+    draft,
+    editingDraft,
+    editingMessageId,
+    fileInputRef,
+    formatClockTime,
+    formatSessionDisplayTitle,
+    handleActivateVersion,
+    handleAttachmentDragEnter,
+    handleAttachmentDragLeave,
+    handleAttachmentDragOver,
+    handleAttachmentDrop,
+    handleCancelSend,
+    handleChoosePrivateWorkspaceFiles,
+    handleComposerPaste,
+    handleCopyMessage,
+    handleKeyDown,
+    handlePinSession,
+    handleRemovePendingAttachment,
+    handleRenameSession,
+    handleSelectAttachmentFiles,
+    handleSubmitEditedMessage,
+    handleSubmitGBrainThinkReview,
+    handleSwitchToAgent,
+    handleToggleSideBySide,
+    messageActionBusyId,
+    messagesBySession,
+    mode,
+    openFeedbackDialog,
+    openRegenerateDialog,
+    renameInput,
+    renderAvatar,
+    requestDeleteMessageContext,
+    scrollRef,
+    serverUrl,
+    sessions,
+    sendingSessions,
+    setDeleteConfirmSessionId,
+    setDraft,
+    setEditingDraft,
+    setEditingMessageId,
+    setRenameInput,
+    setSourcePreview,
+    setUtilityPanel,
+    sideBySideOpen,
+    splitPaneSessionIds,
+    startEditingMessage,
+    titleInputRef,
+    token,
+    utilityPanel,
+    attachmentSourceLabel,
+    authorizeLocalPrivateAttachments,
+    clearPromptSelection,
+    clearSelectedSkillIfMissing,
+    composerRef,
+    formatAttachmentSize,
+    getSkillScopeLabel,
+    handleSend,
+    insertSlashCandidate,
+    isLocalPrivatePendingAttachment,
+    isUploadingAttachments,
+    modelConfigError,
+    modelMenuOpen,
+    modelOptions,
+    modelsLoading,
+    modelSelectRef,
+    pendingAttachmentKey,
+    pendingAttachmentSendFormLabel,
+    pendingAttachmentStatusLabel,
+    pendingAttachmentTargetLabel,
+    pendingAttachments,
+    selectedBuiltinCommand,
+    selectedModelOption,
+    selectedPrompt,
+    selectedPromptIsDefault,
+    selectedSkill,
+    setModelMenuOpen,
+    setSelectedBuiltinCommand,
+    setSelectedModelKey,
+    setSelectedSkill,
+    setSkillPanelIndex,
+    setThinkingEnabled,
+    skillPanelIndex,
+    skillPanelVisible,
+    slashCandidates,
+    syncSlashCommand,
+    textareaRef,
+    thinkingEnabled,
+    toggleWebSearch,
+    webSearchEnabled,
+  };
+
+  function renderConversationPane(pane: SplitPaneKey) {
+    return <ChatConversationPane controller={{ ...conversationPaneController, pane }} />;
   }
-
-  function renderSkillsSidePanel() {
-    return (
-      <aside
-        className={`utility-side-pane auxiliary-side-pane ${auxiliaryPanelResizing ? "is-resizing" : ""}`}
-        aria-label="Skills 面板"
-        ref={auxiliaryPanelRef}
-        style={{ flexBasis: auxiliaryPanelWidth, maxWidth: auxiliaryPanelMaxWidth(), width: auxiliaryPanelWidth }}
-      >
-        {renderUtilityResizeHandle(handleAuxiliaryPanelResizeStart, "调整 Skills 面板宽度")}
-        <header className="utility-side-header">
-          <div>
-            <h2>Skills</h2>
-            <p>选择后应用于本次发送</p>
-          </div>
-          <button
-            className="prompt-panel-close"
-            onClick={() => {
-              setSourcePreview(null);
-              setUtilityPanel(null);
-            }}
-            type="button"
-          >
-            ×
-          </button>
-        </header>
-        <div className="utility-side-body">
-          {skills.length > 0 ? skills.map((skill) => (
-            <button className="skill-side-row" key={skill.name} onClick={() => handleSelectSkillFromSidePanel(skill)} type="button">
-              <span className="skill-side-icon">/</span>
-              <span className="skill-side-copy">
-                <strong>{skill.display_name}</strong>
-                <span>{skill.description}</span>
-              </span>
-              <small>{getSkillScopeLabel(skill)}</small>
-            </button>
-          )) : (
-            <div className="prompt-empty">暂无可用 Skill</div>
-          )}
-        </div>
-      </aside>
-    );
-  }
-
-  function renderSourceSidePanel() {
-    const preview = sourcePreview;
-    return (
-      <aside
-        className={`utility-side-pane auxiliary-side-pane source-side-pane ${auxiliaryPanelResizing ? "is-resizing" : ""}`}
-        aria-label="引用来源预览"
-        ref={auxiliaryPanelRef}
-        style={{ flexBasis: auxiliaryPanelWidth, maxWidth: auxiliaryPanelMaxWidth(), width: auxiliaryPanelWidth }}
-      >
-        {renderUtilityResizeHandle(handleAuxiliaryPanelResizeStart, "调整引用来源面板宽度")}
-        <header className="utility-side-header">
-          <div>
-            <h2>引用来源</h2>
-            <p>{preview ? `Source ${preview.index}` : "从正文来源标签打开"}</p>
-          </div>
-          <button
-            className="prompt-panel-close"
-            onClick={() => {
-              setSourcePreview(null);
-              setUtilityPanel(null);
-            }}
-            type="button"
-          >
-            ×
-          </button>
-        </header>
-        {preview ? (
-          <div className="source-preview-body">
-            <span className="source-preview-index">[{preview.index}]</span>
-            <h3>{preview.source.source_title || preview.source.file}</h3>
-            <p className="source-preview-path">{preview.source.section_path || preview.source.file}</p>
-            <p className="source-preview-file">{preview.source.file}</p>
-            <div className="source-preview-markdown">
-              {renderMessageContent(preview.source.content)}
-            </div>
-          </div>
-        ) : (
-          <div className="prompt-empty">点击 AI 回复中的来源标签后，会在这里预览片段。</div>
-        )}
-      </aside>
-    );
-  }
-
-  function renderUtilityPanel() {
-    if (utilityPanel === "workspace") {
-      return (
-        <aside
-          className={`utility-side-pane workspace-files-side-pane ${workspacePanelResizing ? "is-resizing" : ""}`}
-          aria-label={activeWorkspace?.workspace_kind === "user" ? "个人文件面板" : "项目文件常驻面板"}
-          ref={workspacePanelRef}
-          style={{ flexBasis: workspacePanelWidth, maxWidth: workspacePanelMaxWidth(), width: workspacePanelWidth }}
-        >
-          {renderUtilityResizeHandle(handleWorkspacePanelResizeStart, activeWorkspace?.workspace_kind === "user" ? "调整个人文件面板宽度" : "调整项目文件面板宽度")}
-          <header className="utility-side-header">
-            <div>
-              <h2>{activeWorkspace?.workspace_kind === "user" ? "个人文件" : "项目文件"}</h2>
-              <p>{activeWorkspace?.workspace_kind === "user" ? "用户自定义文件夹" : "当前工作区常驻视图"}</p>
-            </div>
-            <button className="prompt-panel-close" onClick={() => setUtilityPanel(null)} type="button">×</button>
-          </header>
-          <WorkspaceFilePanel
-            apiOptions={apiOptions}
-            onPreviewOpen={handleWorkspaceFilePreviewOpen}
-            workspaceId={activeWorkspaceId}
-            workspaceName={activeWorkspace?.name}
-            workspaceKind={activeWorkspace?.workspace_kind}
-            canIngestKnowledge={Boolean(activeWorkspace && activeWorkspace.workspace_kind !== "user" && activeWorkspace.can_rename)}
-            defaultPath=""
-            onReferenceFile={handleReferenceWorkspaceFile}
-          />
-        </aside>
-      );
-    }
-    if (utilityPanel === "prompt") {
-      return (
-        <aside
-          className={`utility-side-pane auxiliary-side-pane prompt-utility-side-pane ${auxiliaryPanelResizing ? "is-resizing" : ""}`}
-          aria-label="提示词面板"
-          ref={auxiliaryPanelRef}
-          style={{ flexBasis: auxiliaryPanelWidth, maxWidth: auxiliaryPanelMaxWidth(), width: auxiliaryPanelWidth }}
-        >
-          {renderUtilityResizeHandle(handleAuxiliaryPanelResizeStart, "调整提示词面板宽度")}
-          <PromptPanel
-            embedded
-            selectedPromptId={selectedPromptId}
-            companyPrompts={companyPrompts}
-            userPrompts={userPrompts}
-            onSelect={handleSelectPrompt}
-            onCreateUserPrompt={handleCreateUserPrompt}
-            onDeleteUserPrompt={handleDeleteUserPrompt}
-            onClose={() => setUtilityPanel(null)}
-          />
-        </aside>
-      );
-    }
-    if (utilityPanel === "skills") {
-      return renderSkillsSidePanel();
-    }
-    if (utilityPanel === "source") {
-      return renderSourceSidePanel();
-    }
-    return null;
-  }
-
-  function renderNotificationPanel() {
-    const tabs: Array<{ id: NotificationView; label: string; badge?: number }> = [
-      { id: "all", label: "全部" },
-      { id: "unread", label: "未读", badge: unreadNotificationCount },
-      { id: "pending", label: "待处理", badge: pendingNotificationCount },
-    ];
-
-    return (
-      <div className="notification-popover" ref={notificationPanelRef} role="dialog" aria-label="通知中心">
-        <header className="notification-popover-header">
-          <div>
-            <h2>通知中心</h2>
-            <p>{unreadNotificationCount > 0 ? `${unreadNotificationCount} 条未读` : "暂无未读通知"}</p>
-          </div>
-          <button
-            className="notification-mark-read"
-            disabled={unreadNotificationCount === 0}
-            onClick={() => void handleMarkAllNotificationsRead()}
-            type="button"
-          >
-            全部已读
-          </button>
-        </header>
-
-        <div className="notification-tabs" role="tablist" aria-label="通知分类">
-          {tabs.map((tab) => (
-            <button
-              aria-selected={notificationView === tab.id}
-              className={`notification-tab ${notificationView === tab.id ? "is-active" : ""}`}
-              key={tab.id}
-              onClick={() => setNotificationView(tab.id)}
-              role="tab"
-              type="button"
-            >
-              <span>{tab.label}</span>
-              {tab.badge ? <small>{tab.badge > 99 ? "99+" : tab.badge}</small> : null}
-            </button>
-          ))}
-        </div>
-
-        {availableUpdate ? (
-          <button
-            className="notification-update-entry"
-            onClick={() => {
-              setUpdateStep(downloadedUpdatePath ? "ready" : updateProgress?.status === "downloading" ? "downloading" : "available");
-              setUpdateDialogOpen(true);
-              setNotificationPanelOpen(false);
-            }}
-            type="button"
-          >
-            <span>
-              <strong>新版本可用</strong>
-              <small>Project_R v{availableUpdate.version}</small>
-            </span>
-            <span>{updateStep === "ready" ? "已就绪" : "查看"}</span>
-          </button>
-        ) : null}
-
-        <div className="notification-list">
-          {notificationsLoading ? <div className="notification-empty">正在读取通知...</div> : null}
-          {!notificationsLoading && notifications.length === 0 ? <div className="notification-empty">暂无通知</div> : null}
-          {!notificationsLoading
-            ? notifications.map((notification) => {
-                const isPending = notification.action_status === "pending";
-                const canDismiss = isPending && notification.severity !== "critical";
-                return (
-                  <article
-                    className={`notification-item is-${notification.category} is-${notification.severity} ${notification.is_read ? "" : "is-unread"} ${isPending ? "is-pending" : ""}`}
-                    key={notification.id}
-                  >
-                    <div
-                      className="notification-item-main"
-                      onClick={() => void handleNotificationAction(notification)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          void handleNotificationAction(notification);
-                        }
-                      }}
-                      role="button"
-                      tabIndex={0}
-                    >
-                      <div className="notification-item-meta">
-                        <span className={`notification-category is-${notification.category}`}>
-                          {notificationCategoryLabel(notification.category)}
-                        </span>
-                        {isPending ? <span className="notification-status">待处理</span> : null}
-                        <time>{formatNotificationTime(notification.created_at)}</time>
-                      </div>
-                      <h3>{notification.title}</h3>
-                      <p>{notification.content}</p>
-                    </div>
-
-                    {isPending ? (
-                      <div className="notification-item-actions">
-                        <button
-                          className="notification-action-primary"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void handleNotificationActionStatus(notification, "done");
-                          }}
-                          type="button"
-                        >
-                          已处理
-                        </button>
-                        {canDismiss ? (
-                          <button
-                            className="notification-action-secondary"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void handleNotificationActionStatus(notification, "dismissed");
-                            }}
-                            type="button"
-                          >
-                            忽略
-                          </button>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </article>
-                );
-              })
-            : null}
-        </div>
-      </div>
-    );
-  }
-
-  function renderUpdateDialog() {
-    if (!updateDialogOpen || !availableUpdate) return null;
-    const progressPercent = Math.max(0, Math.min(100, updateProgress?.percent ?? 0));
-    const totalBytes = updateProgress?.totalBytes || availableUpdate.size_bytes;
-    const receivedBytes = updateProgress?.receivedBytes ?? 0;
-    const speed = formatUpdateSpeed(updateProgress?.bytesPerSecond ?? 0);
-    const title = updateStep === "ready"
-      ? "更新已就绪"
-      : updateStep === "installing"
-        ? "正在安装更新"
-      : updateStep === "downloading"
-        ? "正在下载更新"
-        : updateStep === "failed"
-          ? "更新失败"
-          : availableUpdate.is_force_update
-            ? "需要更新 Project_R"
-            : "发现新版本";
-    const description = updateStep === "ready"
-      ? `v${availableUpdate.version} 已下载完成，重启应用即可完成更新。`
-      : updateStep === "installing"
-        ? "校验完成，正在静默安装更新。Project_R 将自动退出，安装器替换当前版本后会自动重启应用。"
-      : updateStep === "downloading"
-        ? `正在下载 v${availableUpdate.version}...`
-        : updateStep === "failed"
-          ? updateError || "自动更新失败，请联系管理员获取最新版安装包。"
-          : `v${availableUpdate.version} 已发布，请确认后下载更新。`;
-
-    return (
-      <div className="update-dialog-backdrop" onClick={() => {
-        if (!availableUpdate.is_force_update && updateStep !== "downloading" && updateStep !== "installing") setUpdateDialogOpen(false);
-      }}>
-        <section className="update-dialog" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label={title}>
-          <header className="update-dialog-header">
-            <div>
-              <h2>{title}</h2>
-              <p>{description}</p>
-            </div>
-            {UPDATE_DOWNLOAD_DRY_RUN ? <span className="update-dry-run">dry-run</span> : null}
-          </header>
-
-          {updateStep === "available" || updateStep === "ready" ? (
-            <div className="update-release-notes">
-              {renderMessageContent(availableUpdate.release_notes || "本次更新未填写更新日志。")}
-            </div>
-          ) : null}
-
-          {updateStep === "downloading" || updateStep === "installing" ? (
-            <div className="update-download-panel">
-              <div className="update-progress-track">
-                <span style={{ width: `${progressPercent}%` }} />
-              </div>
-              <div className="update-progress-meta">
-                <span>{updateStep === "installing" ? "安装中" : `${formatUpdateBytes(receivedBytes)} / ${formatUpdateBytes(totalBytes)}`}</span>
-                <span>{updateStep === "installing" ? "安装完成后自动重启" : speed || "校验中"}</span>
-              </div>
-            </div>
-          ) : null}
-
-          {updateStep === "failed" ? (
-            <div className="update-failure-message">自动更新失败，请联系管理员获取最新版安装包。</div>
-          ) : null}
-
-          <footer className="update-dialog-actions">
-            {updateStep === "available" && availableUpdate.is_force_update ? (
-              <button className="btn-secondary" onClick={() => void window.projectR?.window?.close()} type="button">退出软件</button>
-            ) : null}
-            {updateStep === "available" && !availableUpdate.is_force_update ? (
-              <button className="btn-secondary" onClick={() => setUpdateDialogOpen(false)} type="button">稍后</button>
-            ) : null}
-            {updateStep === "available" ? (
-              <button className="btn-primary" onClick={() => void startClientUpdateDownload()} type="button">下载并安装</button>
-            ) : null}
-            {updateStep === "failed" && availableUpdate.is_force_update ? (
-              <button className="btn-primary" onClick={() => void window.projectR?.window?.close()} type="button">退出软件</button>
-            ) : null}
-            {updateStep === "failed" && !availableUpdate.is_force_update ? (
-              <button className="btn-primary" onClick={() => setUpdateDialogOpen(false)} type="button">知道了</button>
-            ) : null}
-          </footer>
-        </section>
-      </div>
-    );
-  }
-
-  const activeTab = tabs.find((item) => item.id === activeTabId);
-
   return (
-    <div className="shell">
-      <aside
-        className={`chat-sidebar ${sidebarResizing ? "is-resizing" : ""}`}
-        ref={sidebarRef}
-        style={{ width: sidebarWidth }}
-      >
-        <div className="sidebar-top">
-          <div className="sidebar-brand">
-            <span className="sidebar-brand-mark">R</span>
-            <span className="sidebar-brand-name">{APP_NAME}</span>
-          </div>
-
-          <div className="mode-switch" data-active={mode} aria-label="模式切换">
-            <span className="mode-switch-indicator" aria-hidden="true" />
-            <button className={`mode-tab ${mode === "agent" ? "is-active" : ""}`} onClick={() => setMode("agent")} title="Agent" type="button">
-              <AgentIcon />
-              <span>Agent</span>
-            </button>
-            <button className={`mode-tab ${mode === "chat" ? "is-active" : ""}`} onClick={() => setMode("chat")} title="Chat" type="button">
-              <ChatIcon />
-              <span>Chat</span>
-            </button>
-          </div>
-
-          <WorkspaceSelector
-            apiOptions={apiOptions}
-            canCreateProject={currentUser?.role === "admin"}
-            onWorkspaceChanged={handleWorkspaceChanged}
-          />
-
-          <div className="sidebar-command-row">
-            <button className="new-chat-button" onClick={handleCreateSession} type="button">
-              <PlusIcon />
-              <span>新建对话</span>
-            </button>
-            <button className="sidebar-search-button" onClick={() => setShowSearch(true)} title="搜索对话" type="button">
-              <SearchIcon />
-            </button>
-          </div>
-        </div>
-
-        <div className="session-list" aria-label="会话列表">
-          {isLoading && sessions.length === 0 ? <p className="sidebar-note">正在加载会话...</p> : null}
-          {!isLoading && sessions.length === 0 ? <p className="sidebar-note">当前项目暂无会话。</p> : null}
-
-          {sessionGroups.map((group) => (
-            <div key={group.key}>
-              {group.label ? <p className="session-group-label">{group.label}</p> : null}
-              {group.items.map((session) => (
-                <div
-                  className={`session-item ${session.id === activeSessionId ? "is-active" : ""} ${sideBySideOpen && session.id === splitPaneSessionIds.left ? "is-in-left-pane" : ""} ${sideBySideOpen && session.id === splitPaneSessionIds.right ? "is-in-right-pane" : ""}`}
-                  key={session.id}
-                  onClick={(event) => selectSession(session, event.ctrlKey)}
-                  onAuxClick={(event) => {
-                    if (event.button === 1) selectSession(session, true);
-                  }}
-                  onContextMenu={(event) => openSessionMenu(event, session)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      selectSession(session);
-                    }
-                  }}
-                  role="button"
-                  tabIndex={0}
-                >
-                  {renameInput?.id === session.id && renameInput.scope === "sidebar" ? (
-                    <input
-                      autoFocus
-                      className="session-rename-input"
-                      onBlur={() => void commitRename()}
-                      onChange={(event) => setRenameInput({ ...renameInput, value: event.target.value })}
-                      onClick={(event) => event.stopPropagation()}
-                      onMouseDown={(event) => event.stopPropagation()}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") void commitRename();
-                        if (event.key === "Escape") setRenameInput(null);
-                      }}
-                      ref={sidebarRenameInputRef}
-                      value={renameInput.value}
-                    />
-                  ) : (
-                    <span className="session-title">
-                      {session.is_pinned ? <span className="session-pin-badge"><PinIcon />置顶</span> : null}
-                      <span>{formatSessionDisplayTitle(session.title)}</span>
-                    </span>
-                  )}
-                  <span className="session-time">{formatSidebarTime(session.updated_at)}</span>
-                  <button
-                    className="session-more"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      openSessionMenu(event, session);
-                    }}
-                    title="会话操作"
-                    type="button"
-                  >
-                    <MoreIcon />
-                  </button>
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-
-        <div className="sidebar-user">
-          <span className={`sidebar-user-avatar ${!resolveAvatarUrl(serverUrl, currentUser?.avatar) && !currentUser?.avatar ? "is-text" : ""}`}>
-            {resolveAvatarUrl(serverUrl, currentUser?.avatar) ? (
-              <img src={resolveAvatarUrl(serverUrl, currentUser?.avatar)} alt="avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-            ) : (
-              currentUser?.avatar || getInitials(currentUser?.nickname)
-            )}
-          </span>
-          <div className="sidebar-user-info">
-            <span className="sidebar-user-name">{currentUser?.nickname ?? "未登录"}</span>
-            <span className="sidebar-user-role">{currentUser?.role === "admin" ? "管理员" : "员工"}</span>
-          </div>
-          <div className="sidebar-user-actions">
-            <button
-              aria-expanded={notificationPanelOpen}
-              className={`icon-button notification-button ${unreadNotificationCount > 0 ? "has-unread" : ""}`}
-              onClick={() => setNotificationPanelOpen((value) => !value)}
-              ref={notificationButtonRef}
-              title="通知中心"
-              type="button"
-            >
-              <BellIcon />
-              {unreadNotificationCount > 0 ? (
-                <span className="notification-badge">{unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}</span>
-              ) : null}
-            </button>
-            <button className="icon-button" onClick={() => { setSettingsInitialAdminTab(null); setShowSettings(true); }} title="设置" type="button"><SettingsIcon /></button>
-            <button className="icon-button" onClick={handleLogout} title="登出" type="button"><LogoutIcon /></button>
-          </div>
-        </div>
-        <div
-          aria-label="调整功能栏宽度"
-          aria-orientation="vertical"
-          className="sidebar-resize-handle"
-          onMouseDown={handleSidebarResizeStart}
-          role="separator"
-          title="拖动调整功能栏宽度"
-        />
-      </aside>
-
-      {notificationPanelOpen ? renderNotificationPanel() : null}
-
-      <section className="chat-main">
-        <TabBar
-          tabs={tabs}
-          activeTabId={activeTabId}
-          scratchOpen={showScratchPad}
-          onSelectTab={handleSelectTab}
-          onCloseTab={handleCloseTab}
-          onAddChat={handleCreateSession}
-          onOpenScratch={handleOpenScratch}
-        />
-        {error ? <p className="chat-error">{error}</p> : null}
-        {actionNotice ? <p className="chat-notice">{actionNotice}</p> : null}
-        {deletedMessageUndo ? (
-          <div className="notification-toast message-undo-toast">
-            <div>
-              <div className="notification-toast-title">已删除当前问答</div>
-              <div className="notification-toast-body">上下文已同步清理，可在数秒内撤回。</div>
-            </div>
-            <button onClick={() => void handleUndoDeleteMessages()} type="button">撤回删除</button>
-          </div>
-        ) : null}
-        {notificationToast ? (
-          <div
-            className={`notification-toast notification-event-toast is-${notificationToast.severity}`}
-            onClick={() => void handleNotificationAction(notificationToast)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                void handleNotificationAction(notificationToast);
-              }
-            }}
-            role="button"
-            tabIndex={0}
-          >
-            <div className="notification-toast-title">{notificationToast.title}</div>
-            <div className="notification-toast-body">{notificationToast.content}</div>
-          </div>
-        ) : null}
-
-        {showScratchPad ? (
-          <div className="scratch-pad-workspace">
-            <ScratchPad
-              workspaceId={activeWorkspaceId}
-              workspaceName={activeWorkspace?.name}
-              userId={currentUser?.user_id}
-              onClose={() => setShowScratchPad(false)}
-            />
-          </div>
-        ) : (
-          <div className={`chat-workbench ${sideBySideOpen ? "is-split" : ""} ${utilityPanel ? "has-files-pane" : ""}`}>
-            {renderConversationPane("left")}
-            {sideBySideOpen ? renderConversationPane("right") : null}
-            {renderUtilityPanel()}
-          </div>
-        )}
-      </section>
-
-      {useContextMenu(contextMenu, setContextMenu)}
-      {moveSessionId !== null ? (
-        <div className="confirm-overlay" onClick={() => setMoveSessionId(null)}>
-          <div className="move-project-card" onClick={(event) => event.stopPropagation()}>
-            <header className="move-project-header">
-              <div>
-                <h3>迁移项目</h3>
-                <p>选择一个目标项目，当前会话会从项目列表中移出。</p>
-              </div>
-              <button className="prompt-panel-close" onClick={() => setMoveSessionId(null)} type="button">×</button>
-            </header>
-            <div className="move-project-list">
-              {workspaces
-                .filter((workspace) => workspace.id !== sessions.find((session) => session.id === moveSessionId)?.workspace_id)
-                .map((workspace) => (
-                  <button
-                    className="move-project-item"
-                    key={workspace.id}
-                    onClick={() => void handleMoveSession(moveSessionId, workspace.id)}
-                    type="button"
-                  >
-                    <WorkspaceIcon />
-                    <span>{workspace.name}</span>
-                    <small>{workspace.member_count} 人</small>
-                  </button>
-                ))}
-            </div>
-          </div>
-        </div>
-      ) : null}
-      {showSearch ? (
-        <SearchDialog
-          sessions={sessions}
-          results={searchTerm.trim() ? searchResults : undefined}
-          searchTerm={searchTerm}
-          onSearchChange={setSearchTerm}
-          onSelect={(id) => {
-            const session = [...sessions, ...searchResults].find((item) => item.id === id);
-            if (session) selectSession(session);
-          }}
-          onClose={() => setShowSearch(false)}
-        />
-      ) : null}
-
-      {regenerateTarget !== null ? (
-        <div className="confirm-overlay" onClick={() => setRegenerateTarget(null)}>
-          <div className="confirm-card message-operation-card" onClick={(event) => event.stopPropagation()}>
-            <h3>重新生成回答</h3>
-            <p>保留当前回答为历史版本，并使用所选模型生成一个新版本。当前回答不会被覆盖。</p>
-            <label className="message-operation-field">
-              <span>使用模型</span>
-              <select
-                onChange={(event) => setRegenerateModelKey(event.target.value)}
-                value={regenerateModelOption?.key ?? ""}
-              >
-                {modelOptions.map((option) => (
-                  <option key={option.key} value={option.key}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="confirm-actions">
-              <button className="btn-secondary" onClick={() => setRegenerateTarget(null)} type="button">取消</button>
-              <button
-                className="btn-primary"
-                disabled={!regenerateModelOption || messageActionBusyId === regenerateTarget.id}
-                onClick={() => void handleRegenerateMessage(regenerateTarget)}
-                type="button"
-              >
-                生成新版本
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {feedbackTarget !== null ? (
-        <div className="confirm-overlay" onClick={() => setFeedbackTarget(null)}>
-          <div className="confirm-card message-operation-card" onClick={(event) => event.stopPropagation()}>
-            <h3>回答评分</h3>
-            <p>评分和意见会保存到后端反馈目录；低分且带知识库引用的回答会进入管理员知识纠错审核。</p>
-            <div className="message-rating-row" role="radiogroup" aria-label="回答评分">
-              {[1, 2, 3, 4, 5].map((rating) => (
-                <button
-                  className={`message-rating-btn ${feedbackRating === rating ? "is-active" : ""}`}
-                  key={rating}
-                  onClick={() => setFeedbackRating(rating)}
-                  type="button"
-                >
-                  {rating}
-                </button>
-              ))}
-            </div>
-            <label className="message-operation-field">
-              <span>补充意见</span>
-              <textarea
-                onChange={(event) => setFeedbackComment(event.target.value)}
-                placeholder="例如：回答遗漏了 AS2047 条款，或格式更适合项目周报。"
-                value={feedbackComment}
-              />
-            </label>
-            <div className="confirm-actions">
-              <button className="btn-secondary" onClick={() => setFeedbackTarget(null)} type="button">取消</button>
-              <button
-                className="btn-primary"
-                disabled={feedbackRating < 1 || messageActionBusyId === feedbackTarget.id}
-                onClick={() => void handleSubmitFeedback()}
-                type="button"
-              >
-                保存评分
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {deleteMessageTarget !== null ? (
-        <div className="confirm-overlay" onClick={() => setDeleteMessageTarget(null)}>
-          <div className="confirm-card" onClick={(event) => event.stopPropagation()}>
-            <h3>删除消息上下文</h3>
-            <p>确定删除此条消息对应的问答吗？这些内容会从当前对话视图和后续 AI 上下文中排除，并可在数秒内撤回。</p>
-            <div className="confirm-actions">
-              <button className="btn-secondary" onClick={() => setDeleteMessageTarget(null)} type="button">取消</button>
-              <button
-                className="btn-danger"
-                onClick={() => {
-                  void handleDeleteMessageContext(deleteMessageTarget);
-                  setDeleteMessageTarget(null);
-                }}
-                type="button"
-              >
-                删除
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {deleteLastMessageTarget !== null ? (
-        <div className="confirm-overlay" onClick={() => setDeleteLastMessageTarget(null)}>
-          <div className="confirm-card" onClick={(event) => event.stopPropagation()}>
-            <h3>删除最后一条消息</h3>
-            <p>这是该对话中的最后一组消息。删除后整个对话会被删除，且无法恢复。</p>
-            <div className="confirm-actions">
-              <button className="btn-secondary" onClick={() => setDeleteLastMessageTarget(null)} type="button">取消</button>
-              <button
-                className="btn-danger"
-                onClick={() => {
-                  void handleDeleteSession(deleteLastMessageTarget.session_id);
-                  setDeleteLastMessageTarget(null);
-                }}
-                type="button"
-              >
-                删除对话
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {deleteConfirmSessionId !== null ? (
-        <div className="confirm-overlay" onClick={() => setDeleteConfirmSessionId(null)}>
-          <div className="confirm-card" onClick={(event) => event.stopPropagation()}>
-            <h3>确认删除</h3>
-            <p>确定删除此对话吗？此操作不可恢复。</p>
-            <div className="confirm-actions">
-              <button className="btn-secondary" onClick={() => setDeleteConfirmSessionId(null)} type="button">取消</button>
-              <button
-                className="btn-danger"
-                onClick={() => {
-                  void handleDeleteSession(deleteConfirmSessionId);
-                  setDeleteConfirmSessionId(null);
-                }}
-                type="button"
-              >
-                删除
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-      {renderUpdateDialog()}
-      <SettingsModal
-        initialAdminTab={settingsInitialAdminTab ?? undefined}
-        initialSection={settingsInitialAdminTab ? "admin" : undefined}
-        isOpen={showSettings}
-        onArchiveRestored={handleArchiveRestored}
-        onClose={() => {
-          setShowSettings(false);
-          setSettingsInitialAdminTab(null);
-        }}
-      />
-    </div>
+    <AppWorkspaceChrome
+      controller={{
+        UPDATE_DOWNLOAD_DRY_RUN,
+        actionNotice,
+        activeSessionId,
+        activeTabId,
+        activeWorkspace,
+        activeWorkspaceId,
+        apiOptions,
+        auxiliaryPanelMaxWidth,
+        auxiliaryPanelRef,
+        auxiliaryPanelResizing,
+        auxiliaryPanelWidth,
+        availableUpdate,
+        commitRename,
+        companyPrompts,
+        contextMenu,
+        currentUser,
+        deleteConfirmSessionId,
+        deleteLastMessageTarget,
+        deleteMessageTarget,
+        deletedMessageUndo,
+        downloadedUpdatePath,
+        error,
+        feedbackComment,
+        feedbackRating,
+        feedbackTarget,
+        formatNotificationTime,
+        formatSessionDisplayTitle,
+        formatSidebarTime,
+        formatUpdateBytes,
+        formatUpdateSpeed,
+        getInitials,
+        getSkillScopeLabel,
+        handleArchiveRestored,
+        handleAuxiliaryPanelResizeStart,
+        handleCloseTab,
+        handleCreateSession,
+        handleCreateUserPrompt,
+        handleDeleteMessageContext,
+        handleDeleteSession,
+        handleDeleteUserPrompt,
+        handleLogout,
+        handleMarkAllNotificationsRead,
+        handleMoveSession,
+        handleNotificationAction,
+        handleNotificationActionStatus,
+        handleOpenScratch,
+        handleReferenceWorkspaceFile,
+        handleRegenerateMessage,
+        handleSelectPrompt,
+        handleSelectSkillFromSidePanel,
+        handleSelectTab,
+        handleSubmitFeedback,
+        handleSidebarResizeStart,
+        handleUndoDeleteMessages,
+        handleWorkspaceChanged,
+        handleWorkspaceFilePreviewOpen,
+        handleWorkspacePanelResizeStart,
+        isLoading,
+        messageActionBusyId,
+        mode,
+        modelOptions,
+        moveSessionId,
+        notificationButtonRef,
+        notificationCategoryLabel,
+        notificationPanelOpen,
+        notificationPanelRef,
+        notificationToast,
+        notificationView,
+        notifications,
+        notificationsLoading,
+        openSessionMenu,
+        pendingNotificationCount,
+        regenerateModelKey,
+        regenerateModelOption,
+        regenerateTarget,
+        renderConversationPane,
+        renameInput,
+        resolveAvatarUrl,
+        searchResults,
+        searchTerm,
+        selectedPromptId,
+        selectSession,
+        serverUrl,
+        sessionGroups,
+        sessions,
+        setSourcePreview,
+        setActiveMode: setMode,
+        setContextMenu,
+        setDeleteConfirmSessionId,
+        setDeleteLastMessageTarget,
+        setDeleteMessageTarget,
+        setFeedbackComment,
+        setFeedbackRating,
+        setFeedbackTarget,
+        setMoveSessionId,
+        setNotificationPanelOpen,
+        setNotificationView,
+        setRegenerateModelKey,
+        setRegenerateTarget,
+        setRenameInput,
+        setSearchTerm,
+        setSettingsInitialAdminTab,
+        setShowScratchPad,
+        setShowSearch,
+        setShowSettings,
+        setUpdateDialogOpen,
+        setUpdateStep,
+        setUtilityPanel,
+        settingsInitialAdminTab,
+        showScratchPad,
+        showSearch,
+        showSettings,
+        sideBySideOpen,
+        skills,
+        sidebarRef,
+        sidebarRenameInputRef,
+        sidebarResizing,
+        sidebarWidth,
+        splitPaneSessionIds,
+        startClientUpdateDownload,
+        sourcePreview,
+        tabs,
+        unreadNotificationCount,
+        updateDialogOpen,
+        updateError,
+        updateProgress,
+        updateStep,
+        userPrompts,
+        utilityPanel,
+        workspacePanelMaxWidth,
+        workspacePanelRef,
+        workspacePanelResizing,
+        workspacePanelWidth,
+        workspaces,
+      }}
+    />
   );
 }
