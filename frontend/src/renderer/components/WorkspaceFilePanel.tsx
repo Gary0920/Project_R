@@ -332,7 +332,203 @@ function graphEventGroupLabel(date?: string) {
   return `${value.getFullYear()}年${String(value.getMonth() + 1).padStart(2, "0")}月`;
 }
 
-function graphCanvasPointSized(index: number, total: number, hasFocusNode: boolean, width: number, height: number, baseRadius: number) {
+
+interface GraphLayoutNode {
+  id: string;
+  degree: number;
+  isFocus: boolean;
+  isNeighbor: boolean;
+}
+
+interface Position { x: number; y: number }
+
+function graphForceLayout(
+  nodes: Array<{ id: string; degree: number; isFocus: boolean; isNeighbor: boolean; entityType?: string }>,
+  edges: Array<{ from: string; to: string }>,
+  width: number,
+  height: number,
+  baseRadius: number,
+): Map<string, Position> {
+  const cx = width / 2;
+  const cy = height / 2;
+  const positions = new Map<string, Position>();
+  const edgeSet = new Set(edges.map((e) => `${e.from}::${e.to}`));
+
+  const maxDegree = Math.max(1, ...nodes.map((n) => n.degree));
+  const nodeCount = nodes.length;
+
+  // Build adjacency for component-aware initialization
+  const adjacency = new Map<string, Set<string>>();
+  for (const edge of edges) {
+    let set = adjacency.get(edge.from); if (!set) { set = new Set(); adjacency.set(edge.from, set); } set.add(edge.to);
+    set = adjacency.get(edge.to); if (!set) { set = new Set(); adjacency.set(edge.to, set); } set.add(edge.from);
+  }
+
+  // Breadth-first ordering from focus node: neighbors first, then by distance
+  const visited = new Set<string>();
+  const ordered: string[] = [];
+  const focusNode = nodes.find((n) => n.isFocus);
+  if (focusNode) {
+    const queue = [focusNode.id];
+    visited.add(focusNode.id);
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      ordered.push(current);
+      for (const neighbor of adjacency.get(current) ?? []) {
+        if (!visited.has(neighbor)) {
+          visited.add(neighbor);
+          queue.push(neighbor);
+        }
+      }
+    }
+  }
+  for (const node of nodes) {
+    if (!visited.has(node.id)) ordered.push(node.id);
+  }
+
+  const orderMap = new Map(ordered.map((id, i) => [id, i]));
+
+  // Initialize: BFS-order radial, degree-weighted, entity-type ring offset
+  const entityTypes = [...new Set(nodes.map((n) => n.entityType ?? "page").filter(Boolean))];
+  const entityTypeAngleOffset = new Map(entityTypes.map((type, i) => [type, (i / entityTypes.length) * Math.PI * 0.5]));
+
+  for (const node of nodes) {
+    if (node.isFocus) {
+      positions.set(node.id, { x: cx, y: cy });
+      continue;
+    }
+    const order = orderMap.get(node.id) ?? 0;
+    const total = nodeCount;
+    const angle = -Math.PI / 2 + (order / Math.max(1, total)) * Math.PI * 2
+      + (entityTypeAngleOffset.get(node.entityType ?? "page") ?? 0);
+    const degreeFactor = Math.max(0.3, node.degree / maxDegree);
+    const ring = Math.floor(order / Math.max(1, Math.ceil(total / 3)));
+    const ringRadius = baseRadius * (0.45 + degreeFactor * 0.55 + ring * 0.12);
+    positions.set(node.id, {
+      x: cx + Math.cos(angle) * ringRadius,
+      y: cy + Math.sin(angle) * ringRadius,
+    });
+  }
+
+  // Enhanced force-directed relaxation: up to 12 iterations with adaptive cooling
+  const iterations = Math.min(12, Math.max(8, nodeCount));
+  for (let iter = 0; iter < iterations; iter++) {
+    const displacements = new Map<string, { dx: number; dy: number }>();
+    for (const node of nodes) {
+      displacements.set(node.id, { dx: 0, dy: 0 });
+    }
+
+    // Repulsion between all node pairs (O(n^2) simplified)
+    for (let i = 0; i < nodeCount; i++) {
+      for (let j = i + 1; j < nodeCount; j++) {
+        const a = nodes[i], b = nodes[j];
+        const posA = positions.get(a.id), posB = positions.get(b.id);
+        if (!posA || !posB) continue;
+        const dx = posA.x - posB.x, dy = posA.y - posB.y;
+        const dist = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+        const connected = edgeSet.has(`${a.id}::${b.id}`) || edgeSet.has(`${b.id}::${a.id}`);
+        // Connected attraction, disconnected repulsion
+        const forceMagnitude = connected
+          ? -Math.sqrt(dist) * 0.18
+          : (baseRadius * 3.0) / (dist * dist);
+        const force = forceMagnitude;
+        const dispA = displacements.get(a.id)!;
+        const dispB = displacements.get(b.id)!;
+        const fx = (dx / dist) * force;
+        const fy = (dy / dist) * force;
+        dispA.dx += fx; dispA.dy += fy;
+        dispB.dx -= fx; dispB.dy -= fy;
+      }
+    }
+
+    // Same-entity-type weak attraction (clusters similar nodes)
+    for (let i = 0; i < nodeCount; i++) {
+      for (let j = i + 1; j < nodeCount; j++) {
+        const a = nodes[i], b = nodes[j];
+        if (a.isFocus || b.isFocus) continue;
+        if (a.entityType !== b.entityType || !a.entityType) continue;
+        const posA = positions.get(a.id), posB = positions.get(b.id);
+        if (!posA || !posB) continue;
+        const dx = posA.x - posB.x, dy = posA.y - posB.y;
+        const dist = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+        const attract = dist * 0.004;
+        const dispA = displacements.get(a.id)!;
+        const dispB = displacements.get(b.id)!;
+        dispA.dx -= (dx / dist) * attract;
+        dispA.dy -= (dy / dist) * attract;
+        dispB.dx += (dx / dist) * attract;
+        dispB.dy += (dy / dist) * attract;
+      }
+    }
+
+    // Center gravity: mild pull for non-focus, stronger for focus-neighbors
+    for (const node of nodes) {
+      if (node.isFocus) continue;
+      const pos = positions.get(node.id)!;
+      const disp = displacements.get(node.id)!;
+      const dx = cx - pos.x, dy = cy - pos.y;
+      const dist = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+      const gravity = node.isNeighbor ? 0.12 : 0.06;
+      disp.dx += (dx / dist) * gravity;
+      disp.dy += (dy / dist) * gravity;
+    }
+
+    // Apply displacements with adaptive cooling
+    let maxDisp = 0;
+    const cooling = 1 / Math.sqrt(iter + 1);
+    for (const node of nodes) {
+      if (node.isFocus) continue;
+      const pos = positions.get(node.id)!;
+      const disp = displacements.get(node.id)!;
+      const mag = Math.sqrt(disp.dx * disp.dx + disp.dy * disp.dy);
+      maxDisp = Math.max(maxDisp, mag);
+      const clamp = Math.min(mag, baseRadius * 0.4) / Math.max(1, mag);
+      pos.x += disp.dx * clamp * cooling;
+      pos.y += disp.dy * clamp * cooling;
+      pos.x = Math.max(20, Math.min(width - 20, pos.x));
+      pos.y = Math.max(20, Math.min(height - 20, pos.y));
+    }
+    if (maxDisp < 0.25 && iter > 3) break;
+  }
+
+  return positions;
+}
+
+function graphEntityTypeColor(entityType: string): string {
+  const palette: Record<string, string> = {
+    client_profile: "#4f46e5",
+    client_profile_unresolved: "#818cf8",
+    customer_project: "#0891b2",
+    customer_project_profile_unresolved: "#22d3ee",
+    customer_company: "#059669",
+    customer_company_profile_unresolved: "#34d399",
+    project: "#d97706",
+    event: "#dc2626",
+    source_event: "#dc2626",
+    customer_source_event_unresolved: "#f87171",
+    meeting: "#9333ea",
+    page: "#6b7280",
+    unresolved_entity: "#9ca3af",
+  };
+  const key = (entityType ?? "page").toLowerCase();
+  for (const [prefix, color] of Object.entries(palette)) {
+    if (key.includes(prefix)) return color;
+  }
+  return palette.page;
+}
+
+function graphCanvasPointSized(
+  index: number,
+  total: number,
+  hasFocusNode: boolean,
+  width: number,
+  height: number,
+  baseRadius: number,
+  // New params for force layout
+  _nodes?: Array<{ id: string; degree: number; isFocus: boolean; isNeighbor: boolean }>,
+  _edges?: Array<{ from: string; to: string }>,
+) {
+  // Fallback: simple radial when no graph data is available (for existing call sites)
   const centerX = width / 2;
   const centerY = height / 2;
   if ((hasFocusNode && index === 0) || (!hasFocusNode && total === 1)) {
@@ -365,6 +561,7 @@ function graphCanvasLargeLabel(value: string) {
 function clampGraphCanvasScale(value: number) {
   return Math.max(0.7, Math.min(2.4, value));
 }
+
 
 function graphCitationString(citation: Record<string, unknown> | null | undefined, key: string) {
   const value = citation?.[key];
@@ -458,7 +655,7 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
   const [selectedGraphNodeId, setSelectedGraphNodeId] = useState<string | null>(null);
   const [selectedGraphEventId, setSelectedGraphEventId] = useState<string | null>(null);
   const [graphTimelineFilter, setGraphTimelineFilter] = useState<"all" | "dated" | "undated" | "selected">("all");
-  const [graphTimelineDensity, setGraphTimelineDensity] = useState<"detail" | "compact">("detail");
+  const [graphTimelineDensity, setGraphTimelineDensity] = useState<"detail" | "compact" | "axis">("detail");
   const [collapsedTimelineGroups, setCollapsedTimelineGroups] = useState<Set<string>>(() => new Set());
   const [entityMergeCandidates, setEntityMergeCandidates] = useState<WorkspaceEntityMergeCandidatesResponse | null>(null);
   const [entityMergePreview, setEntityMergePreview] = useState<GBrainEntityMergePreviewResponse | null>(null);
@@ -1395,13 +1592,19 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
     ].slice(0, 12)
     : sortedGraphNodes.slice(0, 12);
   const canvasGraphNodeIds = new Set(canvasGraphNodes.map((node) => node.id));
-  const canvasGraphPositions = new Map(
-    canvasGraphNodes.map((node, index) => [
-      node.id,
-      graphCanvasPoint(index, canvasGraphNodes.length, Boolean(selectedGraphNode)),
-    ]),
-  );
+  const canvasGraphForceNodes = canvasGraphNodes.map((node, idx) => ({
+    id: node.id,
+    degree: graphDegreeById.get(node.id) ?? 0,
+    isFocus: Boolean(selectedGraphNode && node.id === selectedGraphNode.id),
+    isNeighbor: selectedNeighborIds.has(node.id),
+    entityType: node.entity_type ?? "page",
+  }));
   const canvasGraphEdges = filteredGraphEdges.filter((edge) => canvasGraphNodeIds.has(edge.from) && canvasGraphNodeIds.has(edge.to)).slice(0, 24);
+  const canvasGraphPositions = graphForceLayout(
+    canvasGraphForceNodes,
+    canvasGraphEdges,
+    340, 216, 72,
+  );
   const largeGraphNodes = selectedGraphNode
     ? [
       selectedGraphNode,
@@ -1410,13 +1613,19 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
     ].slice(0, 40)
     : sortedGraphNodes.slice(0, 40);
   const largeGraphNodeIds = new Set(largeGraphNodes.map((node) => node.id));
-  const largeGraphPositions = new Map(
-    largeGraphNodes.map((node, index) => [
-      node.id,
-      graphCanvasPointSized(index, largeGraphNodes.length, Boolean(selectedGraphNode), 960, 560, 210),
-    ]),
-  );
   const largeGraphEdges = filteredGraphEdges.filter((edge) => largeGraphNodeIds.has(edge.from) && largeGraphNodeIds.has(edge.to)).slice(0, 80);
+  const largeGraphForceNodes = largeGraphNodes.map((node, idx) => ({
+    id: node.id,
+    degree: graphDegreeById.get(node.id) ?? 0,
+    isFocus: Boolean(selectedGraphNode && node.id === selectedGraphNode.id),
+    isNeighbor: selectedNeighborIds.has(node.id),
+    entityType: node.entity_type ?? "page",
+  }));
+  const largeGraphPositions = graphForceLayout(
+    largeGraphForceNodes,
+    largeGraphEdges,
+    960, 560, 210,
+  );
   const visibleEntityCandidates = (entityMergeCandidates?.candidates ?? []).slice(0, 8);
   const nativeCounts = nativeGraphContext ? {
     traverse: nativeResultCount(nativeGraphContext.traverse_graph),
@@ -1839,6 +2048,10 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
                         const point = canvasGraphPositions.get(node.id);
                         if (!point) return null;
                         const isSelected = selectedGraphNodeId === node.id;
+                        const degree = graphDegreeById.get(node.id) ?? 0;
+                        const maxDegree = Math.max(1, ...canvasGraphNodes.map((n) => graphDegreeById.get(n.id) ?? 0));
+                        const degreeRadius = 16 + Math.min(12, (degree / maxDegree) * 12);
+                        const nodeRadius = isSelected ? degreeRadius + 4 : degreeRadius;
                         const isNeighbor = selectedNeighborIds.has(node.id);
                         return (
                           <g
@@ -1855,7 +2068,7 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
                             tabIndex={0}
                             transform={`translate(${point.x} ${point.y})`}
                           >
-                            <circle r={isSelected ? 24 : 20} />
+                            <circle fill={graphEntityTypeColor(node.entity_type)} r={nodeRadius} />
                             <text textAnchor="middle" y="4">{graphCanvasLabel(node.title)}</text>
                             <title>{`${node.title} · ${node.entity_type}`}</title>
                           </g>
@@ -1956,6 +2169,15 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
                     >
                       {graphTimelineDensity === "compact" ? "紧凑" : "详细"}
                     </button>
+                    <button
+                      aria-pressed={graphTimelineDensity === "axis"}
+                      className={graphTimelineDensity === "axis" ? "is-active" : ""}
+                      onClick={() => setGraphTimelineDensity((value) => (value === "axis" ? "detail" : "axis"))}
+                      title="时间轴模式：以可视化时间线排列事件"
+                      type="button"
+                    >
+                      时间轴
+                    </button>
                     <button disabled={timelineGroups.length === 0} onClick={() => collapseAllTimelineGroups(timelineGroupLabels)} type="button">
                       折叠
                     </button>
@@ -1964,7 +2186,51 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
                     </button>
                   </div>
                 </div>
-                {timelineGroups.map((group) => (
+                {(graphTimelineDensity === "axis" && timelineGroups.length > 0) ? (
+                <div className="workspace-knowledge-timeline-axis" aria-label="Timeline 时间轴">
+                  <div className="workspace-knowledge-timeline-axis-line" />
+                  {timelineGroups
+                    .filter((group) => group.label !== "未标日期")
+                    .flatMap((group) => group.events.map((event) => ({ ...event, groupLabel: group.label })))
+                    .sort((a, b) => (graphEventTimestamp(a.date) ?? 0) - (graphEventTimestamp(b.date) ?? 0))
+                    .slice(0, 30)
+                    .map((event, idx, arr) => {
+                      const ts = graphEventTimestamp(event.date);
+                      const minTs = graphEventTimestamp(arr[0].date) ?? ts ?? Date.now();
+                      const maxTs = graphEventTimestamp(arr[arr.length - 1].date) ?? ts ?? Date.now();
+                      const range = Math.max(1, (maxTs ?? minTs ?? 0) - (minTs ?? 0));
+                      const offset = range > 0 ? ((ts ?? minTs ?? 0) - (minTs ?? 0)) / range : 0.5;
+                      const leftPct = Math.max(2, Math.min(98, offset * 100));
+                      const isSelected = selectedGraphEventId === event.id;
+                      const nodeTitle = nodeTitleById.get(event.entity_id) || "";
+                      return (
+                        <div
+                          className={`workspace-knowledge-timeline-axis-point ${isSelected ? "is-selected" : ""}`}
+                          key={event.id}
+                          onClick={() => setSelectedGraphEventId(event.id)}
+                          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedGraphEventId(event.id); } }}
+                          role="button"
+                          style={{ left: `${leftPct}%` }}
+                          tabIndex={0}
+                          title={`${event.date || "无日期"} · ${event.title} · ${nodeTitle}`}
+                        >
+                          <div className="workspace-knowledge-timeline-axis-dot" />
+                          <div className="workspace-knowledge-timeline-axis-label">
+                            <span>{event.date}</span>
+                            <strong>{graphCanvasLabel(event.title)}</strong>
+                            {nodeTitle ? <small>{nodeTitle}</small> : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  {timelineGroups.filter((group) => group.label === "未标日期").length > 0 ? (
+                    <div className="workspace-knowledge-timeline-axis-undated">
+                      <span>+{timelineGroups.filter((group) => group.label === "未标日期").reduce((sum, g) => sum + g.events.length, 0)} 个未标日期事件</span>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+              {timelineGroups.map((group) => (
                   <div className={`workspace-knowledge-timeline-group ${collapsedTimelineGroups.has(group.label) ? "is-collapsed" : ""}`} key={group.label}>
                     <div className="workspace-knowledge-timeline-date">
                       <button

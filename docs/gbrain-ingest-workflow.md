@@ -199,7 +199,7 @@ Project_R 的原则改为：原始资料提炼优先做成 Project_R extractor s
 - Agent / 管理员任务：可使用 `think`、维护、审核、纠错等流程型能力。
 - 工作区图谱：`GET /workspaces/{id}/knowledge/graph` 是客户画像和项目事件入口的第一版产品化接口，只读返回当前 workspace source 的 `nodes/edges/events/profile_cards`；它不是 `/query` 回答路径，也不跨 source 联合查询。前端工作区侧栏已支持按搜索词/实体类型筛选画像、关系和事件，点击画像、关系端点或事件进入节点详情，并可继续调用原生 graph/timeline/backlinks 上下文；侧栏小画布可展示当前筛选下的节点-关系结构，点击节点会联动详情；Timeline 区域已按月份/未标日期分组，并支持全部、有日期、未标日期和当前节点筛选，点击事件会显示事件详情和 citation 状态。
 - 工作区实体候选：`GET /workspaces/{id}/knowledge/entity-merge-candidates` 与 action 接口是 Entity Enrichment 的第一版审核入口，仅限工作区管理员；它只处理当前 workspace source 的缺失实体占位、别名沉淀、受控 frontmatter 引用改写和忽略决策，不做自动实体正文合并或删除。
-- 原生图谱上下文：`GET /workspaces/{id}/knowledge/graph/native-context` 是对 GBrain native graph/timeline/backlinks operation 的受控读取入口，必须通过 token-bound source client 限制在当前 project/customer source 内；当前 UI 已显示三类结果明细，工作区侧栏已补小型关系画布、事件详情、Timeline 月份折叠/展开、紧凑/详细密度切换、全屏大画布基础 pan/zoom 和 source preview 联动 MVP。source preview 只尝试打开安全的工作区源文件路径（`source_file` / `citation.source_file`），不直接暴露 `derived/`、`manifests/`、`.git`、`.trash`、`.pending_review` 等系统目录；无可预览源文件时只展示 citation。后续再做自动布局优化、native timeline 可视化增强和更细的来源定位。
+- 原生图谱上下文：`GET /workspaces/{id}/knowledge/graph/native-context` 是对 GBrain native graph/timeline/backlinks operation 的受控读取入口，必须通过 token-bound source client 限制在当前 project/customer source 内；当前 UI 已显示三类结果明细，工作区侧栏已补小型关系画布、事件详情、Timeline 月份折叠/展开、紧凑/详细密度切换、全屏大画布基础 pan/zoom 和 source preview 联动 MVP。source preview 只尝试打开安全的工作区源文件路径（`source_file` / `citation.source_file`），不直接暴露 `derived/`、`manifests/`、`.git`、`.trash`、`.pending_review` 等系统目录；无可预览源文件时只展示 citation。后续再做更细的来源定位。2026-06-02 已完成自动布局优化（改进力导向初始化、实体类型聚类、自适应 cooling）和 native timeline 可视化增强（时间轴密度第三档），图谱节点已按 entity_type 着色。
 
 ## 文件类型处理规则
 
