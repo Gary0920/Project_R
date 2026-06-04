@@ -4,7 +4,7 @@ Date: 2026-06-02
 
 ## Status
 
-Accepted
+Accepted, amended by [ADR 0019: GBrain-Ready Preprocessing Source Repos](0019-gbrain-ready-preprocessing-source-repos.md)
 
 ## Context
 
@@ -14,7 +14,7 @@ Project_R already has a gbrain_maintenance_worker.py daemon thread that periodic
 
 - Ticks Dream Cycle (submit scheduled maintenance jobs against company-wiki source)
 - Polls tracked Dream Cycle jobs for terminal status transitions
-- Polls tracked citation-fixer jobs and reconciles GBrain sidecars back to derived/
+- Polls tracked citation-fixer jobs and reconciles GBrain sidecars back to the current GBrain source repo. In the MVP this is `derived/`; after ADR 0019 migration it should be the relevant `gbrain-ready/` repo.
 - Runs the contradiction probe CLI against company-wiki
 - Writes audit records and notifies system admins on errors
 
@@ -36,7 +36,7 @@ The worker runs inside the Project_R backend process and does not depend on a GB
 |---|---|---|
 | Dream Cycle tick (submit autopilot-cycle) | Yes | Read-only maintenance check; GBrain autopilot-cycle does not mutate pages |
 | Dream Cycle poll (track KB jobs to terminal) | Yes | Read-only status checks; transitions trigger notifications |
-| Citation-fixer poll (reconcile sidecar to derived/) | Yes | Only polls admin-submitted jobs; reconciliation preserves derived/ Git audit |
+| Citation-fixer poll (reconcile sidecar to source repo) | Yes | Only polls admin-submitted jobs; reconciliation preserves source-repo audit. MVP writes back to `derived/`; ADR 0019 moves target audit to `gbrain-ready/`. |
 | Contradiction probe tick | Yes | Read-only discovery; produces flagged contradictions, never auto-fixes |
 | Worker error notification | Yes | Critical errors always notify system admins via notification center |
 
@@ -52,7 +52,7 @@ The worker runs inside the Project_R backend process and does not depend on a GB
 
 ### Hard rule: No automatic unattributed rewrites of company knowledge
 
-The worker must never automatically modify derived/ Markdown files without a traceable admin action. The only path that writes back to derived/ is citation-fixer job reconciliation (triggered when a previously admin-submitted citation-fixer reaches terminal state) and explicit admin rollback. The contradiction probe is read-only discovery. The derived/ local Git repo provides audit trail for every write.
+The worker must never automatically modify GBrain-ready Markdown files without a traceable admin action. The only path that writes back to the GBrain source repo is citation-fixer job reconciliation (triggered when a previously admin-submitted citation-fixer reaches terminal state) and explicit admin rollback. The contradiction probe is read-only discovery. The MVP writes back to `derived/` with local Git audit; after ADR 0019 migration, the same audit requirement applies to `gbrain-ready/` plus manifests and audit logs.
 
 ## Consequences
 

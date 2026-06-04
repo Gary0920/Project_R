@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from core.gbrain import (
-    CUSTOMER_REFERENCE_SOURCE_ID,
+    CUSTOMER_INTELLIGENCE_SOURCE_ID,
     GBrainAdapter,
     customer_source_id_for_workspace,
     customer_source_paths_for_workspace,
@@ -24,7 +24,8 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 CUSTOMER_REFERENCE_ROOT = BACKEND_DIR / "workspace_data" / "customer" / "reference"
 CUSTOMER_REFERENCE_DERIVED = CUSTOMER_REFERENCE_ROOT / "derived"
 CUSTOMER_REFERENCE_MANIFESTS = CUSTOMER_REFERENCE_ROOT / "manifests"
-CUSTOMER_REFERENCE_SOURCE_NAME = "Project_R Customer Reference"
+CUSTOMER_INTELLIGENCE_SOURCE_NAME = "Project_R Customer Intelligence"
+CUSTOMER_REFERENCE_SOURCE_NAME = CUSTOMER_INTELLIGENCE_SOURCE_NAME
 CUSTOMER_LOCAL_INDEX_MIN_SCORE = 6
 CUSTOMER_LOCAL_INDEX_BASE_SCORE = 1.2
 CUSTOMER_LOCAL_INDEX_MAX_CHARS = 1800
@@ -68,13 +69,13 @@ def customer_reference_source_plan(root: Path | None = None) -> dict[str, Any]:
     root = root or CUSTOMER_REFERENCE_ROOT
     derived = root / "derived"
     return {
-        "source_id": CUSTOMER_REFERENCE_SOURCE_ID,
-        "name": CUSTOMER_REFERENCE_SOURCE_NAME,
+        "source_id": CUSTOMER_INTELLIGENCE_SOURCE_ID,
+        "name": CUSTOMER_INTELLIGENCE_SOURCE_NAME,
         "path": str(derived.resolve()),
         "federated": False,
         "operator_command": (
-            f"gbrain sources add {CUSTOMER_REFERENCE_SOURCE_ID} "
-            f"--path {derived.resolve()} --name \"{CUSTOMER_REFERENCE_SOURCE_NAME}\" --no-federated"
+            f"gbrain sources add {CUSTOMER_INTELLIGENCE_SOURCE_ID} "
+            f"--path {derived.resolve()} --name \"{CUSTOMER_INTELLIGENCE_SOURCE_NAME}\" --no-federated"
         ),
     }
 
@@ -115,7 +116,7 @@ def compile_customer_reference_sources(root: Path | None = None) -> dict[str, An
     summary = _summary(results)
     manifest = {
         "schema_version": 1,
-        "source_id": CUSTOMER_REFERENCE_SOURCE_ID,
+        "source_id": CUSTOMER_INTELLIGENCE_SOURCE_ID,
         "source_scope": "restricted_customer_intelligence",
         "started_at": started_at,
         "finished_at": _utc_now(),
@@ -204,10 +205,10 @@ def ensure_and_sync_customer_reference(*, full: bool = False, no_embed: bool = F
         if registration.get("ok")
         else {"status": "skipped", "ok": False, "error": "customer-reference source registration failed"}
     )
-    think_client = adapter.ensure_think_source_client(CUSTOMER_REFERENCE_SOURCE_ID)
+    think_client = adapter.ensure_think_source_client(CUSTOMER_INTELLIGENCE_SOURCE_ID)
     return {
         "ok": bool(registration.get("ok") and sync_result.get("status") == "ok" and think_client.get("ok")),
-        "source_id": CUSTOMER_REFERENCE_SOURCE_ID,
+        "source_id": CUSTOMER_INTELLIGENCE_SOURCE_ID,
         "plan": plan,
         "registration": registration,
         "sync": sync_result,
@@ -221,7 +222,7 @@ def ensure_and_sync_customer_reference(*, full: bool = False, no_embed: bool = F
 
 def search_customer_reference_sources(query: str, *, limit: int = 5) -> list[dict[str, Any]]:
     adapter = GBrainAdapter()
-    response = adapter.query(query, source_id=CUSTOMER_REFERENCE_SOURCE_ID, limit=max(limit, 8), detail="medium")
+    response = adapter.query(query, source_id=CUSTOMER_INTELLIGENCE_SOURCE_ID, limit=max(limit, 8), detail="medium")
     native = response.get("result") if isinstance(response.get("result"), list) else []
     sources: list[dict[str, Any]] = []
     for item in native:
@@ -229,7 +230,7 @@ def search_customer_reference_sources(query: str, *, limit: int = 5) -> list[dic
             continue
         sources.append(
             {
-                "file": f"gbrain:{CUSTOMER_REFERENCE_SOURCE_ID}/{item.get('slug') or item.get('page_id') or ''}",
+                "file": f"gbrain:{CUSTOMER_INTELLIGENCE_SOURCE_ID}/{item.get('slug') or item.get('page_id') or ''}",
                 "source_title": str(item.get("title") or item.get("slug") or "GBrain customer source"),
                 "content": str(item.get("chunk_text") or ""),
                 "score": float(item.get("score") or 0.0),
@@ -317,13 +318,13 @@ def _local_customer_sources(query: str) -> list[dict[str, Any]]:
         excerpt = _best_excerpt(body, tokens)
         results.append(
             {
-                "file": f"gbrain:{CUSTOMER_REFERENCE_SOURCE_ID}/{rel}",
+                "file": f"gbrain:{CUSTOMER_INTELLIGENCE_SOURCE_ID}/{rel}",
                 "source_title": title,
                 "content": excerpt,
                 "score": CUSTOMER_LOCAL_INDEX_BASE_SCORE + min(score, 40) / 100,
                 "type": "gbrain_customer_reference_local_index",
                 "metadata": {
-                    "source_id": CUSTOMER_REFERENCE_SOURCE_ID,
+                    "source_id": CUSTOMER_INTELLIGENCE_SOURCE_ID,
                     "local_path": rel,
                     "content_kind": frontmatter.get("content_kind"),
                     "local_score": score,

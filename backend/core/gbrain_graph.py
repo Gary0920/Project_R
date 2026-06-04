@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from core.gbrain import CUSTOMER_REFERENCE_SOURCE_ID, load_gbrain_settings
+from core.gbrain import CUSTOMER_INTELLIGENCE_SOURCE_ID, load_gbrain_settings
 from core.gbrain_customer_sources import CUSTOMER_REFERENCE_DERIVED
 from core.gbrain_ingest import _relative_posix, _split_frontmatter, _write_markdown
 
@@ -320,7 +320,7 @@ def build_entity_merge_candidate_preview(
 
 
 def _default_derived_path(source_id: str) -> Path:
-    if source_id == CUSTOMER_REFERENCE_SOURCE_ID:
+    if source_id == CUSTOMER_INTELLIGENCE_SOURCE_ID:
         return CUSTOMER_REFERENCE_DERIVED
     settings = load_gbrain_settings()
     if source_id == settings.company_source_id:

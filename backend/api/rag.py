@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
 from core.gbrain import (
-    CUSTOMER_REFERENCE_SOURCE_ID,
+    CUSTOMER_INTELLIGENCE_SOURCE_ID,
     GBrainAdapter,
     customer_source_id_for_workspace,
     customer_source_paths_for_workspace,
@@ -89,7 +89,7 @@ class GBrainCitationFixerRequest(BaseModel):
 
 
 class GBrainEntityMergeActionRequest(BaseModel):
-    source_id: str = "customer-reference"
+    source_id: str = CUSTOMER_INTELLIGENCE_SOURCE_ID
     candidate_id: str
     action: str
 
@@ -586,7 +586,7 @@ def gbrain_contradictions(
 
 @router.get("/gbrain/graph")
 def gbrain_graph(
-    source_id: str = Query(default="customer-reference"),
+    source_id: str = Query(default=CUSTOMER_INTELLIGENCE_SOURCE_ID),
     focus: str | None = Query(default=None),
     entity_type: str | None = Query(default=None),
     limit: int = Query(default=120, ge=1, le=500),
@@ -616,7 +616,7 @@ def gbrain_graph(
 
 @router.get("/gbrain/entity-merge-candidates")
 def gbrain_entity_merge_candidates(
-    source_id: str = Query(default="customer-reference"),
+    source_id: str = Query(default=CUSTOMER_INTELLIGENCE_SOURCE_ID),
     focus: str | None = Query(default=None),
     limit: int = Query(default=80, ge=1, le=200),
     user: User = Depends(get_current_user),
@@ -644,7 +644,7 @@ def gbrain_entity_merge_candidate_action(
     db: Session = Depends(get_db),
 ):
     _is_admin(user)
-    source_id = request.source_id.strip() or "customer-reference"
+    source_id = request.source_id.strip() or CUSTOMER_INTELLIGENCE_SOURCE_ID
     derived_path = _graph_source_derived_path(db, source_id)
     if derived_path is None:
         raise HTTPException(status_code=404, detail="未知或不可用的 GBrain source")
@@ -682,13 +682,13 @@ def gbrain_entity_merge_candidate_action(
 
 @router.get("/gbrain/entity-merge-candidates/preview")
 def gbrain_entity_merge_candidate_preview(
-    source_id: str = Query(default="customer-reference"),
+    source_id: str = Query(default=CUSTOMER_INTELLIGENCE_SOURCE_ID),
     candidate_id: str = Query(..., min_length=1),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     _is_admin(user)
-    source_id = source_id.strip() or "customer-reference"
+    source_id = source_id.strip() or CUSTOMER_INTELLIGENCE_SOURCE_ID
     derived_path = _graph_source_derived_path(db, source_id)
     if derived_path is None:
         raise HTTPException(status_code=404, detail="未知或不可用的 GBrain source")
@@ -1289,7 +1289,7 @@ def _graph_source_derived_path(db: Session, source_id: str) -> Path | None:
     settings = load_gbrain_settings()
     if source_id == settings.company_source_id:
         return settings.derived_path
-    if source_id == CUSTOMER_REFERENCE_SOURCE_ID:
+    if source_id == CUSTOMER_INTELLIGENCE_SOURCE_ID:
         return CUSTOMER_REFERENCE_DERIVED
     if source_id.startswith("project-"):
         projects = (

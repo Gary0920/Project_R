@@ -4,7 +4,7 @@
 1. 不直接修改 `reference/gbrain-master` 上游源码；如发现必须修改，先停止并说明原因，优先用 Project_R adapter、配置、MCP/HTTP、GBrain CLI、GBrain 原生 operation 或 patch 记录方案解决。
 2. GBrain 负责 source、sync、query、think、citation、graph、timeline、maintain、jobs、agent/citation-fixer 等后 Markdown 知识库能力。
 3. Project_R 负责权限、UI、原始资料保管、extractor、审核、任务编排、通知、审计和管理员操作面板。
-4. 不能把客户资料写入 `company-wiki`；客户情报必须使用统一受限 source，即当前 `customer-reference`。所有客户信息在同一客户库内共存，不能再按“每个客户一个 GBrain source”设计查询边界。
+4. 不能把客户资料写入 `company-wiki`；客户情报必须使用受限客户情报 GBrain 数据范围。`customer-reference` 只是当前早期实现 source id，不是产品层术语。所有客户信息可在同一客户情报数据范围内共存，不能再按“每个客户一个 GBrain source”设计查询边界。
 5. 不要假装完成；每个模块必须有代码、入口、状态展示、失败处理、测试或最小验证。
 6. 2026-06-02 用户确认：客户复杂资料提炼（图片、ZIP、Excel、复杂附件等客户样本 extractor）暂时从本 goal 取消，不作为完成条件；当前只要求复杂客户资料不污染 GBrain，继续标记 `pending_extractor_capability`，等待真实样本后另开目标。
 
@@ -17,7 +17,7 @@
    - `docs/gbrain-agent-citation-fixer-runbook.md`
 2. 核对当前 GBrain source 状态：
    - `company-wiki`
-   - `customer-reference`
+   - 受限客户情报数据范围（当前早期实现 source id 为 `customer-reference`）
    - 当前存在的 `project-*` source
 3. 运行现有回归：
    - `backend/scripts/gbrain_query_regression.py`
@@ -40,7 +40,7 @@
    - 可按人员、公司、项目、事件、source 过滤
    - 点击节点显示来源片段和关联文件
    - 支持从图谱节点跳回 GBrain citation/source preview
-5. 增加测试或最小验证，至少用 `customer-reference` 中的 5Points、18 Mary Avenue、Aaron Morris 验证人物、公司、项目关系可展示。
+5. 增加测试或最小验证，至少用客户情报数据中的 5Points、18 Mary Avenue、Aaron Morris 验证人物、公司、项目关系可展示。
 
 第三阶段：实体增强与实体合并审核
 1. 设计 Project_R 侧实体审核模型或复用现有 KnowledgeReview：
@@ -114,7 +114,7 @@
    - 客户工作区管理员只管理该客户工作区
    - 普通用户必须被邀请或属于授权组别
    - 客户 source 默认不可被公司普通员工搜索
-2. 后端补齐客户工作区 CRUD / membership / group access；查询统一映射到 `customer-reference`，不再新增每客户独立 source mapping。
+2. 后端补齐客户工作区 CRUD / membership / group access；查询统一映射到受限客户情报 GBrain 数据范围，不再新增每客户独立 source mapping。
 3. 前端新增客户工作区权限面板：
    - 成员列表
    - 组别授权
@@ -122,8 +122,8 @@
    - 邀请/移除成员
    - source 可见性状态
    - 审计记录
-4. 客户资料上传后，只能进入统一客户 source `customer-reference`，不得流入 `company-wiki`；当前 goal 只覆盖已支持的文本类客户资料，复杂客户资料提炼暂不纳入验收。
-5. 用 `backend/workspace_data/customer/reference` 作为第一轮 reference 验收样本，后续真实客户工作区仍汇入同一个 `customer-reference`。
+4. 客户资料上传后，只能进入受限客户情报 GBrain 数据范围，不得流入 `company-wiki`；当前 goal 只覆盖已支持的文本类客户资料，复杂客户资料提炼暂不纳入验收。
+5. 用 `backend/workspace_data/customer/reference` 作为第一轮早期验收样本，后续真实客户工作区仍汇入同一个客户情报数据范围。
 
 第八阶段：质量回归与文档收口
 1. 新增或扩展回归脚本：
@@ -137,7 +137,7 @@
    - 后端相关 pytest
    - GBrain query regression
    - GBrain think regression
-   - customer-reference regression
+   - customer intelligence regression
    - 新增 graph/entity/worker/permission 回归
 3. 更新：
    - `docs/gbrain-adaptation-progress.md`

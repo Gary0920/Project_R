@@ -10,7 +10,7 @@ from typing import Any, Callable
 from sqlalchemy.orm import Session
 
 from core.gbrain import (
-    CUSTOMER_REFERENCE_SOURCE_ID,
+    CUSTOMER_INTELLIGENCE_SOURCE_ID,
     GBrainAdapter,
     GBrainSettings,
     load_gbrain_settings,
@@ -205,7 +205,7 @@ class KnowledgeSources:
             if project_source_id:
                 source_id = project_source_id
         elif workspace and str(workspace.workspace_kind or "") == "customer":
-            source_id = CUSTOMER_REFERENCE_SOURCE_ID
+            source_id = CUSTOMER_INTELLIGENCE_SOURCE_ID
 
         adapter = self.gbrain_factory()
         try:
@@ -368,7 +368,7 @@ class KnowledgeSources:
             return self.search_project_gbrain_sources(workspace, content)
         if workspace_kind != "customer":
             return []
-        source_id = CUSTOMER_REFERENCE_SOURCE_ID
+        source_id = CUSTOMER_INTELLIGENCE_SOURCE_ID
         adapter = self.gbrain_factory()
         try:
             response = adapter.query(content, source_id=source_id, limit=5, detail="medium")

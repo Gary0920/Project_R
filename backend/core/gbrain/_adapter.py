@@ -25,7 +25,11 @@ DEFAULT_COMPANY_SOURCE_NAME = "Project_R Company Wiki"
 PROJECT_SOURCE_ID_MAX_LENGTH = 32
 PROJECT_SOURCE_ID_PREFIX = "project"
 CUSTOMER_SOURCE_ID_PREFIX = "customer"
-CUSTOMER_REFERENCE_SOURCE_ID = "customer-reference"
+CUSTOMER_INTELLIGENCE_SOURCE_ID = "customer-reference"
+# Backward-compatible source id alias. The persisted GBrain source is still
+# registered as "customer-reference"; product language should say customer
+# intelligence / customer profile instead of customer reference.
+CUSTOMER_REFERENCE_SOURCE_ID = CUSTOMER_INTELLIGENCE_SOURCE_ID
 EMBEDDING_PROVIDER_ENV = {
     "openai": "OPENAI_API_KEY",
     "zeroentropyai": "ZEROENTROPY_API_KEY",
@@ -1316,7 +1320,7 @@ class GBrainAdapter:
 
     @staticmethod
     def _is_customer_source_id(source_id: str) -> bool:
-        return source_id == CUSTOMER_REFERENCE_SOURCE_ID or source_id.startswith(f"{CUSTOMER_SOURCE_ID_PREFIX}-")
+        return source_id == CUSTOMER_INTELLIGENCE_SOURCE_ID or source_id.startswith(f"{CUSTOMER_SOURCE_ID_PREFIX}-")
 
     def _supports_auto_think_source_client(self, source_id: str) -> bool:
         return self._is_project_source_id(source_id) or self._is_customer_source_id(source_id)

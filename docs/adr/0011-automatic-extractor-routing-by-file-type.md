@@ -4,7 +4,7 @@ Date: 2026-05-30
 
 ## Status
 
-Accepted
+Accepted, amended by [ADR 0019: GBrain-Ready Preprocessing Source Repos](0019-gbrain-ready-preprocessing-source-repos.md)
 
 ## Context
 
@@ -31,15 +31,14 @@ Default routing:
 | Source file condition | Default route |
 |---|---|
 | Markdown, TXT, clean DOCX text, readable transcript, readable email body | DeepSeek text extraction profile |
-| Clean/simple PDF with selectable text and reliable reading order | PDF text extraction as evidence, then DeepSeek text extraction profile |
-| Complex PDF: scanned/image PDF, multi-column layout, tables/forms, drawings/spec sheets, fragmented extraction order, key information in layout or images | MiMo vision/layout extraction profile |
-| Image, screenshot, table image, photo, drawing snapshot | MiMo vision extraction profile |
+| PDF of any kind | Local text extraction may be used as auxiliary evidence, but final preprocessing uses MiMo V2.5. Plain PDF text extraction must not directly enter GBrain. |
+| Image, screenshot, table image, photo, drawing snapshot, drawing/design image | MiMo V2.5 vision extraction profile |
 | Audio or video with no transcript | transcription workflow, then DeepSeek meeting/knowledge extraction after transcript exists |
 | Audio or video where visual frames carry knowledge | transcription workflow plus MiMo key-frame/visual extraction when implemented |
 | Email thread or mailbox export | email parser workflow plus DeepSeek text extraction; attachments are classified recursively |
 | Target knowledge type whose extractor is not implemented yet | `pending_extractor_capability` |
 
-Simple versus complex PDF is decided by diagnostics, not by file extension alone. Useful signals include selectable-text ratio, extracted text length per page, page count, table/column patterns, image/scanned-page ratio, sidecar PNG presence, and whether plain text extraction preserves a readable order.
+Earlier MVP code classified PDFs as simple or complex. The later product decision is simpler: PDF files are routed to MiMo V2.5 by default. Text extraction can still be recorded as evidence and conflict detection input, but it is not the final GBrain-ready Markdown route.
 
 Administrators may configure default model profiles and future overrides, but ordinary users should see only ingestion status and results, not provider keys or low-level routing controls.
 

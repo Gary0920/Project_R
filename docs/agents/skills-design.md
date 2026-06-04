@@ -40,9 +40,24 @@ backend/skills/
 │           ├── input-sample.md
 │           └── output-sample.md
 │
-└── enterprise/
-    └── <某个企业 skill>/
+├── enterprise/
+│   └── <某个企业 skill>/
+│
+└── preprocessors/
+    ├── README.md
+    ├── markdown-source-preprocess/
+    ├── pdf-structured-preprocess/
+    ├── drawing-pdf-vision-preprocess/
+    ├── image-screenshot-preprocess/
+    ├── meeting-transcript-preprocess/
+    ├── audio-video-transcription-preprocess/
+    ├── email-thread-preprocess/
+    ├── spreadsheet-preprocess/
+    ├── archive-preprocess/
+    └── customer-intelligence-source-preprocess/
 ```
+
+`preprocessors/` 下的 Skill 不是普通业务流程 Skill，而是资料源文件预处理能力。它们负责把不同文件类型或业务语义的源文件转成 GBrain 友好 Markdown，最终写入 `_preprocessed/.../gbrain-ready/`。每个主要文件类型必须独立成 Skill 或脚本，不能做成一个不可审查的万能 ingest Skill。
 
 ---
 
@@ -161,6 +176,66 @@ references:
 
 一个 Skill 可以有多个 output，按顺序执行。
 
+### 6.1 输出保存边界
+
+- 个人工作台中的轻量业务 Skill / Agent 输出默认只作为本轮结果展示，可复制内容或下载到本地；不提供保存到项目/客户资料的跨工作区动作。
+- 项目/客户工作区中的业务 Skill / Agent 输出也必须先作为本轮结果展示；只有用户确认保存后，才写入当前工作区文件面板。
+- 工作区 Skill 输出保存位置默认是当前工作区 `99-未归档文件`，并按当前工作区权限、审计、回收站和后续入库候选规则治理。
+- 保存到工作区文件面板不等于自动入库 GBrain；GBrain 入库仍需要显式入库动作或另行确认的自动规则。
+- 保存后的工作区 Skill / Agent 输出如果属于当前预处理 Skill 支持的文件类型，可进入该工作区待录入候选；个人工作台输出不进入待录入候选。
+
+### 6.2 预处理 Skill 输出模板
+
+预处理 Skill 的输出模板服从 GBrain 吸收质量，而不是 Project_R 自己的展示偏好。设计模板前必须先检查 GBrain schema pack、enrich skill、entity detection、timeline、graph、citation、source sync 和相关 recipe。
+
+所有预处理 Skill 输出至少包含：
+
+```markdown
+---
+source_scope: project | customer | company
+source_file: 原始文件相对路径
+source_file_sha256: ...
+source_file_type: pdf | image | email | transcript | spreadsheet | ...
+preprocess_skill: xxx
+preprocess_version: 1
+preprocess_status: succeeded | partial | failed | pending_capability
+model_profile: deepseek_text | mimo_v2_5_vision | transcription | none
+prompt_version: ...
+created_at: ...
+---
+
+# 标题
+
+## Source Summary
+这份资料是什么、来自哪里、用于什么业务场景。
+
+## Extracted Facts
+可被 GBrain 吸收的事实点。
+
+## Entities Mentioned
+出现的人、公司、项目、地点、产品等实体名称。
+
+## Events / Timeline Signals
+有时间含义的事件、会议、邮件、变更、决策、风险。
+
+## Original Evidence
+关键原文摘录、页码、时间戳、附件名、截图区域或表格位置。
+
+## Preprocess Notes
+不确定点、缺失、冲突、失败片段、待人工确认事项。
+```
+
+各 Skill 可以增加专属章节，但必须保留 evidence，不允许只输出总结。事实、解释和不确定点必须分开。
+
+### 6.3 预处理模型路由
+
+- 纯文本资料处理使用 DeepSeek。
+- PDF、截图、图纸、设计图片、视觉版式资料统一使用 MiMo V2.5；不使用 MiMo V2.5 Pro。
+- PDF 可做本地文本抽取作为辅助证据，但最终 GBrain-ready Markdown 统一由 MiMo V2.5 生成；纯文本抽取结果不得直接入 GBrain。
+- 会议音频/视频先走转写脚本，再进入会议结构化预处理。
+- 用户不在前端选择 API Key；Project_R 后端根据文件类型和预处理 Skill 自动路由模型。
+- 高影响资料可以输出 `partial` 或 `pending_review`，不得编造补全缺失事实。
+
 ---
 
 ## 七、Skill 加载与执行
@@ -234,7 +309,9 @@ Skill 调用必须遵守 Project_R 的统一上下文优先级：
 
 全局底层规则是后端强制注入内容，不属于用户可切换提示词；项目资料或附件与全局规则冲突时，以全局规则为准。
 
-Skill 不得默认读取用户本地私人工作区。只有用户在当前会话中明确选择附件、确认发送片段/摘要/原文件，或明确保存到项目资料后，Skill 才能使用对应内容。保存到项目资料后的副本按项目权限、审计和 GBrain 项目 source 规则治理。
+Skill 不得默认读取用户本地文件或个人工作台材料。只有用户在当前会话中明确选择附件、确认发送片段/摘要/原文件，或在当前项目/客户工作区内明确引用已有工作区文件后，Skill 才能使用对应内容。个人工作台不提供把附件或生成结果保存到项目/客户资料的跨工作区动作；项目/客户资料的上传、生成、引用和治理应在对应工作区内完成。
+
+预处理 Skill 读取源文件前必须由用户或管理员通过工作区文件面板的“录入”或“录入此文件”显式触发。文件夹录入默认递归当前打开路径及子文件夹，但必须二次确认。
 
 ### 8.3 模板路径
 
@@ -295,5 +372,6 @@ uvicorn main:app --reload
 - 业务工作流清单：根目录 `Project_R 业务工作流清单.md`
 - 产品范围：根目录 `Project_R PRD.md`
 - 阶段进度：根目录 `Project_R 开发流程.md`
-- 公司知识库 source：`backend/workspace_data/global/company-wiki/derived/`，由 GBrain `company-wiki` 索引
+- GBrain source repo 新架构：`backend/workspace_data/_preprocessed/.../gbrain-ready/`
+- 预处理 Skill 目录说明：`backend/skills/preprocessors/README.md`
 - Proma 参考文件不再保留在 Git 仓库内；需要参考时由 Gary 提供本机参考副本或截图

@@ -4,7 +4,7 @@ Date: 2026-05-28
 
 ## Status
 
-Accepted
+Accepted for MVP, amended by [ADR 0019: GBrain-Ready Preprocessing Source Repos](0019-gbrain-ready-preprocessing-source-repos.md)
 
 ## Context
 
@@ -26,6 +26,8 @@ backend/workspace_data/global/company-wiki/
 Initialize `backend/workspace_data/global/company-wiki/derived/` as a local Git repository.
 
 This Git repository is local-only by default. It is used for audit, diff, and rollback of generated/reviewable Markdown. It must not be treated as the Project_R application repository, and it must not be configured to push to GitHub by default.
+
+This decision describes the first GBrain MVP implementation. ADR 0019 changes the target source-repo layout: generated GBrain-ready Markdown should move to `backend/workspace_data/_preprocessed/.../gbrain-ready/`, with process files in `runs/` and state in `manifests/`. After that migration, local Git audit should apply to the relevant `gbrain-ready/` source repo or an equivalent manifest/audit-log mechanism, not to user-visible source-file folders.
 
 ## Consequences
 

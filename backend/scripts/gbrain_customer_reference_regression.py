@@ -45,20 +45,20 @@ def main() -> int:
     _load_dotenv(BACKEND_DIR / ".env")
     sys.path.insert(0, str(BACKEND_DIR))
 
-    from core.gbrain import CUSTOMER_REFERENCE_SOURCE_ID, GBrainAdapter
+    from core.gbrain import CUSTOMER_INTELLIGENCE_SOURCE_ID, GBrainAdapter
     from core.gbrain_customer_sources import search_customer_reference_sources
 
     adapter = GBrainAdapter()
     status = adapter.source_status(
         {
-            "source_id": CUSTOMER_REFERENCE_SOURCE_ID,
-            "name": "Project_R Customer Reference",
+            "source_id": CUSTOMER_INTELLIGENCE_SOURCE_ID,
+            "name": "Project_R Customer Intelligence",
             "path": str((BACKEND_DIR / "workspace_data" / "customer" / "reference" / "derived").resolve()),
             "federated": False,
         }
     )
     if not status.get("registered"):
-        print("GBrain customer regression preflight failed: customer-reference source is not registered.")
+        print("GBrain customer intelligence regression preflight failed: customer source is not registered.")
         return 2
 
     cases = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
@@ -75,11 +75,11 @@ def main() -> int:
         print(f"PASS {case['id']}: {sources[0].get('source_title')} -> {sources[0].get('file')}")
 
     if failed_cases:
-        print("GBrain customer-reference regression failed:")
+        print("GBrain customer intelligence regression failed:")
         for failure in failed_cases:
             print(f"- {failure}")
         return 1
-    print(f"GBrain customer-reference regression passed ({len(cases)} cases).")
+    print(f"GBrain customer intelligence regression passed ({len(cases)} cases).")
     return 0
 
 

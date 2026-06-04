@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet("Start", "Stop", "Status", "Restart", "InstallShortcuts")]
     [string]$Action = "Start",
     [int]$BackendPort = 8000,
@@ -302,6 +302,59 @@ function Get-PortStatusText {
     return ($lines -join [Environment]::NewLine)
 }
 
+function Get-PrimaryIPv4 {
+    try {
+        $route = Get-NetRoute -DestinationPrefix "0.0.0.0/0" |
+            Sort-Object RouteMetric, InterfaceMetric |
+            Select-Object -First 1
+        if ($null -eq $route) {
+            return $null
+        }
+        $address = Get-NetIPAddress -AddressFamily IPv4 -InterfaceIndex $route.InterfaceIndex |
+            Where-Object { $_.IPAddress -notlike "169.254.*" -and $_.IPAddress -ne "127.0.0.1" } |
+            Select-Object -First 1
+        return $address.IPAddress
+    } catch {
+        return $null
+    }
+}
+
+function Add-ProjectRFirewallRule {
+    param([int]$Port)
+
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+    if (-not $isAdmin) {
+        Write-LauncherLog "Firewall rule not added: not running as Administrator."
+        Write-Host "Firewall rule not added (not Admin). Run as Administrator to auto-add firewall rule." -ForegroundColor Yellow
+        return
+    }
+
+    $ruleName = "Project_R Backend LAN ($Port)"
+    try {
+        $existingRule = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction Stop
+        if ($null -eq $existingRule) {
+            New-NetFirewallRule `
+                -DisplayName $ruleName `
+                -Direction Inbound `
+                -Action Allow `
+                -Protocol TCP `
+                -LocalPort $Port `
+                -Profile Private | Out-Null
+            Write-LauncherLog "Added firewall rule: $ruleName"
+            Write-Host "Added firewall rule: $ruleName" -ForegroundColor Green
+        } else {
+            Write-LauncherLog "Firewall rule already exists: $ruleName"
+            Write-Host "Firewall rule already exists: $ruleName" -ForegroundColor Yellow
+        }
+    } catch {
+        Write-LauncherLog "Firewall cmdlet unavailable (NetSecurity module missing): $_"
+        Write-Host "Firewall rule not checked (NetSecurity module unavailable)." -ForegroundColor Yellow
+    }
+}
+
 function Assert-DevDependencies {
     if (-not (Test-Path $BackendDir)) {
         throw "Backend directory not found: $BackendDir"
@@ -426,6 +479,7 @@ function Start-ProjectR {
     "" | Set-Content -LiteralPath $FrontendErrorLog -Encoding UTF8
 
     Write-LauncherLog "Starting Project_R"
+    Add-ProjectRFirewallRule -Port $BackendPort
     Stop-ProjectDevProcesses
     $reuseBackend = $false
     try {
@@ -448,7 +502,7 @@ function Start-ProjectR {
         "`$ErrorActionPreference = 'Stop'",
         "`$env:PROJECT_R_LAUNCHER = '1'",
         "Set-Location -LiteralPath $(Quote-PS $BackendDir)",
-        "& $(Quote-PS $BackendPython) -m uvicorn main:app --reload --host 127.0.0.1 --port $BackendPort"
+        "& $(Quote-PS $BackendPython) -m uvicorn main:app --reload --host 0.0.0.0 --port $BackendPort"
     ) -join "; "
     $frontendCommand = @(
         "`$ErrorActionPreference = 'Stop'",
@@ -494,8 +548,16 @@ function Start-ProjectR {
     } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $StateFile -Encoding UTF8
 
     $backendPidText = if ($backendProcess) { [string]$backendProcess.Id } else { "reused existing service" }
-    Write-LauncherLog "Project_R started. Backend launcher PID $backendPidText, frontend launcher PID $($frontendProcess.Id)"
+    $lanIp = Get-PrimaryIPv4
+    $lanUrl = if ($lanIp) { "http://$lanIp`:$BackendPort" } else { "LAN IP not detected" }
+    Write-LauncherLog "Project_R started. Backend launcher PID $backendPidText, frontend launcher PID $($frontendProcess.Id), LAN $lanUrl"
     Write-Host "Project_R started."
+
+    if ($lanIp) {
+        Show-LauncherMessage -Title "Project_R 已启动" -Message "后端 (本机): http://127.0.0.1:$BackendPort`n前端 (本机): http://127.0.0.1:$FrontendPort`n`n局域网访问: $lanUrl"
+    } else {
+        Show-LauncherMessage -Title "Project_R 已启动" -Message "后端 (本机): http://127.0.0.1:$BackendPort`n前端 (本机): http://127.0.0.1:$FrontendPort`n`n未能检测到局域网IP，请在终端运行 ipconfig 获取地址"
+    }
 }
 
 function Stop-ProjectR {
@@ -523,32 +585,83 @@ function Stop-ProjectR {
 
 function Show-ProjectStatus {
     New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
-    $processes = @(Get-ProjectProcesses)
-    $processLines = if ($processes.Count -gt 0) {
-        $processes | Sort-Object ProcessId | ForEach-Object {
-            "PID $($_.ProcessId) $($_.Name)"
-        }
-    } else {
-        @("No Project_R dev processes found")
+
+    $backendHealthy = Test-ProjectBackendService -Port $BackendPort
+    $backendListening = (Get-PortListeners -Port $BackendPort).Count -gt 0
+    $frontendListening = (Get-PortListeners -Port $FrontendPort).Count -gt 0
+    $frontendHealthy = if ($frontendListening) { Test-HttpOk -Url "http://127.0.0.1:$FrontendPort/" } else { $false }
+    $lanIp = Get-PrimaryIPv4
+    $lanUrl = if ($lanIp) { "http://$lanIp`:$BackendPort" } else { "" }
+    $firewallRuleName = "Project_R Backend LAN ($BackendPort)"
+    $firewallExists = $false
+    try {
+        $firewallExists = $null -ne (Get-NetFirewallRule -DisplayName $firewallRuleName -ErrorAction Stop)
+    } catch {
+        $firewallExists = $false
     }
 
-    $message = @(
-        (Get-PortStatusText -Name "Backend" -Port $BackendPort -HealthUrl "http://127.0.0.1:$BackendPort/health"),
-        "",
-        (Get-PortStatusText -Name "Frontend" -Port $FrontendPort -HealthUrl "http://127.0.0.1:$FrontendPort/"),
-        "",
-        "Project_R process count: $($processes.Count)",
-        ($processLines -join [Environment]::NewLine),
-        "",
-        "Logs:",
-        $BackendLog,
-        $BackendErrorLog,
-        $FrontendLog,
-        $FrontendErrorLog,
-        $LauncherLog
-    ) -join [Environment]::NewLine
+    $llmConfigured = $null
+    $gbrainOk = $null
+    if ($backendHealthy) {
+        try { $llmConfigured = (Invoke-RestMethod -Uri "http://127.0.0.1:$BackendPort/health/llm" -TimeoutSec 3).configured } catch { $llmConfigured = $false }
+        try { $gbrainOk = (Invoke-RestMethod -Uri "http://127.0.0.1:$BackendPort/health/gbrain" -TimeoutSec 3).ok } catch { $gbrainOk = $false }
+    }
 
-    Show-LauncherMessage -Title "Project_R Status" -Message $message
+    function DotColor { param($C) if ($C -eq $true) { return "#22c55e" } if ($C -eq $false) { return "#ef4444" } return "#9ca3af" }
+    function StatRow { param($L, $C, $Ok, $Fail) $color = DotColor $C; $txt = if ($C -eq $true) { $Ok } elseif ($C -eq $false) { $Fail } else { "等待检测..." }; return "<div class='r'><span class='d' style='background:$color'></span><span class='l'>$L</span><span class='v'>$txt</span></div>" }
+
+    $now = Get-Date -Format 'HH:mm:ss'
+    $rows = @(
+        (StatRow "后端服务" $backendHealthy "运行正常 (端口 $BackendPort)" $(if ($backendListening) { "端口占用但健康检查失败" } else { "未运行" })),
+        (StatRow "前端服务" $frontendHealthy "运行正常 (端口 $FrontendPort)" $(if ($frontendListening) { "端口占用但页面无响应" } else { "未运行" })),
+        (StatRow "局域网访问" ([bool]$lanIp) "<code>$lanUrl</code>" "未检测到局域网IP"),
+        (StatRow "防火墙规则" $firewallExists "入站规则已添加" "未添加 (非管理员无法自动添加)"),
+        (StatRow "LLM 供应商" $llmConfigured "已配置" $(if ($null -eq $llmConfigured) { "后端未运行" } else { "未配置或不可用" })),
+        (StatRow "GBrain 知识库" $gbrainOk "就绪" $(if ($null -eq $gbrainOk) { "后端未运行" } else { "不可用" }))
+    )
+
+    $html = @"
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="refresh" content="10">
+<title>Project_R 服务状态</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,'Microsoft YaHei','PingFang SC',sans-serif;max-width:620px;margin:40px auto;padding:0 16px;background:#f0f2f5}
+.c{background:#fff;border-radius:12px;padding:24px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+h1{font-size:22px;font-weight:700;margin-bottom:4px}
+.s{color:#888;font-size:13px;margin-bottom:20px}
+.r{display:flex;align-items:center;padding:12px 8px;border-bottom:1px solid #f3f4f6}
+.r:last-child{border-bottom:none}
+.d{width:10px;height:10px;border-radius:50%;margin-right:12px;flex-shrink:0}
+.l{font-weight:600;font-size:14px;min-width:110px;color:#374151}
+.v{color:#6b7280;font-size:14px;word-break:break-all}
+.v code{font-family:'SF Mono',Consolas,monospace;color:#2563eb;font-size:13px}
+.f{text-align:center;color:#9ca3af;font-size:12px;margin-top:20px}
+</style>
+</head>
+<body>
+<div class="c">
+<h1>&#x1F535; Project_R 服务状态</h1>
+<p class="s">刷新时间: $now &#183; 每 10 秒自动刷新</p>
+$($rows -join "`n")
+</div>
+<p class="f">Project_R &#183; 状态面板</p>
+</body>
+</html>
+"@
+
+    try {
+        $pagePath = Join-Path $LogDir "status.html"
+        $html | Set-Content -LiteralPath $pagePath -Encoding UTF8
+        Start-Process $pagePath
+        Write-LauncherLog "Status page opened in browser: $pagePath"
+    } catch {
+        Write-LauncherLog "Failed to open status page: $_"
+        Show-LauncherMessage -Title "Project_R Status" -Message "无法打开状态页面，请检查浏览器设置。"
+    }
 }
 
 function Install-ProjectShortcuts {
@@ -586,7 +699,10 @@ function Install-ProjectShortcuts {
         "Desktop shortcuts installed:",
         (Join-Path $desktop $startName),
         (Join-Path $desktop $statusName),
-        (Join-Path $desktop $stopName)
+        (Join-Path $desktop $stopName),
+        "",
+        "提示：启动 (Start) 现已自动开通局域网和防火墙规则。",
+        '如果桌面上有旧的"内网端口"快捷方式，可以手动删除。'
     ) -join [Environment]::NewLine
     Show-LauncherMessage -Title "Project_R Shortcuts" -Message $message
 }

@@ -4,7 +4,7 @@ Date: 2026-05-30
 
 ## Status
 
-Accepted
+Accepted, amended by [ADR 0019: GBrain-Ready Preprocessing Source Repos](0019-gbrain-ready-preprocessing-source-repos.md)
 
 ## Context
 
@@ -18,12 +18,13 @@ Project_R owns the raw-file-to-reviewed-Markdown stage.
 
 Project_R will store original files, choose the correct extraction skill, call the configured model provider, generate structured Markdown, and write manifests. Whether the output needs a review queue depends on the source scope: administrator-entered company knowledge can go straight to the company source, project workspace files go straight to the project source after a user-triggered ingest action, and private-space attachments never flow into the company source.
 
-GBrain receives the Markdown that Project_R has produced under the relevant `derived/` source path. After that point, GBrain owns the knowledge-base core work: source sync/import, chunking, embeddings, query, think, citations, graph, timeline, maintain, jobs, contradiction checks, and other post-Markdown knowledge operations.
+GBrain receives the Markdown that Project_R has produced under the relevant source-scoped GBrain-ready path. The MVP used `derived/`; ADR 0019 moves this to `_preprocessed/.../gbrain-ready/`. After that point, GBrain owns the knowledge-base core work: source sync/import, chunking, embeddings, query, think, citations, graph, timeline, maintain, jobs, contradiction checks, schema, entity enrichment, and other post-Markdown knowledge operations.
 
 Model usage follows Project_R's existing backend LLM provider configuration:
 
 - DeepSeek is the default extraction model for text-only original content such as Markdown, TXT, DOCX text, transcripts, email bodies, and other readable text.
-- MiMo is the default extraction model for formats DeepSeek cannot reliably understand directly, including visual PDFs, scanned PDFs, screenshots, images, tables embedded as images, and layout-heavy documents.
+- MiMo V2.5 is the default extraction model for PDFs, screenshots, images, drawings, design images, tables embedded as images, and layout-heavy documents. Project_R should not use MiMo V2.5 Pro for this route.
+- PDF preprocessing may use local text extraction as auxiliary evidence, but PDF output is unified through MiMo V2.5. Plain extracted PDF text must not directly enter GBrain.
 - API keys are managed through Project_R backend model/provider configuration. They are not exposed to the frontend and are not duplicated as user-managed GBrain keys.
 - Users do not choose API keys during ingestion. Project_R classifies file type and extraction complexity, then chooses the backend `model_profile` or pending-capability state as defined in `docs/adr/0011-automatic-extractor-routing-by-file-type.md`.
 
@@ -33,7 +34,7 @@ The source-scoped review and ownership policy is defined in `docs/adr/0010-sourc
 
 ## Consequences
 
-- The Project_R-to-GBrain chain is easier to reason about: `raw original file -> Project_R extraction skill -> source-scoped Markdown -> GBrain source sync -> query/think`.
+- The Project_R-to-GBrain chain is easier to reason about: `source file -> Project_R preprocessing skill -> source-scoped GBrain-ready Markdown -> GBrain source sync -> query/think/enrich/graph/timeline`.
 - GBrain no longer needs to be made responsible for every original file type before Project_R can progress.
 - Extraction quality, model choice, token cost, review status, and retry policy are controlled in Project_R, close to users, permissions, projects, audit logs, and admin UI.
 - GBrain remains an upstream component for knowledge operations after Markdown exists, which reduces the need to patch GBrain raw-ingestion internals.

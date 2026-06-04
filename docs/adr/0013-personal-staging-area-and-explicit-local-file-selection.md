@@ -4,7 +4,7 @@ Date: 2026-06-02
 
 ## Status
 
-Accepted
+Mostly superseded by [ADR 0015: Retire Personal File Panel](0015-retire-personal-file-panel.md), [ADR 0017: Business Files Belong in Project or Customer Workspaces](0017-business-files-belong-in-project-or-customer-workspaces.md), and [ADR 0019: GBrain-Ready Preprocessing Source Repos](0019-gbrain-ready-preprocessing-source-repos.md)
 
 ## Context
 
@@ -65,15 +65,15 @@ Project_R no longer treats a fixed local private workspace root as the product a
 - Ordinary chat in the personal workspace does not automatically query company knowledge. When the user explicitly uses `/query` or the knowledge query entry point, the personal workspace may query the company-wide `company-wiki`.
 - The personal workspace has no project source by default. Only project workspaces may query their current project source.
 - Personal workspace conversations and project conversations are independent. The personal workspace has no current project context.
-- Personal workspace files must not use "save to current project files" semantics. They may only offer a "复制到项目" action.
-- After choosing "复制到项目", Project_R shows the user a list of accessible or joined projects. The user manually selects the target project, and the file is copied by default into that project's `99-未归档文件`.
-- Copying into a project must check the user's upload permission for the target project. Being able to enter or search a project does not automatically mean the user may copy files into that project.
-- After the copy, the project copy follows the target project's permissions, audit logs, per-workspace `.trash` recycle-bin behavior, and GBrain project source rules.
+- Superseded 2026-06-04: personal workspace files and personal Skill outputs must not offer "save to current project files" or "复制到项目" cross-workspace semantics.
+- If material belongs to a project or customer, the user should switch to that workspace and upload, reference, or generate the file there.
+- Project/customer workspace Skill outputs may be saved only into the current workspace after explicit user confirmation, defaulting to `99-未归档文件`.
+- After saving inside a project/customer workspace, the file follows that workspace's permissions, audit logs, `.trash` recycle-bin behavior, and GBrain source rules.
 - Project file "一键录入项目知识库" is available only to system administrators or administrators of that project. Ordinary project visitors and ordinary members cannot trigger one-click project knowledge ingest.
 
 ## Consequences
 
-- Product language becomes clearer: local files are "本机选择文件", server-held personal files belong to `{username}的工作台`, and shared project files are "项目资料".
+- Product language becomes clearer: local files are "本机选择文件", session attachments are temporary conversation context, and shared business files are "项目资料" or "客户资料". The older idea that server-held personal files belong to `{username}的工作台` is superseded by ADR 0015 and ADR 0017.
 - Project_R avoids maintaining a second file-management system for a fixed local private folder.
 - The UI must not label the personal workspace as project reference files or company project material.
 - Existing code and documentation that mention `私人空间`, `本地私人工作区`, or `Project_R/私人空间` must be migrated or treated as legacy wording.

@@ -4,7 +4,7 @@ Date: 2026-05-28
 
 ## Status
 
-Accepted
+Superseded by [ADR 0019: GBrain-Ready Preprocessing Source Repos](0019-gbrain-ready-preprocessing-source-repos.md)
 
 ## Context
 
@@ -27,6 +27,8 @@ Gary prefers fewer backend folders for the same knowledge-source concept, and Pr
 ## Decision
 
 Use `backend/workspace_data/global/company-wiki/derived/` directly as the GBrain `company-wiki` source repo.
+
+This was the first GBrain MVP layout. ADR 0019 replaces it for the later architecture: GBrain source repos point to `backend/workspace_data/_preprocessed/.../gbrain-ready/`, while user source-file folders no longer contain `derived/`.
 
 Project_R will not create a separate GBrain repository for `company-wiki` and then synchronize `derived/` into it.
 

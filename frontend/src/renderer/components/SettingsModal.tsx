@@ -92,6 +92,8 @@ import {
   XmarkIcon,
 } from "./LineIcons";
 
+const CUSTOMER_INTELLIGENCE_SOURCE_ID = "customer-reference";
+
 type ConnectionState = "idle" | "checking" | "ok" | "error";
 type SettingsSection =
   | "general"
@@ -499,7 +501,7 @@ export function SettingsModal({ isOpen, onClose, initialSection, initialAdminTab
     maxTurns: "30",
   });
   const [gbrainGraphDraft, setGBrainGraphDraft] = useState({
-    sourceId: "customer-reference",
+    sourceId: CUSTOMER_INTELLIGENCE_SOURCE_ID,
     focus: "5Points",
     entityType: "",
   });
@@ -1459,7 +1461,7 @@ export function SettingsModal({ isOpen, onClose, initialSection, initialAdminTab
     setAdminMessage("正在加载 GBrain 关系图谱...");
     try {
       const result = await getGBrainGraph(apiOptions, {
-        source_id: gbrainGraphDraft.sourceId.trim() || "customer-reference",
+        source_id: gbrainGraphDraft.sourceId.trim() || CUSTOMER_INTELLIGENCE_SOURCE_ID,
         focus: gbrainGraphDraft.focus.trim() || undefined,
         entity_type: gbrainGraphDraft.entityType.trim() || undefined,
         limit: 120,
@@ -1479,7 +1481,7 @@ export function SettingsModal({ isOpen, onClose, initialSection, initialAdminTab
     setAdminMessage("正在加载 GBrain 实体合并候选...");
     try {
       const result = await getGBrainEntityMergeCandidates(apiOptions, {
-        source_id: gbrainGraphDraft.sourceId.trim() || "customer-reference",
+        source_id: gbrainGraphDraft.sourceId.trim() || CUSTOMER_INTELLIGENCE_SOURCE_ID,
         focus: gbrainGraphDraft.focus.trim() || undefined,
         limit: 80,
       });

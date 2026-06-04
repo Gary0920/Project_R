@@ -1,0 +1,41 @@
+{
+  "name": "project-r-frontend",
+  "version": "0.1.0",
+  "description": "Project_R internal AI desktop client",
+  "author": "Project_R",
+  "private": true,
+  "type": "module",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "dev": "bun run scripts/dev.mjs",
+    "build": "bun run typecheck && vite build && tsc -p tsconfig.main.json && bun run scripts/copy-preload.mjs",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.main.json --noEmit",
+    "test:private-workspace": "bun scripts/test-private-workspace.ts",
+    "test:update-download": "bun scripts/test-update-download.mjs",
+    "dist": "bun run build && electron-builder --config electron-builder.yml",
+    "dist:win": "bun run build && electron-builder --win nsis --config electron-builder.yml",
+    "dist:dir": "bun run build && electron-builder --dir --config electron-builder.yml"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.10.3",
+    "@codemirror/lang-markdown": "^6.5.0",
+    "@codemirror/language": "^6.12.3",
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/view": "^6.43.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "iconoir": "^7.11.0",
+    "jotai": "^2.15.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.1",
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "electron": "^39.0.0",
+    "electron-builder": "^26.8.1"
+  }
+}

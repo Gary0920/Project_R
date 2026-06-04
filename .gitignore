@@ -1,3 +1,6 @@
+# CodeGraph semantic index (local, not committed)
+.codegraph/
+
 node_modules/
 dist/
 build/
