@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from core.llm import LLMClient, LLMConfigurationError, get_llm_client
+from core.preprocess_model_policy import ensure_mimo_v2_5_model, ensure_profile_allowed, ensure_text_preprocess_model
 
 
 DEFAULT_MODEL_PROFILE = "mimo-v2-5"
@@ -17,6 +18,7 @@ DEFAULT_MAX_RAW_BYTES = 37_000_000
 DEFAULT_TEMPERATURE = 0.0
 DEFAULT_SEGMENT_SECONDS = 300
 DEFAULT_FFMPEG_TIMEOUT_SECONDS = 900
+TRANSCRIPTION_PROMPT_VERSION = "rules-media-transcription-v1"
 SUPPORTED_AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg", ".flac"}
 SUPPORTED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".wmv"}
 DEFAULT_TERMINOLOGY = (
@@ -92,9 +94,14 @@ class MediaTranscriptionResult:
 
 
 def load_media_transcription_options() -> MediaTranscriptionOptions:
+    model_profile = os.getenv("GBRAIN_MEDIA_TRANSCRIPTION_MODEL_PROFILE", DEFAULT_MODEL_PROFILE).strip() or DEFAULT_MODEL_PROFILE
+    refinement_model_profile = (
+        os.getenv("GBRAIN_TRANSCRIPT_REFINEMENT_MODEL_PROFILE", "deepseek-flash").strip() or "deepseek-flash"
+    )
+    ensure_profile_allowed(model_profile, route_name="meeting-audio-video-transcription")
+    ensure_profile_allowed(refinement_model_profile, route_name="meeting-audio-video-transcript-refinement")
     return MediaTranscriptionOptions(
-        model_profile=os.getenv("GBRAIN_MEDIA_TRANSCRIPTION_MODEL_PROFILE", DEFAULT_MODEL_PROFILE).strip()
-        or DEFAULT_MODEL_PROFILE,
+        model_profile=model_profile,
         max_raw_bytes=_env_int("GBRAIN_MEDIA_TRANSCRIPTION_MAX_RAW_BYTES", DEFAULT_MAX_RAW_BYTES, 1_000_000, 200_000_000),
         temperature=_env_float("GBRAIN_MEDIA_TRANSCRIPTION_TEMPERATURE", DEFAULT_TEMPERATURE, 0.0, 1.0),
         video_fps=_env_float("GBRAIN_MEDIA_TRANSCRIPTION_VIDEO_FPS", 0.2, 0.1, 10.0),
@@ -109,8 +116,7 @@ def load_media_transcription_options() -> MediaTranscriptionOptions:
             7200,
         ),
         refinement_enabled=_env_bool("GBRAIN_TRANSCRIPT_REFINEMENT_ENABLED", True),
-        refinement_model_profile=os.getenv("GBRAIN_TRANSCRIPT_REFINEMENT_MODEL_PROFILE", "deepseek-flash").strip()
-        or "deepseek-flash",
+        refinement_model_profile=refinement_model_profile,
         terminology=_load_terminology(),
     )
 
@@ -127,6 +133,7 @@ def transcribe_media_to_markdown(
         raise LLMConfigurationError(
             f"Media transcription model profile is not configured: {options.model_profile}"
         )
+    ensure_mimo_v2_5_model(client.settings, route_name="meeting-audio-video-transcription")
 
     warnings: list[str] = []
     media_input_path = source_path
@@ -384,6 +391,7 @@ def _refine_transcript(transcript: str, file_name: str, options: MediaTranscript
         raise LLMConfigurationError(
             f"Transcript refinement model profile is not configured: {options.refinement_model_profile}"
         )
+    ensure_text_preprocess_model(client.settings, route_name="meeting-audio-video-transcript-refinement")
     glossary = "\n".join(f"- {term}" for term in options.terminology)
     prompt = f"""请对下面的会议转写做“说话人标签统一 + 术语纠错”，不要总结，不要新增事实。
 

@@ -109,6 +109,41 @@ class GBrainProjectIngestTests(unittest.TestCase):
             self.assertTrue((self._project_ready() / "meetings" / "启动会.md").exists())
             self.assertFalse((self._project_ready() / "documents" / "报价说明.md").exists())
 
+    def test_project_docx_uses_docx_text_preprocessor(self):
+        from docx import Document
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "project" / "BFI" / "BG007"
+            meeting_dir = root / "03-会议纪要"
+            meeting_dir.mkdir(parents=True)
+            source = meeting_dir / "启动会.docx"
+            document = Document()
+            document.add_paragraph("会议主题：项目启动")
+            table = document.add_table(rows=2, cols=2)
+            table.cell(0, 0).text = "事项"
+            table.cell(0, 1).text = "负责人"
+            table.cell(1, 0).text = "确认图纸"
+            table.cell(1, 1).text = "Gary"
+            document.save(str(source))
+
+            manifest = compile_project_workspace_sources(
+                self._workspace(root),
+                self._settings(),
+                enable_pdf_structured_extraction=False,
+            )
+
+            target = self._project_ready() / "meetings" / "启动会.md"
+            self.assertEqual(manifest["summary"]["compiled"], 1)
+            self.assertTrue(target.exists())
+            frontmatter, body = self._read_frontmatter(target)
+            self.assertEqual(frontmatter["preprocess_skill"], "docx-text-preprocess")
+            self.assertEqual(frontmatter["source_scope"], "project")
+            self.assertEqual(frontmatter["source_file"], "03-会议纪要/启动会.docx")
+            self.assertEqual(frontmatter["content_kind"], "meeting_transcript")
+            self.assertEqual(frontmatter["docx_table_count"], 1)
+            self.assertIn("## Extracted Facts", body)
+            self.assertIn("| 事项 | 负责人 |", body)
+
     def test_project_complex_pdf_is_pending_capability_until_structured_extraction_is_enabled(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "project" / "BFI" / "BG007"
@@ -133,6 +168,32 @@ class GBrainProjectIngestTests(unittest.TestCase):
             self.assertEqual(manifest["items"][0]["extraction_complexity"], "vision_required")
             self.assertEqual(manifest["items"][0]["extractor_profile"], "mimo_vision")
             self.assertIn("structured extraction", manifest["items"][0]["error"])
+
+    def test_project_spreadsheet_is_pending_capability(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "project" / "BFI" / "BG007"
+            sheet = root / "01-合同与报价" / "报价表.xlsx"
+            sheet.parent.mkdir(parents=True)
+            sheet.write_bytes(b"fake xlsx")
+
+            manifest = compile_project_workspace_sources(
+                self._workspace(root),
+                self._settings(),
+                enable_pdf_structured_extraction=False,
+            )
+
+            target = self._project_ready() / "commercial" / "报价表.md"
+            self.assertEqual(manifest["summary"]["total"], 1)
+            self.assertEqual(manifest["summary"]["compiled"], 0)
+            self.assertEqual(manifest["summary"]["pending_extractor_capability"], 1)
+            self.assertFalse(target.exists())
+            item = manifest["items"][0]
+            self.assertEqual(item["source_file"], "01-合同与报价/报价表.xlsx")
+            self.assertEqual(item["status"], "pending_extractor_capability")
+            self.assertEqual(item["file_kind"], "spreadsheet")
+            self.assertEqual(item["extraction_status"], "pending_spreadsheet_extraction")
+            self.assertEqual(item["preprocess_skill"], "spreadsheet-preprocess")
+            self.assertEqual(item["preprocess_status"], "pending_capability")
 
     def test_project_audio_with_transcript_sidecar_goes_directly_to_project_source(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -163,6 +224,10 @@ class GBrainProjectIngestTests(unittest.TestCase):
             frontmatter, body = self._read_frontmatter(target)
             self.assertEqual(frontmatter["project_r_workspace_id"], 7)
             self.assertEqual(frontmatter["content_kind"], "meeting_structured_extract")
+            self.assertEqual(frontmatter["preprocess_skill"], "meeting-audio-video-preprocess")
+            self.assertEqual(frontmatter["source_file_type"], "mp4")
+            self.assertEqual(frontmatter["prompt_version"], "rules-meeting-audio-video-v1")
+            self.assertEqual(frontmatter["preprocess_status"], "succeeded")
             self.assertEqual(frontmatter["review_status"], "approved")
             self.assertEqual(frontmatter["source_scope_review_policy"], "project_no_admin_review")
             self.assertEqual(frontmatter["project_r_transcript_file"], "03-会议纪要/site-meeting.transcript.txt")
@@ -208,6 +273,10 @@ class GBrainProjectIngestTests(unittest.TestCase):
             self.assertTrue(target.exists())
             frontmatter, body = self._read_frontmatter(target)
             self.assertEqual(frontmatter["content_kind"], "project_pdf_structured_extract")
+            self.assertEqual(frontmatter["preprocess_skill"], "drawing-pdf-vision-preprocess")
+            self.assertEqual(frontmatter["source_file_type"], "pdf")
+            self.assertEqual(frontmatter["prompt_version"], "rules-pdf-structured-v1")
+            self.assertEqual(frontmatter["preprocess_status"], "succeeded")
             self.assertEqual(frontmatter["review_status"], "approved")
             self.assertEqual(frontmatter["source_scope_review_policy"], "project_no_admin_review")
             self.assertEqual(frontmatter["extractor_review_status"], "pending_review")
@@ -216,7 +285,7 @@ class GBrainProjectIngestTests(unittest.TestCase):
             self.assertEqual(manifest["items"][0]["target_file"], "technical/Drawing.md")
             self.assertEqual(manifest["items"][0]["review_status"], "approved")
 
-    def test_project_simple_pdf_text_route_compiles_to_project_source(self):
+    def test_project_selectable_pdf_is_pending_until_structured_extraction_is_enabled(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "project" / "BFI" / "BG007"
             pdf = root / "02-图纸与技术资料" / "Spec.pdf"
@@ -224,47 +293,36 @@ class GBrainProjectIngestTests(unittest.TestCase):
             pdf.write_bytes(b"%PDF-1.4\nfake simple pdf")
 
             original_classifier = project_ingest.classify_source_file
-            original_compile_pdf = project_ingest._compile_project_pdf_text_source
 
             def fake_classifier(path: Path, *, source_scope: str = "project") -> ExtractorClassification:
-                if path == pdf:
+                if path.resolve() == pdf.resolve():
                     return ExtractorClassification(
                         source_scope,
                         "pdf",
-                        "simple_text",
-                        "deepseek_text",
-                        "test selectable PDF route",
+                        "text_assisted",
+                        "mimo_pdf_structured",
+                        "test selectable PDF text-assist route",
                     )
                 return original_classifier(path, source_scope=source_scope)
 
-            def fake_compile_pdf(source_path, target_path, workspace, paths, ingested_at, source_hash, classification):
-                frontmatter = {
-                    **project_ingest._project_frontmatter(workspace, source_path, paths, ingested_at, source_hash),
-                    **classification.to_manifest_metadata(),
-                    "title": source_path.stem,
-                    "content_kind": "project_pdf_text_extracted",
-                    "extraction_status": "pdf_text_extracted",
-                    "review_status": "approved",
-                }
-                project_ingest._write_markdown(target_path, frontmatter, "# Spec\n\nExtracted selectable PDF text.\n")
-
             project_ingest.classify_source_file = fake_classifier
-            project_ingest._compile_project_pdf_text_source = fake_compile_pdf
             try:
-                manifest = compile_project_workspace_sources(self._workspace(root), self._settings())
+                manifest = compile_project_workspace_sources(
+                    self._workspace(root),
+                    self._settings(),
+                    enable_pdf_structured_extraction=False,
+                )
             finally:
                 project_ingest.classify_source_file = original_classifier
-                project_ingest._compile_project_pdf_text_source = original_compile_pdf
 
             target = self._project_ready() / "technical" / "Spec.md"
-            self.assertEqual(manifest["summary"]["compiled"], 1)
-            self.assertTrue(target.exists())
+            self.assertEqual(manifest["summary"]["compiled"], 0)
+            self.assertEqual(manifest["summary"]["pending_extractor_capability"], 1)
+            self.assertFalse(target.exists())
             self.assertEqual(manifest["items"][0]["file_kind"], "pdf")
-            self.assertEqual(manifest["items"][0]["extraction_complexity"], "simple_text")
-            self.assertEqual(manifest["items"][0]["extractor_profile"], "deepseek_text")
-            frontmatter, body = self._read_frontmatter(target)
-            self.assertEqual(frontmatter["content_kind"], "project_pdf_text_extracted")
-            self.assertIn("Extracted selectable PDF text", body)
+            self.assertEqual(manifest["items"][0]["extraction_complexity"], "text_assisted")
+            self.assertEqual(manifest["items"][0]["extractor_profile"], "mimo_pdf_structured")
+            self.assertEqual(manifest["items"][0]["status"], "pending_extractor_capability")
 
     def test_project_image_audio_and_email_are_visible_pending_states(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -330,7 +388,36 @@ class GBrainProjectIngestTests(unittest.TestCase):
             self.assertEqual(item["status"], "compiled")
             frontmatter, body = self._read_frontmatter(target)
             self.assertEqual(frontmatter["content_kind"], "image_structured_extract")
+            self.assertEqual(frontmatter["preprocess_skill"], "image-screenshot-preprocess")
+            self.assertEqual(frontmatter["source_file_type"], "png")
+            self.assertEqual(frontmatter["prompt_version"], "rules-image-screenshot-v1")
+            self.assertEqual(frontmatter["preprocess_status"], "succeeded")
+            self.assertEqual(frontmatter["language_policy"], "bilingual_zh_en_aligned")
             self.assertIn("manager confirmation", body)
+
+    def test_project_preprocess_failure_records_failure_kind(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "project" / "BFI" / "BG007"
+            image = root / "99-未归档文件" / "bad.png"
+            image.parent.mkdir(parents=True)
+            image.write_bytes(b"fake png")
+
+            def failing_image_extractor(path: Path) -> ImageStructuredExtractionResult:
+                self.assertEqual(path, image)
+                raise ValueError("image structured extraction returned empty text")
+
+            manifest = compile_project_workspace_sources(
+                self._workspace(root),
+                self._settings(),
+                image_extractor=failing_image_extractor,
+                enable_image_extraction=True,
+            )
+
+            self.assertEqual(manifest["summary"]["failed"], 1)
+            item = manifest["items"][0]
+            self.assertEqual(item["status"], "failed")
+            self.assertEqual(item["failure_kind"], "invalid_output")
+            self.assertEqual(item["preprocess_status"], "failed")
 
     def test_project_media_without_transcript_can_auto_transcribe_and_compile(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -367,6 +454,8 @@ class GBrainProjectIngestTests(unittest.TestCase):
             self.assertEqual(item["generated_transcript_file"], "03-会议纪要/site-meeting.auto.transcript.md")
             frontmatter, body = self._read_frontmatter(target)
             self.assertEqual(frontmatter["transcription_status"], "auto_transcribed")
+            self.assertEqual(frontmatter["preprocess_skill"], "meeting-audio-video-preprocess")
+            self.assertEqual(frontmatter["transcription_prompt_version"], "rules-media-transcription-v1")
             self.assertEqual(frontmatter["project_r_transcript_file"], "03-会议纪要/site-meeting.auto.transcript.md")
             self.assertIn("A 区先安装", body)
 
@@ -403,6 +492,10 @@ class GBrainProjectIngestTests(unittest.TestCase):
             self.assertEqual(item["email_subject"], "Apt 5 Window")
             frontmatter, body = self._read_frontmatter(target)
             self.assertEqual(frontmatter["content_kind"], "email_thread_structured_extract")
+            self.assertEqual(frontmatter["preprocess_skill"], "email-thread-preprocess")
+            self.assertEqual(frontmatter["source_file_type"], "eml")
+            self.assertEqual(frontmatter["prompt_version"], "rules-email-thread-v1")
+            self.assertEqual(frontmatter["preprocess_status"], "succeeded")
             self.assertEqual(frontmatter["review_status"], "approved")
             self.assertIn("type 5 window", body)
 

@@ -165,16 +165,16 @@ Phase 19 Mac mini 迁移暂缓，不作为近期阻塞项。
 
 后续任务：
 
-- [ ] 建立 `markdown-source-preprocess`。
-- [ ] 为 Obsidian 导出 Markdown 增加专用清洗能力：移除导出 frontmatter 噪音、无效 embed、空链接、旧标签/状态字段、Notion/Obsidian 导出残留，保留有业务价值的 `[[双链]]` 语义并转换为 GBrain 友好来源关系或正文引用。
-- [ ] 建立 `docx-text-preprocess`。
-- [ ] 建立 `pdf-structured-preprocess`。
-- [ ] 建立 `drawing-pdf-vision-preprocess`。
-- [ ] 建立 `image-screenshot-preprocess`。
-- [ ] 建立 `meeting-audio-video-preprocess`。
-- [ ] 建立 `email-thread-preprocess`。
-- [ ] 建立 `spreadsheet-preprocess` 或先标记 `pending_capability`。
-- [ ] 每个 Skill 提供最小 fixture 和回归测试。
+- [x] 建立 `markdown-source-preprocess`。
+- [x] 为 Obsidian 导出 Markdown 增加专用清洗能力：移除导出 frontmatter 噪音、无效 embed、空链接、旧标签/状态字段、Notion/Obsidian 导出残留，保留有业务价值的 `[[双链]]` 语义并转换为 GBrain 友好来源关系或正文引用。
+- [x] 建立 `docx-text-preprocess`。
+- [x] 建立 `pdf-structured-preprocess`。
+- [x] 建立 `drawing-pdf-vision-preprocess`。
+- [x] 建立 `image-screenshot-preprocess`。
+- [x] 建立 `meeting-audio-video-preprocess`。
+- [x] 建立 `email-thread-preprocess`。
+- [x] 建立 `spreadsheet-preprocess` 或先标记 `pending_capability`。
+- [x] 每个 Skill 提供最小 fixture 和回归测试。
 
 完成标志：
 
@@ -187,12 +187,14 @@ Phase 19 Mac mini 迁移暂缓，不作为近期阻塞项。
 
 任务：
 
-- [ ] DeepSeek 只处理纯文本类资料。
-- [ ] MiMo V2.5 处理 PDF、截图、图纸、视觉版式资料。
-- [ ] 禁止 MiMo V2.5 Pro 路由。
-- [ ] PDF 文本抽取只能作为辅助证据，不能直接入 GBrain。
-- [ ] 会议音视频先转写，再结构化提炼。
-- [ ] 每次运行记录 model_profile、prompt_version、skill_version。
+- [x] DeepSeek 只处理纯文本类资料。
+- [x] MiMo V2.5 处理 PDF、截图、图纸、视觉版式资料。
+- [x] 禁止 MiMo V2.5 Pro 路由。
+- [x] PDF 文本抽取只能作为辅助证据，不能直接入 GBrain。
+- [x] 会议音视频先转写，再结构化提炼。
+- [x] 每次运行记录 model_profile、prompt_version、skill_version。
+
+实现状态：已新增 `core/preprocess_model_policy.py` 统一约束预处理模型路由；PDF、图片、音视频转写必须使用 MiMo V2.5，邮件和 transcript refinement 只能使用 DeepSeek；MiMo V2.5 Pro 会被硬拒绝。旧 PDF 纯文本直入函数已改为显式禁止调用，manifest 失败项会记录 `failure_kind`。
 
 完成标志：
 

@@ -34,6 +34,56 @@ NOISE_FRONTMATTER_KEYS = {
     "dg-home",
 }
 
+REMOVED_FRONTMATTER_KEYS = {
+    *NOISE_FRONTMATTER_KEYS,
+    "age",
+    "gender",
+    "family",
+    "appearance",
+    "personality",
+    "habits",
+    "hobbies",
+    "personal_ideas",
+}
+
+CORE_FRONTMATTER_KEYS = {
+    "name",
+    "type",
+    "aliases",
+    "status",
+    "tags",
+    "company",
+    "position",
+    "role",
+    "person_type",
+    "region",
+    "region_tag",
+    "city",
+    "current_phase",
+    "linked_companies",
+    "linked_people",
+    "linked_projects",
+    "source_events",
+    "email",
+    "phone",
+    "linkedin",
+    "address",
+    "start_date",
+    "end_date_est",
+    "established",
+    "internal_id",
+}
+
+COMPANY_ONLY_FRONTMATTER_KEYS = {"market_position", "employees", "competitors", "operation_model", "pipeline_ecology"}
+PROJECT_ONLY_FRONTMATTER_KEYS = {"budget"}
+
+CANONICAL_FRONTMATTER_KEYS = {
+    "operations": "operation_model",
+    "operations_model": "operation_model",
+    "pipeline": "pipeline_ecology",
+    "pipeline_ecosystem": "pipeline_ecology",
+}
+
 
 @dataclass(frozen=True)
 class PreprocessOutput:
@@ -143,12 +193,18 @@ def clean_obsidian_markdown(
     original_frontmatter, body = _split_frontmatter(text)
     title = str(original_frontmatter.get("title") or original_frontmatter.get("name") or source_path.stem).strip()
     title = title or source_path.stem
-    useful_frontmatter = _useful_frontmatter(original_frontmatter)
+    useful_frontmatter, moved_frontmatter, removed_frontmatter_keys = _apply_frontmatter_policy(
+        original_frontmatter,
+        source_scope=source_scope,
+        source_file=source_file,
+    )
 
     cleanup = _clean_body(body)
     metadata = {
         "original_frontmatter_keys": sorted(str(key) for key in original_frontmatter.keys()),
         "preserved_frontmatter_keys": sorted(str(key) for key in useful_frontmatter.keys()),
+        "moved_frontmatter_keys": sorted(str(key) for key in moved_frontmatter.keys()),
+        "removed_frontmatter_keys": sorted(removed_frontmatter_keys),
         "removed_embed_count": len(cleanup["embeds"]),
         "wikilink_count": len(cleanup["wikilinks"]),
         "removed_html_count": cleanup["removed_html_count"],
@@ -176,19 +232,27 @@ def clean_obsidian_markdown(
         "obsidian_embed_removed_count": len(cleanup["embeds"]),
         "review_status": "approved",
     }
+    frontmatter.update(_source_frontmatter_for_output(useful_frontmatter, frontmatter))
 
     sections = [
         f"# {title}",
         "## Source Summary",
         _source_summary(source_scope, source_file, content_kind),
+        "## Extracted Facts",
+        cleanup["body"] or "_No readable body content after cleanup._",
+        "## Entities Mentioned",
+        _entities_as_markdown(_entities_mentioned(title, useful_frontmatter, cleanup["wikilinks"], source_scope, source_file)),
+        "## Events / Timeline Signals",
+        _timeline_as_markdown(_timeline_signals(useful_frontmatter, cleanup["body"])),
+        "## Original Evidence",
+        _original_evidence(source_file, source_sha256, useful_frontmatter, cleanup),
     ]
-    if useful_frontmatter:
-        sections.extend(["## Source Metadata", _frontmatter_as_markdown(useful_frontmatter)])
-    sections.extend(["## Cleaned Content", cleanup["body"] or "_No readable body content after cleanup._"])
     if cleanup["wikilinks"]:
         sections.extend(["## Obsidian Links Preserved", _links_as_markdown(cleanup["wikilinks"])])
     if cleanup["embeds"]:
         sections.extend(["## Removed Embed References", _list_as_markdown(cleanup["embeds"])])
+    if moved_frontmatter:
+        sections.extend(["## Source Notes", _frontmatter_as_markdown(moved_frontmatter)])
     sections.extend(
         [
             "## Preprocess Notes",
@@ -316,16 +380,67 @@ def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     return parsed, body
 
 
-def _useful_frontmatter(frontmatter: dict[str, Any]) -> dict[str, Any]:
-    useful: dict[str, Any] = {}
+def _apply_frontmatter_policy(
+    frontmatter: dict[str, Any],
+    *,
+    source_scope: str,
+    source_file: str,
+) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
+    preserved: dict[str, Any] = {}
+    moved: dict[str, Any] = {}
+    removed: list[str] = []
     for key, value in frontmatter.items():
-        key_text = str(key)
-        if key_text in NOISE_FRONTMATTER_KEYS:
+        original_key = str(key)
+        key_text = CANONICAL_FRONTMATTER_KEYS.get(original_key, original_key)
+        if original_key in REMOVED_FRONTMATTER_KEYS or key_text in REMOVED_FRONTMATTER_KEYS:
+            removed.append(original_key)
             continue
         if value in (None, "", [], {}):
             continue
-        useful[key_text] = _normalize_frontmatter_value(value)
-    return useful
+        normalized = _normalize_frontmatter_value(value)
+        if _should_preserve_frontmatter_key(key_text, source_scope=source_scope, source_file=source_file):
+            preserved[key_text] = _merge_frontmatter_value(preserved.get(key_text), normalized)
+        else:
+            moved[key_text] = _merge_frontmatter_value(moved.get(key_text), normalized)
+    return preserved, moved, removed
+
+
+def _source_frontmatter_for_output(source_frontmatter: dict[str, Any], generated_frontmatter: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in source_frontmatter.items() if key not in generated_frontmatter}
+
+
+def _should_preserve_frontmatter_key(key: str, *, source_scope: str, source_file: str) -> bool:
+    if key in CORE_FRONTMATTER_KEYS:
+        return True
+    if key in COMPANY_ONLY_FRONTMATTER_KEYS:
+        return _source_file_kind(source_scope, source_file) == "company"
+    if key in PROJECT_ONLY_FRONTMATTER_KEYS:
+        return _source_file_kind(source_scope, source_file) == "project"
+    return False
+
+
+def _source_file_kind(source_scope: str, source_file: str) -> str:
+    if source_scope == "customer":
+        first_part = _first_source_file_part(source_file)
+        if first_part == "01_Clients":
+            return "person"
+        if first_part == "02_Projects":
+            return "project"
+        if first_part == "03_Companies":
+            return "company"
+    return source_scope
+
+
+def _first_source_file_part(source_file: str) -> str:
+    normalized = source_file.replace("\\", "/").strip("/")
+    return normalized.split("/", 1)[0] if normalized else ""
+
+
+def _merge_frontmatter_value(current: Any, incoming: Any) -> Any:
+    if current is None:
+        return incoming
+    values = _flatten_frontmatter_values(current) + _flatten_frontmatter_values(incoming)
+    return _dedupe_strings(value for value in values if value)
 
 
 def _normalize_frontmatter_value(value: Any) -> Any:
@@ -379,25 +494,108 @@ def _links_as_markdown(links: list[dict[str, str]]) -> str:
     return "\n".join(f"- {link['label']} -> `{link['target']}`" for link in links)
 
 
+def _entities_mentioned(
+    title: str,
+    frontmatter: dict[str, Any],
+    wikilinks: list[dict[str, str]],
+    source_scope: str,
+    source_file: str,
+) -> list[str]:
+    values: list[str] = [title]
+    for key in ("name", "title", "company", "project", "client", "customer", "type", "tags"):
+        if key in frontmatter:
+            values.extend(_flatten_frontmatter_values(frontmatter[key]))
+    values.extend(link["label"] for link in wikilinks if link.get("label"))
+    if source_scope == "customer":
+        first_part = _first_source_file_part(source_file)
+        category = CUSTOMER_CATEGORY_MAP.get(first_part)
+        if category:
+            values.append(category[1])
+    return _dedupe_strings(str(value).strip() for value in values if str(value).strip())
+
+
+def _flatten_frontmatter_values(value: Any) -> list[str]:
+    if isinstance(value, list):
+        flattened: list[str] = []
+        for item in value:
+            flattened.extend(_flatten_frontmatter_values(item))
+        return flattened
+    if isinstance(value, dict):
+        flattened = []
+        for item in value.values():
+            flattened.extend(_flatten_frontmatter_values(item))
+        return flattened
+    return [str(value)]
+
+
+def _entities_as_markdown(values: list[str]) -> str:
+    if not values:
+        return "_No explicit entities found by deterministic cleanup._"
+    return "\n".join(f"- {value}" for value in values)
+
+
+def _timeline_signals(frontmatter: dict[str, Any], body: str) -> list[str]:
+    signals: list[str] = []
+    for key, value in frontmatter.items():
+        key_text = str(key).lower()
+        if any(marker in key_text for marker in ("date", "time", "created", "updated", "meeting")):
+            signals.append(f"{key}: {_value_as_text(value)}")
+    for match in re.finditer(r"\b(?:20\d{2})[-/](?:0?[1-9]|1[0-2])[-/](?:0?[1-9]|[12]\d|3[01])\b", body):
+        signals.append(match.group(0))
+    return _dedupe_strings(signals)
+
+
+def _timeline_as_markdown(values: list[str]) -> str:
+    if not values:
+        return "_No explicit timeline signals found by deterministic cleanup._"
+    return "\n".join(f"- {value}" for value in values)
+
+
+def _original_evidence(
+    source_file: str,
+    source_sha256: str,
+    frontmatter: dict[str, Any],
+    cleanup: dict[str, Any],
+) -> str:
+    lines = [
+        f"- Source file: `{source_file}`",
+        f"- Source SHA256: `{source_sha256}`",
+    ]
+    if frontmatter:
+        lines.extend(["- Preserved source metadata:", _indent_markdown(_frontmatter_as_markdown(frontmatter))])
+    if cleanup["wikilinks"]:
+        lines.extend(["- Converted Obsidian links:", _indent_markdown(_links_as_markdown(cleanup["wikilinks"]))])
+    if cleanup["embeds"]:
+        lines.extend(["- Removed embed/image references:", _indent_markdown(_list_as_markdown(cleanup["embeds"]))])
+    return "\n".join(lines)
+
+
+def _indent_markdown(value: str) -> str:
+    return "\n".join(f"  {line}" for line in value.splitlines())
+
+
 def _list_as_markdown(values: list[str]) -> str:
     return "\n".join(f"- `{value}`" for value in values)
 
 
 def _preprocess_notes(metadata: dict[str, Any]) -> str:
-    return "\n".join(
-        [
-            f"- Obsidian wikilinks converted to readable text: {metadata['wikilink_count']}",
-            f"- Embed/image references removed from body: {metadata['removed_embed_count']}",
-            f"- HTML/export noise fragments removed: {metadata['removed_html_count']}",
-            f"- Horizontal rule or export noise lines removed: {metadata['removed_noise_line_count']}",
-            "- Source file was not modified.",
-        ]
-    )
+    lines = [
+        f"- Obsidian wikilinks converted to readable text: {metadata['wikilink_count']}",
+        f"- Embed/image references removed from body: {metadata['removed_embed_count']}",
+        f"- HTML/export noise fragments removed: {metadata['removed_html_count']}",
+        f"- Horizontal rule or export noise lines removed: {metadata['removed_noise_line_count']}",
+        "- Source file was not modified.",
+    ]
+    if metadata["moved_frontmatter_keys"]:
+        lines.append(f"- Frontmatter fields moved to body: {', '.join(metadata['moved_frontmatter_keys'])}")
+    if metadata["removed_frontmatter_keys"]:
+        lines.append(f"- Frontmatter fields removed by policy: {', '.join(metadata['removed_frontmatter_keys'])}")
+    return "\n".join(lines)
 
 
 def _content_kind(source_scope: str, source_file: str, frontmatter: dict[str, Any]) -> str:
     if source_scope == "customer":
-        first_part = Path(source_file).parts[0] if Path(source_file).parts else ""
+        first_part = _first_source_file_part(source_file)
         return CUSTOMER_CATEGORY_MAP.get(first_part, ("raw-events", "customer_raw_source_record"))[1]
     if source_scope == "company":
         return str(frontmatter.get("content_kind") or frontmatter.get("type") or "company_obsidian_markdown_source")
@@ -498,7 +696,7 @@ def _safe_filename(value: str) -> str:
     return cleaned[:140] or "obsidian-source"
 
 
-def _dedupe_strings(values: list[str]) -> list[str]:
+def _dedupe_strings(values: Iterable[str]) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
     for value in values:

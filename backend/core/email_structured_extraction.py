@@ -11,11 +11,15 @@ from email.utils import getaddresses, parsedate_to_datetime
 from pathlib import Path
 
 from core.llm import LLMClient, get_llm_client
+from core.preprocess_model_policy import ensure_profile_allowed, ensure_text_preprocess_model
 
 
 DEFAULT_MODEL_PROFILE = "deepseek-flash"
 DEFAULT_MAX_BODY_CHARS = 24_000
 LANGUAGE_POLICY = "bilingual_zh_en_aligned"
+SKILL_NAME = "email-thread-preprocess"
+SKILL_VERSION = "1.0.0"
+PROMPT_VERSION = "rules-email-thread-v1"
 
 SYSTEM_PROMPT = """你是 Project_R 的邮件线程提炼 Agent。
 
@@ -72,9 +76,10 @@ class ExtractedEmailAttachment:
 
 
 def load_email_extraction_options() -> EmailExtractionOptions:
+    model_profile = os.getenv("GBRAIN_EMAIL_EXTRACTOR_MODEL_PROFILE", DEFAULT_MODEL_PROFILE).strip() or DEFAULT_MODEL_PROFILE
+    ensure_profile_allowed(model_profile, route_name=SKILL_NAME)
     return EmailExtractionOptions(
-        model_profile=os.getenv("GBRAIN_EMAIL_EXTRACTOR_MODEL_PROFILE", DEFAULT_MODEL_PROFILE).strip()
-        or DEFAULT_MODEL_PROFILE,
+        model_profile=model_profile,
         max_body_chars=_env_int("GBRAIN_EMAIL_EXTRACTOR_MAX_BODY_CHARS", DEFAULT_MAX_BODY_CHARS, 4_000, 80_000),
         temperature=_env_float("GBRAIN_EMAIL_EXTRACTOR_TEMPERATURE", 0.1, 0.0, 1.0),
         llm_enabled=_env_bool("GBRAIN_EMAIL_EXTRACTOR_LLM_ENABLED", True),
@@ -98,6 +103,7 @@ def extract_email_structured_markdown(
         try:
             client = llm_client or get_llm_client(options.model_profile)
             if client.settings.configured:
+                ensure_text_preprocess_model(client.settings, route_name=SKILL_NAME)
                 response = client.complete(
                     [{"role": "user", "content": _llm_prompt(source_path.name, parsed, options)}],
                     system_prompt=SYSTEM_PROMPT,

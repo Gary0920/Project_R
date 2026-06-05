@@ -9,6 +9,9 @@ from typing import Any
 LANGUAGE_POLICY = "bilingual_zh_en_aligned"
 EXTRACTION_STATUS = "meeting_transcript_structured_pending_review"
 EXTRACTOR_NAME = "project_r_meeting_transcript_mvp"
+SKILL_NAME = "meeting-audio-video-preprocess"
+SKILL_VERSION = "1.0.0"
+PROMPT_VERSION = "rules-meeting-audio-video-v1"
 
 TRANSCRIPT_SIDECAR_SUFFIXES = (
     ".transcript.md",

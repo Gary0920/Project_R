@@ -19,6 +19,9 @@ class ObsidianMarkdownPreprocessTests(unittest.TestCase):
             "company: '[[03_Companies/Binah]]'\n"
             "tags:\n"
             "  - project_manager\n"
+            "notes: Long CRM note belongs in body\n"
+            "age: 45\n"
+            "operations_model: Should move for person files\n"
             "---\n"
             "# Aaron Morris\n\n"
             "> <span style=\"color:orange\">external</span> | [[03_Companies/Binah|Binah]]\n\n"
@@ -42,13 +45,67 @@ class ObsidianMarkdownPreprocessTests(unittest.TestCase):
         self.assertEqual(frontmatter["preprocess_skill"], "markdown-source-preprocess")
         self.assertEqual(frontmatter["content_kind"], "customer_person_source_record")
         self.assertEqual(frontmatter["obsidian_embed_removed_count"], 2)
-        self.assertNotIn("cssclasses", body)
+        self.assertNotIn("cssclasses", frontmatter)
+        self.assertNotIn("notes", frontmatter)
+        self.assertNotIn("age", frontmatter)
+        self.assertNotIn("operations_model", frontmatter)
+        self.assertIn("## Source Notes", body)
+        self.assertIn("Long CRM note belongs in body", body)
+        source_notes = body.split("## Source Notes", 1)[1].split("## Preprocess Notes", 1)[0]
+        self.assertNotIn("cssclasses", source_notes)
+        self.assertNotIn("45", body)
         self.assertNotIn("![[avatar.png]]", body)
         self.assertNotIn("![logo]", body)
         self.assertNotIn("[[03_Companies/Binah", body)
+        self.assertIn("## Extracted Facts", body)
+        self.assertIn("## Entities Mentioned", body)
+        self.assertIn("## Events / Timeline Signals", body)
+        self.assertIn("## Original Evidence", body)
         self.assertIn("Binah", body)
         self.assertIn("VELA -> `02_Projects/VELA`", body)
         self.assertEqual(metadata["removed_embed_count"], 2)
+        self.assertIn("notes", metadata["moved_frontmatter_keys"])
+        self.assertIn("age", metadata["removed_frontmatter_keys"])
+
+    def test_frontmatter_policy_preserves_and_canonicalizes_by_file_kind(self):
+        source = Path("raw/03_Companies/Binah.md")
+        text = (
+            "---\n"
+            "name: Binah\n"
+            "type: company\n"
+            "operations_model: Builder-led delivery\n"
+            "pipeline_ecosystem: Consultant network\n"
+            "competitors:\n"
+            "  - Rival Facades\n"
+            "decision: Move this to body\n"
+            "key_decisions: Also move this to body\n"
+            "---\n"
+            "# Binah\n\n"
+            "Company profile.\n"
+        )
+
+        frontmatter, body, metadata = clean_obsidian_markdown(
+            text,
+            source_path=source,
+            source_scope="customer",
+            source_id="customer-crm",
+            source_file="03_Companies/Binah.md",
+            source_sha256="abc",
+            run_id="test-run",
+            created_at="2026-06-05T00:00:00+00:00",
+        )
+
+        self.assertEqual(frontmatter["operation_model"], "Builder-led delivery")
+        self.assertEqual(frontmatter["pipeline_ecology"], "Consultant network")
+        self.assertEqual(frontmatter["competitors"], ["Rival Facades"])
+        self.assertNotIn("operations_model", frontmatter)
+        self.assertNotIn("pipeline_ecosystem", frontmatter)
+        self.assertNotIn("decision", frontmatter)
+        self.assertNotIn("key_decisions", frontmatter)
+        self.assertIn("Move this to body", body)
+        self.assertIn("Also move this to body", body)
+        self.assertIn("decision", metadata["moved_frontmatter_keys"])
+        self.assertIn("key_decisions", metadata["moved_frontmatter_keys"])
 
     def test_preprocess_tree_writes_company_gbrain_ready_manifest_without_modifying_raw(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -79,6 +136,28 @@ class ObsidianMarkdownPreprocessTests(unittest.TestCase):
             self.assertIn("书面留痕", body)
             latest = preprocessed / "manifests" / "latest-obsidian-markdown-preprocess.json"
             self.assertEqual(json.loads(latest.read_text(encoding="utf-8"))["summary"]["compiled"], 1)
+
+    def test_dry_run_does_not_write_outputs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            raw = root / "raw"
+            preprocessed = root / "_preprocessed" / "company" / "company-wiki"
+            raw.mkdir(parents=True)
+            (raw / "rule.md").write_text("# Rule\n\nCreated on 2026-06-05.\n", encoding="utf-8")
+
+            manifest = preprocess_obsidian_markdown_tree(
+                raw_path=raw,
+                preprocessed_root=preprocessed,
+                source_scope="company",
+                source_id="company-wiki",
+                run_id="dry-run",
+                dry_run=True,
+            )
+
+            self.assertTrue(manifest["dry_run"])
+            self.assertEqual(manifest["summary"]["compiled"], 1)
+            self.assertFalse((preprocessed / "gbrain-ready").exists())
+            self.assertFalse((preprocessed / "manifests").exists())
 
     def test_preprocess_tree_routes_customer_crm_categories(self):
         with tempfile.TemporaryDirectory() as temp_dir:

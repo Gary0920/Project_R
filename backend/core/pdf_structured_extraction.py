@@ -11,6 +11,7 @@ from typing import Any
 from pypdf import PdfReader
 
 from core.llm import LLMClient, LLMConfigurationError, get_llm_client
+from core.preprocess_model_policy import ensure_mimo_v2_5_model, ensure_profile_allowed
 
 
 DEFAULT_MODEL_PROFILE = "mimo-v2-5"
@@ -19,6 +20,9 @@ DEFAULT_MAX_PAGES = 0
 DEFAULT_TEMPERATURE = 0.1
 LANGUAGE_POLICY = "bilingual_zh_en_aligned"
 SUPPORTED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+SKILL_NAME = "pdf-structured-preprocess"
+SKILL_VERSION = "1.0.0"
+PROMPT_VERSION = "rules-pdf-structured-v1"
 
 SYSTEM_PROMPT = """你是 Project_R 的 PDF 结构化资料提炼 Agent。
 
@@ -83,9 +87,10 @@ class _Batch:
 def load_pdf_extraction_options() -> PDFExtractionOptions:
     raw_vision_pages = os.getenv("GBRAIN_PDF_EXTRACTOR_VISION_PAGES", "")
     vision_page_mode = "auto" if raw_vision_pages.strip().lower() == "auto" else "manual"
+    model_profile = os.getenv("GBRAIN_PDF_EXTRACTOR_MODEL_PROFILE", DEFAULT_MODEL_PROFILE).strip() or DEFAULT_MODEL_PROFILE
+    ensure_profile_allowed(model_profile, route_name=SKILL_NAME)
     return PDFExtractionOptions(
-        model_profile=os.getenv("GBRAIN_PDF_EXTRACTOR_MODEL_PROFILE", DEFAULT_MODEL_PROFILE).strip()
-        or DEFAULT_MODEL_PROFILE,
+        model_profile=model_profile,
         batch_max_chars=_env_int("GBRAIN_PDF_EXTRACTOR_BATCH_MAX_CHARS", DEFAULT_BATCH_MAX_CHARS, 8_000, 80_000),
         max_pages=_env_int("GBRAIN_PDF_EXTRACTOR_MAX_PAGES", DEFAULT_MAX_PAGES, 0, 10_000),
         temperature=_env_float("GBRAIN_PDF_EXTRACTOR_TEMPERATURE", DEFAULT_TEMPERATURE, 0.0, 1.0),
@@ -108,6 +113,7 @@ def extract_pdf_structured_markdown(
         raise LLMConfigurationError(
             f"PDF structured extraction model profile is not configured: {options.model_profile}"
         )
+    ensure_mimo_v2_5_model(client.settings, route_name=SKILL_NAME)
 
     pages = _read_pdf_pages(source_path)
     selected_pages = pages[: options.max_pages] if options.max_pages > 0 else pages

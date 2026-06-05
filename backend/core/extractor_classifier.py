@@ -17,6 +17,7 @@ AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm"}
 MEDIA_EXTENSIONS = AUDIO_EXTENSIONS | VIDEO_EXTENSIONS
 EMAIL_EXTENSIONS = {".eml", ".msg", ".mbox"}
+SPREADSHEET_EXTENSIONS = {".csv", ".tsv", ".xls", ".xlsx", ".xlsm"}
 ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z"}
 
 
@@ -84,6 +85,14 @@ def classify_source_file(source_path: Path, *, source_scope: str = "project") ->
             "deepseek_text",
             "Email files require thread parsing before extraction",
         )
+    if suffix in SPREADSHEET_EXTENSIONS:
+        return ExtractorClassification(
+            source_scope,
+            "spreadsheet",
+            "pending_capability",
+            "pending_extractor_capability",
+            "Spreadsheet preprocessing is not enabled in B1; keep pending until spreadsheet-preprocess is implemented",
+        )
     if suffix in ARCHIVE_EXTENSIONS:
         return ExtractorClassification(
             source_scope,
@@ -142,9 +151,9 @@ def _classify_pdf(source_path: Path, *, source_scope: str) -> ExtractorClassific
     return ExtractorClassification(
         source_scope,
         "pdf",
-        "simple_text",
-        "deepseek_text",
-        "PDF has selectable text and no image sidecar, so text extraction is acceptable",
+        "text_assisted",
+        "mimo_pdf_structured",
+        "PDF has selectable text; text may be used only as auxiliary evidence for MiMo structured preprocessing",
         diagnostics,
     )
 
@@ -170,11 +179,14 @@ def _looks_like_drawing_pdf(source_path: Path) -> bool:
     drawing_tokens = {
         "elevation",
         "section",
+        "details",
+        "facade",
         "plan",
         "layout",
         "detail",
         "level",
         "floor",
+        "window",
     }
     package_tokens = {
         "general",
@@ -185,6 +197,7 @@ def _looks_like_drawing_pdf(source_path: Path) -> bool:
         "drawing",
         "drawings",
         "schedule",
+        "sheet",
     }
     return bool(tokens & drawing_tokens) and bool(tokens & package_tokens)
 

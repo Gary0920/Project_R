@@ -20,13 +20,13 @@
 | Skill | 处理对象 | 默认模型 / 流程 | 输出 |
 |---|---|---|---|
 | `markdown-source-preprocess` | Markdown、TXT、Notion/Obsidian 导出文本 | 规则清洗 + DeepSeek 按需整理 | 保留结构、清理噪音、补来源和证据 |
+| `docx-text-preprocess` | Word `.docx` 文档、会议纪要、文本记录、表格文本 | python-docx 确定性抽取 | 段落、表格、轻量时间线信号和证据 |
 | `pdf-structured-preprocess` | 所有 PDF | 文本抽取作辅助证据 + MiMo V2.5 | 结构化 Markdown、页码证据、不确定点 |
 | `drawing-pdf-vision-preprocess` | 图纸 PDF、楼层图、总平图、技术版式 PDF | MiMo V2.5 | 图纸/版式语义、关键标注、风险和证据 |
 | `image-screenshot-preprocess` | 图片、截图、审批流、表格图片、现场照片 | MiMo V2.5 | 图片内容、可见文字、区域说明、待确认点 |
-| `meeting-transcript-preprocess` | 已有会议纪要、转写文本、VTT/SRT | DeepSeek | 会议摘要、决策、行动项、时间线信号、参会人 |
-| `audio-video-transcription-preprocess` | 无 transcript 的音频/视频 | 转写脚本 + DeepSeek | transcript 过程文件 + 会议结构化 Markdown |
+| `meeting-audio-video-preprocess` | 已有 transcript 的会议资料、无 transcript 的音频/视频、VTT/SRT | transcript sidecar 或 MiMo V2.5 转写 + 结构化提炼 | transcript 过程文件、会议决策、行动项、风险、证据和待审核问题 |
 | `email-thread-preprocess` | EML、邮件线程、邮件附件关系 | 邮件解析 + DeepSeek；附件递归调度 | 邮件事实、决策、行动项、参与人、附件索引 |
-| `spreadsheet-preprocess` | Excel、CSV、报价表、联系人表、清单 | CSV 可 DeepSeek；复杂 Excel 另行实现 | 表格摘要、关键字段、实体、证据行列 |
+| `spreadsheet-preprocess` | Excel、CSV、TSV、报价表、联系人表、清单 | B1 第一版只标记 `pending_capability`；后续再实现表格抽取 | 暂不产出 GBrain-ready Markdown，manifest 保留待处理状态 |
 | `archive-preprocess` | ZIP/RAR/文件包 | 展开、分类、调度其他 Skill | 通常不直接产出最终知识 Markdown |
 | `customer-intelligence-source-preprocess` | 客户邮件、会议、联系人、公司/项目关系资料 | 调用上方格式 Skill + GBrain 友好客户来源记录模板 | 面向 GBrain enrich/entity detection 的客户情报来源 Markdown |
 

@@ -8,11 +8,15 @@ from pathlib import Path
 from typing import Any
 
 from core.llm import LLMClient, LLMConfigurationError, get_llm_client
+from core.preprocess_model_policy import ensure_mimo_v2_5_model, ensure_profile_allowed
 
 
 LANGUAGE_POLICY = "bilingual_zh_en_aligned"
 EXTRACTION_STATUS = "image_structured_extract"
 EXTRACTOR_NAME = "project_r_mimo_image_extraction_mvp"
+SKILL_NAME = "image-screenshot-preprocess"
+SKILL_VERSION = "1.0.0"
+PROMPT_VERSION = "rules-image-screenshot-v1"
 DEFAULT_MODEL_PROFILE = "mimo-v2-5"
 DEFAULT_MAX_RAW_BYTES = 10_000_000
 SUPPORTED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
@@ -41,9 +45,10 @@ class ImageStructuredExtractionResult:
 
 
 def load_image_extraction_options() -> ImageStructuredExtractionOptions:
+    model_profile = os.getenv("GBRAIN_IMAGE_EXTRACTOR_MODEL_PROFILE", DEFAULT_MODEL_PROFILE).strip() or DEFAULT_MODEL_PROFILE
+    ensure_profile_allowed(model_profile, route_name=SKILL_NAME)
     return ImageStructuredExtractionOptions(
-        model_profile=os.getenv("GBRAIN_IMAGE_EXTRACTOR_MODEL_PROFILE", DEFAULT_MODEL_PROFILE).strip()
-        or DEFAULT_MODEL_PROFILE,
+        model_profile=model_profile,
         max_raw_bytes=_env_int("GBRAIN_IMAGE_EXTRACTOR_MAX_RAW_BYTES", DEFAULT_MAX_RAW_BYTES, 100_000, 50_000_000),
         temperature=_env_float("GBRAIN_IMAGE_EXTRACTOR_TEMPERATURE", 0.0, 0.0, 1.0),
     )
@@ -65,6 +70,7 @@ def extract_image_structured_markdown(
     client = llm_client or get_llm_client(options.model_profile)
     if not client.settings.configured:
         raise LLMConfigurationError(f"Image extraction model profile is not configured: {options.model_profile}")
+    ensure_mimo_v2_5_model(client.settings, route_name=SKILL_NAME)
     content_blocks: list[dict[str, Any]] = [
         {
             "type": "image_url",

@@ -12,15 +12,22 @@ from typing import Any, Callable
 
 import yaml
 
+from core.docx_text_preprocess import preprocess_docx_text
 from core.gbrain import GBrainSettings, ensure_gbrain_environment, load_gbrain_settings, resolve_gbrain_source_paths
 from core.meeting_structured_extraction import (
     MeetingStructuredExtractionResult,
+    PROMPT_VERSION as MEETING_PROMPT_VERSION,
+    SKILL_NAME as MEETING_PREPROCESS_SKILL,
+    SKILL_VERSION as MEETING_PREPROCESS_VERSION,
     extract_meeting_structured_markdown,
     find_transcript_sidecar,
     find_transcript_sidecars_for_media_files,
 )
 from core.pdf_structured_extraction import (
     PDFStructuredExtractionResult,
+    PROMPT_VERSION as PDF_PROMPT_VERSION,
+    SKILL_NAME as PDF_PREPROCESS_SKILL,
+    SKILL_VERSION as PDF_PREPROCESS_VERSION,
     extract_pdf_structured_markdown,
     _pdf_image_sidecar_candidates,
 )
@@ -286,41 +293,32 @@ def _compile_docx_source(
     ingested_at: str,
     source_hash: str,
 ) -> None:
-    from docx import Document
-
-    document = Document(str(source_path))
-    blocks: list[str] = []
-    for paragraph in document.paragraphs:
-        value = paragraph.text.strip()
-        if value:
-            blocks.append(value)
-    for table in document.tables:
-        rows = [[cell.text.strip().replace("\n", "<br>") for cell in row.cells] for row in table.rows]
-        if rows:
-            blocks.append(_markdown_table(rows))
-
-    body = "\n\n".join(blocks).strip()
     title = source_path.stem
+    result = preprocess_docx_text(
+        source_path=source_path,
+        source_scope="company",
+        source_id=settings.company_source_id,
+        source_file=_relative_posix(source_path, settings.raw_path),
+        source_sha256=source_hash,
+        created_at=ingested_at,
+        title=title,
+        content_kind="meeting_transcript",
+        document_type="meeting",
+        extra_frontmatter={
+            "type": "meeting",
+            "project_r_source_file": _relative_posix(source_path, settings.raw_path),
+            "project_r_source_sha256": source_hash,
+            "project_r_ingested_at": ingested_at,
+            "extraction_status": "docx_text_extracted",
+            "tags": ["会议", "真实样本"],
+        },
+    )
     frontmatter = {
-        "title": title,
-        "type": "meeting",
-        "content_kind": "meeting_transcript",
+        **result.frontmatter,
         "source_domain": "project_r_raw",
         "authority_level": "source_record",
-        "project_r_source_file": _relative_posix(source_path, settings.raw_path),
-        "project_r_source_sha256": source_hash,
-        "project_r_ingested_at": ingested_at,
-        "extraction_status": "docx_text_extracted",
-        "tags": ["会议", "真实样本"],
     }
-    markdown = (
-        f"# {title}\n\n"
-        "> This page was extracted from a Project_R managed DOCX source. "
-        "Review decisions and action items before promoting them to company rules.\n\n"
-        "## Transcript Text\n\n"
-        f"{body}\n"
-    )
-    _write_markdown(target_path, frontmatter, markdown)
+    _write_markdown(target_path, frontmatter, result.markdown)
 
 
 def _compile_pdf_structured_source(
@@ -341,6 +339,13 @@ def _compile_pdf_structured_source(
         "project_r_source_file": _relative_posix(source_path, settings.raw_path),
         "project_r_source_sha256": source_hash,
         "project_r_ingested_at": ingested_at,
+        "source_file": _relative_posix(source_path, settings.raw_path),
+        "source_file_sha256": source_hash,
+        "source_file_type": "pdf",
+        "preprocess_skill": PDF_PREPROCESS_SKILL,
+        "preprocess_version": PDF_PREPROCESS_VERSION,
+        "preprocess_status": "partial" if extraction.review_status == "pending_review" else "succeeded",
+        "prompt_version": PDF_PROMPT_VERSION,
         "extraction_status": extraction.extraction_status,
         "review_status": extraction.review_status,
         "extractor": extraction.extractor,
@@ -379,6 +384,13 @@ def _compile_meeting_structured_source(
         "project_r_transcript_file": _relative_posix(transcript_path, settings.raw_path),
         "project_r_source_sha256": source_hash,
         "project_r_ingested_at": ingested_at,
+        "source_file": _relative_posix(source_path, settings.raw_path),
+        "source_file_sha256": source_hash,
+        "source_file_type": source_path.suffix.lower().lstrip(".") or "media",
+        "preprocess_skill": MEETING_PREPROCESS_SKILL,
+        "preprocess_version": MEETING_PREPROCESS_VERSION,
+        "preprocess_status": "partial" if extraction.review_status == "pending_review" else "succeeded",
+        "prompt_version": MEETING_PROMPT_VERSION,
         "extraction_status": extraction.extraction_status,
         "review_status": extraction.review_status,
         "extractor": extraction.extractor,
@@ -451,38 +463,10 @@ def _compile_pdf_source(
     ingested_at: str,
     source_hash: str,
 ) -> None:
-    from pypdf import PdfReader
-
-    reader = PdfReader(str(source_path))
-    pages: list[str] = []
-    for index, page in enumerate(reader.pages, start=1):
-        text = (page.extract_text() or "").strip()
-        if text:
-            pages.append(f"## Page {index}\n\n{text}")
-    body = "\n\n".join(pages).strip()
-    if not body:
-        raise ValueError("PDF text extraction returned no readable text")
-
-    title = source_path.stem
-    frontmatter = {
-        "title": title,
-        "type": "reference",
-        "content_kind": "external_standard",
-        "source_domain": "external_standard",
-        "authority_level": "external_reference",
-        "project_r_source_file": _relative_posix(source_path, settings.raw_path),
-        "project_r_source_sha256": source_hash,
-        "project_r_ingested_at": ingested_at,
-        "extraction_status": "pdf_text_extracted",
-        "tags": ["标准", "真实样本"],
-    }
-    markdown = (
-        f"# {title}\n\n"
-        "> This page was extracted from a Project_R managed PDF source. "
-        "Tables, diagrams, and page layout require manual review before relying on them.\n\n"
-        f"{body}\n"
+    raise RuntimeError(
+        "PDF text extraction is prohibited as a direct GBrain-ready route; "
+        "use pdf-structured-preprocess with MiMo V2.5 and text only as auxiliary evidence"
     )
-    _write_markdown(target_path, frontmatter, markdown)
 
 
 def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:

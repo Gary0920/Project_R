@@ -7,9 +7,14 @@ from typing import Any, Callable
 
 import yaml
 
+from core.llm import LLMConfigurationError
+from core.docx_text_preprocess import preprocess_docx_text
 from core.extractor_classifier import ExtractorClassification, classify_source_file
 from core.email_structured_extraction import (
     EmailStructuredExtractionResult,
+    PROMPT_VERSION as EMAIL_PROMPT_VERSION,
+    SKILL_NAME as EMAIL_PREPROCESS_SKILL,
+    SKILL_VERSION as EMAIL_PREPROCESS_VERSION,
     extract_email_attachments,
     extract_email_structured_markdown,
 )
@@ -29,7 +34,6 @@ from core.gbrain_ingest import (
     TEXT_EXTENSIONS,
     _commit_derived_changes,
     _env_bool,
-    _markdown_table,
     _pdf_image_sidecar_dirs,
     _relative_posix,
     _safe_filename,
@@ -39,15 +43,36 @@ from core.gbrain_ingest import (
 )
 from core.meeting_structured_extraction import (
     MeetingStructuredExtractionResult,
+    PROMPT_VERSION as MEETING_PROMPT_VERSION,
+    SKILL_NAME as MEETING_PREPROCESS_SKILL,
+    SKILL_VERSION as MEETING_PREPROCESS_VERSION,
     extract_meeting_structured_markdown,
     find_transcript_sidecar,
     find_transcript_sidecars_for_media_files,
 )
-from core.media_transcription import MediaTranscriptionResult, transcribe_media_to_markdown
-from core.pdf_structured_extraction import PDFStructuredExtractionResult, extract_pdf_structured_markdown
-from core.image_structured_extraction import ImageStructuredExtractionResult, extract_image_structured_markdown
+from core.media_transcription import (
+    TRANSCRIPTION_PROMPT_VERSION,
+    MediaTranscriptionResult,
+    transcribe_media_to_markdown,
+)
+from core.pdf_structured_extraction import (
+    PDFStructuredExtractionResult,
+    PROMPT_VERSION as PDF_PROMPT_VERSION,
+    SKILL_NAME as PDF_PREPROCESS_SKILL,
+    SKILL_VERSION as PDF_PREPROCESS_VERSION,
+    extract_pdf_structured_markdown,
+)
+from core.preprocess_model_policy import PreprocessModelPolicyError
+from core.image_structured_extraction import (
+    ImageStructuredExtractionResult,
+    PROMPT_VERSION as IMAGE_PROMPT_VERSION,
+    SKILL_NAME as IMAGE_PREPROCESS_SKILL,
+    SKILL_VERSION as IMAGE_PREPROCESS_VERSION,
+    extract_image_structured_markdown,
+)
 
 
+DRAWING_PDF_PREPROCESS_SKILL = "drawing-pdf-vision-preprocess"
 PROJECT_DIR_CATEGORY_MAP = {
     "01-合同与报价": "contracts",
     "02-图纸与技术资料": "technical",
@@ -213,6 +238,9 @@ def _compile_project_source(
     enable_email_attachment_recursion: bool = False,
 ) -> ProjectCompiledSource:
     suffix = source_path.suffix.lower()
+    classification: ExtractorClassification | None = None
+    classifier_metadata: dict[str, Any] = {}
+    source_hash: str | None = None
     try:
         classification = classify_source_file(source_path, source_scope="project")
         classifier_metadata = classification.to_manifest_metadata()
@@ -253,23 +281,6 @@ def _compile_project_source(
                 metadata=classifier_metadata,
             )
         if suffix in PDF_EXTENSIONS:
-            if classification.extraction_complexity == "simple_text":
-                _compile_project_pdf_text_source(
-                    source_path,
-                    target_path,
-                    workspace,
-                    paths,
-                    ingested_at,
-                    source_hash,
-                    classification,
-                )
-                return ProjectCompiledSource(
-                    source_path,
-                    "compiled",
-                    target_path,
-                    source_sha256=source_hash,
-                    metadata={**classifier_metadata, "extraction_status": "pdf_text_extracted"},
-                )
             if not enable_pdf_structured_extraction:
                 if target_path.exists():
                     target_path.unlink()
@@ -532,6 +543,19 @@ def _compile_project_source(
                     "extraction_status": "pending_extractor_capability",
                 },
             )
+        if classification.file_kind == "spreadsheet":
+            return ProjectCompiledSource(
+                source_path,
+                "pending_extractor_capability",
+                error=classification.classifier_reason,
+                source_sha256=source_hash,
+                metadata={
+                    **classifier_metadata,
+                    "extraction_status": "pending_spreadsheet_extraction",
+                    "preprocess_skill": "spreadsheet-preprocess",
+                    "preprocess_status": "pending_capability",
+                },
+            )
         return ProjectCompiledSource(
             source_path,
             "skipped",
@@ -540,7 +564,16 @@ def _compile_project_source(
             metadata=classifier_metadata,
         )
     except Exception as exc:  # pragma: no cover - defensive manifest path
-        return ProjectCompiledSource(source_path, "failed", error=str(exc))
+        return ProjectCompiledSource(
+            source_path,
+            "failed",
+            error=str(exc),
+            source_sha256=source_hash,
+            metadata={
+                **classifier_metadata,
+                **_preprocess_failure_metadata(exc),
+            },
+        )
 
 
 def _compile_project_text_source(
@@ -576,39 +609,31 @@ def _compile_project_docx_source(
     source_hash: str,
     classification: ExtractorClassification,
 ) -> None:
-    from docx import Document
-
-    document = Document(str(source_path))
-    blocks: list[str] = []
-    for paragraph in document.paragraphs:
-        value = paragraph.text.strip()
-        if value:
-            blocks.append(value)
-    for table in document.tables:
-        rows = [[cell.text.strip().replace("\n", "<br>") for cell in row.cells] for row in table.rows]
-        if rows:
-            blocks.append(_markdown_table(rows))
-
-    body = "\n\n".join(blocks).strip()
     category = _project_category(source_path, paths["root"])
     content_kind = "meeting_transcript" if category == "meetings" else "project_docx_text_extracted"
     doc_type = "meeting" if category == "meetings" else "project_document"
-    frontmatter = {
-        **_project_frontmatter(workspace, source_path, paths, ingested_at, source_hash),
-        **classification.to_manifest_metadata(),
-        "title": source_path.stem,
-        "type": doc_type,
-        "content_kind": content_kind,
-        "extraction_status": "docx_text_extracted",
-    }
-    markdown = (
-        f"# {source_path.stem}\n\n"
-        "> This page was extracted from a Project_R managed project DOCX source. "
-        "Review decisions, action items, and commercial facts before promoting them to company knowledge.\n\n"
-        "## Extracted Text\n\n"
-        f"{body}\n"
+    project_frontmatter = _project_frontmatter(workspace, source_path, paths, ingested_at, source_hash)
+    result = preprocess_docx_text(
+        source_path=source_path,
+        source_scope="project",
+        source_id=project_source_id_for_workspace(workspace),
+        source_file=_relative_posix(source_path, paths["root"]),
+        source_sha256=source_hash,
+        created_at=ingested_at,
+        title=source_path.stem,
+        content_kind=content_kind,
+        document_type=doc_type,
+        extra_frontmatter={
+            **project_frontmatter,
+            "type": doc_type,
+            "extraction_status": "docx_text_extracted",
+        },
     )
-    _write_markdown(target_path, frontmatter, markdown)
+    frontmatter = {
+        **result.frontmatter,
+        **classification.to_manifest_metadata(),
+    }
+    _write_markdown(target_path, frontmatter, result.markdown)
 
 
 def _compile_project_pdf_text_source(
@@ -620,35 +645,10 @@ def _compile_project_pdf_text_source(
     source_hash: str,
     classification: ExtractorClassification,
 ) -> None:
-    from pypdf import PdfReader
-
-    reader = PdfReader(str(source_path))
-    page_texts = []
-    for index, page in enumerate(reader.pages, start=1):
-        text = (page.extract_text() or "").strip()
-        if text:
-            page_texts.append(f"## Page {index}\n\n{text}")
-    body = "\n\n".join(page_texts).strip()
-    if not body:
-        raise ValueError("PDF text extraction produced no readable content")
-    frontmatter = {
-        **_project_frontmatter(workspace, source_path, paths, ingested_at, source_hash),
-        **classification.to_manifest_metadata(),
-        "title": source_path.stem,
-        "type": "project_document",
-        "content_kind": "project_pdf_text_extracted",
-        "extraction_status": "pdf_text_extracted",
-        "review_status": "approved",
-        "source_scope_review_policy": "project_no_admin_review",
-        "page_count": len(reader.pages),
-    }
-    markdown = (
-        f"# {source_path.stem}\n\n"
-        "> This page was extracted from a Project_R managed project PDF with selectable text. "
-        "If the PDF contains important layout, table, drawing, stamp, or scan information, rerun it through the complex PDF extractor.\n\n"
-        f"{body}\n"
+    raise RuntimeError(
+        "PDF text extraction is prohibited as a direct GBrain-ready route; "
+        "use pdf-structured-preprocess or drawing-pdf-vision-preprocess with MiMo V2.5"
     )
-    _write_markdown(target_path, frontmatter, markdown)
 
 
 def _compile_project_pdf_structured_source(
@@ -667,6 +667,13 @@ def _compile_project_pdf_structured_source(
         "title": source_path.stem,
         "type": "project_document",
         "content_kind": "project_pdf_structured_extract",
+        "source_file": _relative_posix(source_path, paths["root"]),
+        "source_file_sha256": source_hash,
+        "source_file_type": "pdf",
+        "preprocess_skill": _pdf_preprocess_skill_for_classification(classification),
+        "preprocess_version": PDF_PREPROCESS_VERSION,
+        "preprocess_status": "succeeded",
+        "prompt_version": PDF_PROMPT_VERSION,
         "extraction_status": extraction.extraction_status,
         "review_status": "approved",
         "source_scope_review_policy": "project_no_admin_review",
@@ -684,6 +691,30 @@ def _compile_project_pdf_structured_source(
     if extraction.warnings:
         frontmatter["extraction_warnings"] = list(extraction.warnings)
     _write_markdown(target_path, frontmatter, extraction.markdown)
+
+
+def _pdf_preprocess_skill_for_classification(classification: ExtractorClassification) -> str:
+    if classification.extraction_complexity == "vision_required":
+        return DRAWING_PDF_PREPROCESS_SKILL
+    return PDF_PREPROCESS_SKILL
+
+
+def _preprocess_failure_metadata(exc: Exception) -> dict[str, Any]:
+    message = str(exc).lower()
+    if isinstance(exc, LLMConfigurationError):
+        failure_kind = "model_unavailable"
+    elif isinstance(exc, PreprocessModelPolicyError):
+        failure_kind = "model_policy_violation"
+    elif "unsupported" in message and "format" in message:
+        failure_kind = "unsupported_file"
+    elif "did not satisfy" in message or "returned empty" in message or "no pages" in message:
+        failure_kind = "invalid_output"
+    else:
+        failure_kind = "preprocess_failed"
+    return {
+        "failure_kind": failure_kind,
+        "preprocess_status": "failed",
+    }
 
 
 def _compile_project_meeting_structured_source(
@@ -710,6 +741,13 @@ def _compile_project_meeting_structured_source(
         "content_kind": "meeting_structured_extract",
         "authority_level": "project_source_record",
         "project_r_transcript_file": _relative_posix(transcript_path, paths["root"]),
+        "source_file": _relative_posix(source_path, paths["root"]),
+        "source_file_sha256": source_hash,
+        "source_file_type": source_path.suffix.lower().lstrip(".") or "media",
+        "preprocess_skill": MEETING_PREPROCESS_SKILL,
+        "preprocess_version": MEETING_PREPROCESS_VERSION,
+        "preprocess_status": "succeeded",
+        "prompt_version": MEETING_PROMPT_VERSION,
         "extraction_status": extraction.extraction_status,
         "review_status": "approved",
         "source_scope_review_policy": "project_no_admin_review",
@@ -722,6 +760,7 @@ def _compile_project_meeting_structured_source(
         "transcription_provider": transcription_result.provider if transcription_result is not None else None,
         "transcription_model": transcription_result.model if transcription_result is not None else None,
         "transcription_token_usage": transcription_result.token_usage if transcription_result is not None else None,
+        "transcription_prompt_version": TRANSCRIPTION_PROMPT_VERSION if transcription_result is not None else None,
         "generated_transcript_file": (
             _relative_posix(generated_transcript_path, paths["root"]) if generated_transcript_path is not None else None
         ),
@@ -753,6 +792,13 @@ def _compile_project_email_structured_source(
         "type": "email",
         "content_kind": "email_thread_structured_extract",
         "authority_level": "project_source_record",
+        "source_file": _relative_posix(source_path, paths["root"]),
+        "source_file_sha256": source_hash,
+        "source_file_type": source_path.suffix.lower().lstrip(".") or "email",
+        "preprocess_skill": EMAIL_PREPROCESS_SKILL,
+        "preprocess_version": EMAIL_PREPROCESS_VERSION,
+        "preprocess_status": "succeeded",
+        "prompt_version": EMAIL_PROMPT_VERSION,
         "extraction_status": extraction.extraction_status,
         "review_status": "approved",
         "source_scope_review_policy": "project_no_admin_review",
@@ -791,6 +837,13 @@ def _compile_project_image_structured_source(
         "type": "image",
         "content_kind": "image_structured_extract",
         "authority_level": "project_source_record",
+        "source_file": _relative_posix(source_path, paths["root"]),
+        "source_file_sha256": source_hash,
+        "source_file_type": source_path.suffix.lower().lstrip(".") or "image",
+        "preprocess_skill": IMAGE_PREPROCESS_SKILL,
+        "preprocess_version": IMAGE_PREPROCESS_VERSION,
+        "preprocess_status": "succeeded",
+        "prompt_version": IMAGE_PROMPT_VERSION,
         "extraction_status": extraction.extraction_status,
         "review_status": "approved",
         "source_scope_review_policy": "project_no_admin_review",
