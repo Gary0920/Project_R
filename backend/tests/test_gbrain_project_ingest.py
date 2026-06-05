@@ -1,9 +1,11 @@
 import json
+import os
 import tempfile
 import unittest
 from email.message import EmailMessage
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import yaml
 
@@ -18,6 +20,16 @@ from core.pdf_structured_extraction import PDFStructuredExtractionResult
 
 
 class GBrainProjectIngestTests(unittest.TestCase):
+    def setUp(self):
+        self._preprocessed_dir = tempfile.TemporaryDirectory()
+        self.preprocessed_root = Path(self._preprocessed_dir.name)
+        self._env = patch.dict(os.environ, {"GBRAIN_PREPROCESSED_ROOT": str(self.preprocessed_root)})
+        self._env.start()
+
+    def tearDown(self):
+        self._env.stop()
+        self._preprocessed_dir.cleanup()
+
     def _settings(self) -> GBrainSettings:
         return GBrainSettings(enabled=False, base_url="", local_git_enabled=False)
 
@@ -30,6 +42,12 @@ class GBrainProjectIngestTests(unittest.TestCase):
             storage_path=str(root),
             workspace_kind="project",
         )
+
+    def _project_ready(self) -> Path:
+        return self.preprocessed_root / "project" / "BFI" / "7-BG007" / "gbrain-ready"
+
+    def _project_manifests(self) -> Path:
+        return self.preprocessed_root / "project" / "BFI" / "7-BG007" / "manifests"
 
     def test_compiles_project_markdown_to_project_derived_with_provenance(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -51,7 +69,7 @@ class GBrainProjectIngestTests(unittest.TestCase):
                 enable_pdf_structured_extraction=False,
             )
 
-            target = root / "derived" / "meetings" / "启动会.md"
+            target = self._project_ready() / "meetings" / "启动会.md"
             self.assertEqual(manifest["source_id"], "project-bfi-7")
             self.assertEqual(manifest["summary"]["total"], 1)
             self.assertEqual(manifest["summary"]["compiled"], 1)
@@ -62,8 +80,34 @@ class GBrainProjectIngestTests(unittest.TestCase):
             self.assertEqual(frontmatter["project_r_source_file"], "03-会议纪要/启动会.md")
             self.assertEqual(frontmatter["content_kind"], "project_text_source")
             self.assertIn("项目决定使用黑色窗框", body)
-            saved_manifest = json.loads((root / "manifests" / PROJECT_INGEST_MANIFEST_NAME).read_text(encoding="utf-8"))
+            self.assertFalse((root / "derived" / "meetings" / "启动会.md").exists())
+            saved_manifest = json.loads((self._project_manifests() / PROJECT_INGEST_MANIFEST_NAME).read_text(encoding="utf-8"))
             self.assertEqual(saved_manifest["items"][0]["target_file"], "meetings/启动会.md")
+
+    def test_project_ingest_can_be_scoped_to_current_folder(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "project" / "BFI" / "BG007"
+            meeting_dir = root / "03-会议纪要"
+            quote_dir = root / "01-合同与报价"
+            meeting_dir.mkdir(parents=True)
+            quote_dir.mkdir(parents=True)
+            (meeting_dir / "启动会.md").write_text("# 启动会\n\n会议内容。\n", encoding="utf-8")
+            (quote_dir / "报价说明.md").write_text("# 报价说明\n\n报价内容。\n", encoding="utf-8")
+
+            manifest = compile_project_workspace_sources(
+                self._workspace(root),
+                self._settings(),
+                source_path="03-会议纪要",
+                recursive=True,
+                enable_pdf_structured_extraction=False,
+            )
+
+            self.assertEqual(manifest["ingest_path"], "03-会议纪要")
+            self.assertTrue(manifest["ingest_recursive"])
+            self.assertEqual(manifest["summary"]["total"], 1)
+            self.assertEqual(manifest["items"][0]["source_file"], "03-会议纪要/启动会.md")
+            self.assertTrue((self._project_ready() / "meetings" / "启动会.md").exists())
+            self.assertFalse((self._project_ready() / "documents" / "报价说明.md").exists())
 
     def test_project_complex_pdf_is_pending_capability_until_structured_extraction_is_enabled(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -112,7 +156,7 @@ class GBrainProjectIngestTests(unittest.TestCase):
                 enable_image_extraction=False,
             )
 
-            target = root / "derived" / "meetings" / "site-meeting.md"
+            target = self._project_ready() / "meetings" / "site-meeting.md"
             self.assertEqual(manifest["summary"]["total"], 1)
             self.assertEqual(manifest["summary"]["compiled"], 1)
             self.assertTrue(target.exists())
@@ -159,7 +203,7 @@ class GBrainProjectIngestTests(unittest.TestCase):
                 enable_pdf_structured_extraction=True,
             )
 
-            target = root / "derived" / "technical" / "Drawing.md"
+            target = self._project_ready() / "technical" / "Drawing.md"
             self.assertEqual(manifest["summary"]["compiled"], 1)
             self.assertTrue(target.exists())
             frontmatter, body = self._read_frontmatter(target)
@@ -212,7 +256,7 @@ class GBrainProjectIngestTests(unittest.TestCase):
                 project_ingest.classify_source_file = original_classifier
                 project_ingest._compile_project_pdf_text_source = original_compile_pdf
 
-            target = root / "derived" / "technical" / "Spec.md"
+            target = self._project_ready() / "technical" / "Spec.md"
             self.assertEqual(manifest["summary"]["compiled"], 1)
             self.assertTrue(target.exists())
             self.assertEqual(manifest["items"][0]["file_kind"], "pdf")
@@ -278,7 +322,7 @@ class GBrainProjectIngestTests(unittest.TestCase):
                 enable_image_extraction=True,
             )
 
-            target = root / "derived" / "unfiled" / "审批流程规则.md"
+            target = self._project_ready() / "unfiled" / "审批流程规则.md"
             self.assertEqual(manifest["summary"]["compiled"], 1)
             self.assertTrue(target.exists())
             item = manifest["items"][0]
@@ -312,7 +356,7 @@ class GBrainProjectIngestTests(unittest.TestCase):
                 enable_media_transcription=True,
             )
 
-            target = root / "derived" / "meetings" / "site-meeting.md"
+            target = self._project_ready() / "meetings" / "site-meeting.md"
             transcript = root / "03-会议纪要" / "site-meeting.auto.transcript.md"
             self.assertEqual(manifest["summary"]["compiled"], 1)
             self.assertTrue(target.exists())
@@ -350,7 +394,7 @@ class GBrainProjectIngestTests(unittest.TestCase):
                 enable_email_extraction=True,
             )
 
-            target = root / "derived" / "unfiled" / "client.md"
+            target = self._project_ready() / "unfiled" / "client.md"
             self.assertEqual(manifest["summary"]["compiled"], 1)
             self.assertTrue(target.exists())
             item = manifest["items"][0]
@@ -409,7 +453,7 @@ class GBrainProjectIngestTests(unittest.TestCase):
                 items["99-未归档文件/client.eml"]["email_extracted_attachment_files"],
                 [attachment_source],
             )
-            target = root / "derived" / "unfiled" / "client.attachments" / "site-instruction.md"
+            target = self._project_ready() / "unfiled" / "client.attachments" / "site-instruction.md"
             self.assertTrue(target.exists())
             _, body = self._read_frontmatter(target)
             self.assertIn("site inspection first", body)

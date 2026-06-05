@@ -122,7 +122,7 @@ function Clear-StalePgliteState {
 }
 
 $envValues = Read-DotEnv -Path $EnvPath
-$GBrainHome = Resolve-ProjectPath -Value $envValues["GBRAIN_HOME"] -Default ".\workspace_data\global\company-wiki"
+$GBrainHome = Resolve-ProjectPath -Value $envValues["GBRAIN_HOME"] -Default ".\workspace_data\_gbrain"
 $GBrainBaseUrl = if ($envValues["GBRAIN_BASE_URL"]) { $envValues["GBRAIN_BASE_URL"] } else { "http://127.0.0.1:3131" }
 $GBrainWorkdir = Resolve-ProjectPath -Value $envValues["GBRAIN_CLI_WORKDIR"] -Default "..\reference\gbrain-master"
 $Bun = if ($envValues["GBRAIN_BUN_BIN"]) { $envValues["GBRAIN_BUN_BIN"] } else { "bun" }

@@ -9,6 +9,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.NamedTemporaryFile(delete=Fal
 import api.admin as admin_api
 import api.auth as auth_api
 from core.system_accounts import SYSTEM_ADMIN_PASSWORD, SYSTEM_ADMIN_USERNAME, ensure_system_admin
+from core.gbrain import project_source_paths_for_workspace
 from fastapi import HTTPException
 from models import Base, SessionLocal, engine
 from models.audit_log import AuditLog
@@ -56,16 +57,23 @@ class AdminPhase13Tests(unittest.TestCase):
                 "GBRAIN_HOME",
                 "GBRAIN_COMPANY_RAW_PATH",
                 "GBRAIN_COMPANY_DERIVED_PATH",
+                "GBRAIN_COMPANY_GBRAIN_READY_PATH",
                 "GBRAIN_COMPANY_MANIFESTS_PATH",
                 "GBRAIN_LOCAL_GIT_ENABLED",
+                "GBRAIN_PREPROCESSED_ROOT",
             )
         }
         root = Path(self.gbrain_root.name)
+        preprocessed_root = root / "_preprocessed"
         os.environ["GBRAIN_HOME"] = str(root)
         os.environ["GBRAIN_COMPANY_RAW_PATH"] = str(root / "raw")
         os.environ["GBRAIN_COMPANY_DERIVED_PATH"] = str(root / "derived")
+        os.environ["GBRAIN_COMPANY_GBRAIN_READY_PATH"] = str(
+            preprocessed_root / "company" / "company-wiki" / "gbrain-ready"
+        )
         os.environ["GBRAIN_COMPANY_MANIFESTS_PATH"] = str(root / "manifests")
         os.environ["GBRAIN_LOCAL_GIT_ENABLED"] = "false"
+        os.environ["GBRAIN_PREPROCESSED_ROOT"] = str(preprocessed_root)
 
     def tearDown(self):
         admin_api.GBrainAdapter = self.original_gbrain_adapter
@@ -103,6 +111,21 @@ class AdminPhase13Tests(unittest.TestCase):
         users = admin_api.list_users(self.admin, self.db)
         self.assertTrue(any(user.username == "new-user" for user in users))
         self.assertGreaterEqual(self.db.query(AuditLog).filter(AuditLog.action.like("admin_user_%")).count(), 2)
+
+    def test_admin_cannot_create_reserved_fixture_usernames(self):
+        for username in ["workspace", "member", "other", "system-admin"]:
+            with self.subTest(username=username):
+                with self.assertRaises(HTTPException) as context:
+                    admin_api.create_user(
+                        admin_api.CreateAdminUserRequest(
+                            username=username,
+                            password="Password123",
+                            nickname=username,
+                        ),
+                        self.admin,
+                        self.db,
+                    )
+                self.assertEqual(context.exception.status_code, 400)
 
     def test_admin_user_and_group_candidates_support_management_comboboxes(self):
         self.employee.work_group = "Sales"
@@ -263,7 +286,15 @@ class AdminPhase13Tests(unittest.TestCase):
         )
 
         self.assertEqual(approved.status, "approved")
-        target = Path(self.gbrain_root.name) / "derived" / "reviews" / "知识审核沉淀.md"
+        target = (
+            Path(self.gbrain_root.name)
+            / "_preprocessed"
+            / "company"
+            / "company-wiki"
+            / "gbrain-ready"
+            / "reviews"
+            / "知识审核沉淀.md"
+        )
         self.assertIn("候选知识", target.read_text(encoding="utf-8"))
         logs = admin_api.list_audit_logs(
             None,
@@ -295,26 +326,22 @@ class AdminPhase13Tests(unittest.TestCase):
             self.db,
         )
 
-        target = Path(self.gbrain_root.name) / "derived" / "reviews" / "知识审核沉淀.md"
+        target = (
+            Path(self.gbrain_root.name)
+            / "_preprocessed"
+            / "company"
+            / "company-wiki"
+            / "gbrain-ready"
+            / "reviews"
+            / "知识审核沉淀.md"
+        )
         text = target.read_text(encoding="utf-8")
         self.assertIn("新内容", text)
         self.assertEqual(text.count(f"knowledge_review:{review.id}"), 1)
 
     def test_approve_project_pending_review_promotes_and_syncs_project_source(self):
         project_root = Path(self.gbrain_root.name) / "project" / "BFI" / "BG007"
-        pending = project_root / "derived" / ".pending_review" / "technical" / "Drawing.md"
-        pending.parent.mkdir(parents=True)
         source_rel = "02-图纸与技术资料/Drawing.pdf"
-        pending.write_text(
-            "---\n"
-            "review_status: pending_review\n"
-            f"project_r_source_file: {source_rel}\n"
-            "---\n\n"
-            "# Drawing\n\n"
-            "- 中文：项目图纸已审核。\n"
-            "  English: The project drawing has been reviewed.\n",
-            encoding="utf-8",
-        )
         workspace = Workspace(
             name="BG007",
             slug="BG007",
@@ -326,6 +353,19 @@ class AdminPhase13Tests(unittest.TestCase):
         self.db.add(workspace)
         self.db.commit()
         self.db.refresh(workspace)
+        source_paths = project_source_paths_for_workspace(workspace)
+        pending = source_paths["derived"] / ".pending_review" / "technical" / "Drawing.md"
+        pending.parent.mkdir(parents=True)
+        pending.write_text(
+            "---\n"
+            "review_status: pending_review\n"
+            f"project_r_source_file: {source_rel}\n"
+            "---\n\n"
+            "# Drawing\n\n"
+            "- 中文：项目图纸已审核。\n"
+            "  English: The project drawing has been reviewed.\n",
+            encoding="utf-8",
+        )
         meta = WorkspaceFile(
             workspace_id=workspace.id,
             relative_path=source_rel,
@@ -353,7 +393,7 @@ class AdminPhase13Tests(unittest.TestCase):
         )
 
         self.assertEqual(approved.status, "approved")
-        approved_file = project_root / "derived" / "technical" / "Drawing.md"
+        approved_file = source_paths["derived"] / "technical" / "Drawing.md"
         self.assertTrue(approved_file.exists())
         self.assertFalse(pending.exists())
         self.assertIn("review_status: approved", approved_file.read_text(encoding="utf-8"))

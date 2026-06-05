@@ -51,7 +51,7 @@ CUSTOMER_WORKSPACE_PROFILE_DIRS = {
     "02-联系人与关系": ("contacts", "customer_workspace_relationship_profile"),
     "03-沟通记录": ("events", "customer_workspace_communication_record"),
 }
-CUSTOMER_WORKSPACE_RAW_DIR = "04-原始资料"
+CUSTOMER_WORKSPACE_RAW_DIR = "raw"
 CUSTOMER_WORKSPACE_INGEST_MANIFEST_NAME = "customer-workspace-ingest-manifest.json"
 
 
@@ -135,7 +135,12 @@ def compile_customer_reference_sources(root: Path | None = None) -> dict[str, An
     return manifest
 
 
-def compile_customer_workspace_sources(workspace: Any) -> dict[str, Any]:
+def compile_customer_workspace_sources(
+    workspace: Any,
+    *,
+    source_path: str | None = None,
+    recursive: bool = True,
+) -> dict[str, Any]:
     settings = load_gbrain_settings()
     environment = ensure_customer_gbrain_environment(workspace, settings)
     paths = customer_source_paths_for_workspace(workspace)
@@ -143,30 +148,45 @@ def compile_customer_workspace_sources(workspace: Any) -> dict[str, Any]:
     root = paths["root"]
     derived = paths["derived"]
     manifests = paths["manifests"]
+    runs = paths["runs"]
     derived.mkdir(parents=True, exist_ok=True)
     manifests.mkdir(parents=True, exist_ok=True)
+    runs.mkdir(parents=True, exist_ok=True)
     started_at = _utc_now()
+    source_path_filter = _normalized_ingest_path(source_path)
+    if source_path_filter:
+        target = (root / source_path_filter).resolve()
+        try:
+            target.relative_to(root.resolve())
+        except ValueError as exc:
+            raise ValueError("ingest path escapes customer workspace root") from exc
+        if not target.exists():
+            raise FileNotFoundError(f"ingest path does not exist: {source_path_filter}")
 
     results: list[CustomerCompileResult] = []
     for source_dir_name, (target_dir_name, profile_kind) in CUSTOMER_WORKSPACE_PROFILE_DIRS.items():
         source_dir = root / source_dir_name
-        for source_path in _iter_files(source_dir, {".md", ".markdown", ".txt", ".csv"}):
-            results.append(_compile_customer_workspace_text(source_path, root, derived / target_dir_name, profile_kind, started_at))
+        for candidate_path in _iter_files(source_dir, {".md", ".markdown", ".txt", ".csv"}):
+            if not _is_in_ingest_scope(candidate_path, root, source_path_filter=source_path_filter, recursive=recursive):
+                continue
+            results.append(_compile_customer_workspace_text(candidate_path, root, derived / target_dir_name, profile_kind, started_at))
 
     raw_root = root / CUSTOMER_WORKSPACE_RAW_DIR
-    for source_path in _iter_files(raw_root, RAW_TEXT_EXTENSIONS | set(RAW_PENDING_EXTENSIONS)):
-        if source_path.suffix.lower() in RAW_TEXT_EXTENSIONS:
-            results.append(_compile_customer_workspace_text(source_path, root, derived / "raw-events", "customer_workspace_raw_text_event", started_at))
+    for candidate_path in _iter_files(raw_root, RAW_TEXT_EXTENSIONS | set(RAW_PENDING_EXTENSIONS)):
+        if not _is_in_ingest_scope(candidate_path, root, source_path_filter=source_path_filter, recursive=recursive):
+            continue
+        if candidate_path.suffix.lower() in RAW_TEXT_EXTENSIONS:
+            results.append(_compile_customer_workspace_text(candidate_path, root, derived / "raw-events", "customer_workspace_raw_text_event", started_at))
         else:
             results.append(
                 CustomerCompileResult(
-                    source_path=source_path,
+                    source_path=candidate_path,
                     status="pending_extractor_capability",
-                    source_sha256=_sha256(source_path),
+                    source_sha256=_sha256(candidate_path),
                     metadata={
                         "source_area": CUSTOMER_WORKSPACE_RAW_DIR,
-                        "file_kind": source_path.suffix.lower().lstrip(".") or "unknown",
-                        "pending_reason": RAW_PENDING_EXTENSIONS.get(source_path.suffix.lower(), "pending_extractor_capability"),
+                        "file_kind": candidate_path.suffix.lower().lstrip(".") or "unknown",
+                        "pending_reason": RAW_PENDING_EXTENSIONS.get(candidate_path.suffix.lower(), "pending_extractor_capability"),
                         "reason": "customer workspace source requires Project_R extractor before GBrain sync",
                     },
                 )
@@ -183,7 +203,14 @@ def compile_customer_workspace_sources(workspace: Any) -> dict[str, Any]:
         "started_at": started_at,
         "finished_at": _utc_now(),
         "root": str(root.resolve()),
+        "raw_path": str(paths["raw"].resolve()),
+        "ingest_path": source_path_filter,
+        "ingest_recursive": recursive,
+        "gbrain_ready_path": str(paths["gbrain_ready"].resolve()),
         "derived_path": str(derived.resolve()),
+        "legacy_derived_path": str(paths["legacy_derived"].resolve()) if paths.get("legacy_derived") else None,
+        "runs_path": str(runs.resolve()),
+        "manifests_path": str(manifests.resolve()),
         "environment_ok": environment["ok"],
         "items": [_manifest_item(result, root, derived) for result in results],
         "summary": summary,
@@ -468,6 +495,30 @@ def _iter_files(root: Path, extensions: set[str]) -> list[Path]:
         if path.suffix.lower() in extensions:
             files.append(path)
     return sorted(files, key=lambda item: str(item).lower())
+
+
+def _is_in_ingest_scope(path: Path, root: Path, *, source_path_filter: str, recursive: bool) -> bool:
+    if not source_path_filter:
+        return True
+    target = (root / source_path_filter).resolve()
+    resolved = path.resolve()
+    if target.is_file():
+        return resolved == target
+    if not target.is_dir():
+        return False
+    if not recursive and resolved.parent != target:
+        return False
+    try:
+        resolved.relative_to(target)
+        return True
+    except ValueError:
+        return False
+
+
+def _normalized_ingest_path(source_path: str | None) -> str:
+    if source_path is None:
+        return ""
+    return source_path.replace("\\", "/").strip("/")
 
 
 def _clean_raw_text(text: str, suffix: str) -> str:

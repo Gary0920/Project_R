@@ -538,7 +538,7 @@ export function AdminSettingsPanel({ controller }: AdminSettingsPanelProps) {
                                 <div className="admin-table-cell">
                                   <div className="admin-user-identity">
                                     <strong>{item.username}</strong>
-                                    <span>#{item.id}{isSystemAccount(item) ? " · 固定内置管理员" : ""}</span>
+                                    {isSystemAccount(item) ? <span>固定内置管理员</span> : null}
                                   </div>
                                 </div>
                                 <div className="admin-table-cell">{item.nickname || "-"}</div>

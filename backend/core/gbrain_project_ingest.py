@@ -83,6 +83,8 @@ def compile_project_workspace_sources(
     workspace: Any,
     settings: GBrainSettings | None = None,
     *,
+    source_path: str | None = None,
+    recursive: bool = True,
     pdf_extractor: PDFExtractor | None = None,
     meeting_extractor: MeetingExtractor | None = None,
     media_transcriber: MediaTranscriber | None = None,
@@ -128,13 +130,17 @@ def compile_project_workspace_sources(
     results: list[ProjectCompiledSource] = []
     processed: set[Path] = set()
     while True:
-        source_files = [path for path in _iter_project_source_files(paths["root"], paths) if path.resolve() not in processed]
+        source_files = [
+            path
+            for path in _iter_project_source_files(paths["root"], paths, source_path=source_path, recursive=recursive)
+            if path.resolve() not in processed
+        ]
         if not source_files:
             break
-        for source_path in source_files:
-            processed.add(source_path.resolve())
+        for candidate_path in source_files:
+            processed.add(candidate_path.resolve())
             results.append(_compile_project_source(
-            source_path,
+            candidate_path,
             workspace,
             paths,
             started_at,
@@ -157,7 +163,14 @@ def compile_project_workspace_sources(
         "workspace_slug": getattr(workspace, "slug", ""),
         "brand": getattr(workspace, "brand", ""),
         "source_root": str(paths["root"].resolve()),
+        "raw_path": str(paths["raw"].resolve()),
+        "ingest_path": _normalized_ingest_path(source_path),
+        "ingest_recursive": recursive,
+        "gbrain_ready_path": str(paths["gbrain_ready"].resolve()),
         "derived_path": str(paths["derived"].resolve()),
+        "legacy_derived_path": str(paths["legacy_derived"].resolve()) if paths.get("legacy_derived") else None,
+        "runs_path": str(paths["runs"].resolve()),
+        "manifests_path": str(paths["manifests"].resolve()),
         "started_at": started_at,
         "finished_at": _utc_now(),
         "environment_ok": environment["ok"],
@@ -840,24 +853,54 @@ def _project_category(source_path: Path, root: Path) -> str:
     return PROJECT_DIR_CATEGORY_MAP.get(first, "documents")
 
 
-def _iter_project_source_files(root: Path, paths: dict[str, Path]) -> list[Path]:
+def _iter_project_source_files(
+    root: Path,
+    paths: dict[str, Path],
+    *,
+    source_path: str | None = None,
+    recursive: bool = True,
+) -> list[Path]:
+    scan_root = _resolve_ingest_scan_root(root, source_path)
     sidecar_dirs = _pdf_image_sidecar_dirs(root)
     transcript_sidecars = find_transcript_sidecars_for_media_files(root, MEDIA_EXTENSIONS)
     files: list[Path] = []
-    for source_path in sorted(root.rglob("*")):
-        if not source_path.is_file():
+    candidates = [scan_root] if scan_root.is_file() else (scan_root.rglob("*") if recursive else scan_root.iterdir())
+    for candidate in sorted(candidates):
+        if not candidate.is_file():
             continue
-        if source_path.resolve() in transcript_sidecars:
+        if candidate.resolve() in transcript_sidecars:
             continue
-        if _is_inside_runtime_dir(source_path, paths, sidecar_dirs):
+        if _is_inside_runtime_dir(candidate, paths, sidecar_dirs):
             continue
-        files.append(source_path)
+        files.append(candidate)
     return files
+
+
+def _resolve_ingest_scan_root(root: Path, source_path: str | None) -> Path:
+    rel = _normalized_ingest_path(source_path)
+    target = (root / rel).resolve() if rel else root.resolve()
+    try:
+        target.relative_to(root.resolve())
+    except ValueError as exc:
+        raise ValueError("ingest path escapes workspace root") from exc
+    if not target.exists():
+        raise FileNotFoundError(f"ingest path does not exist: {rel or '.'}")
+    return target
+
+
+def _normalized_ingest_path(source_path: str | None) -> str:
+    if source_path is None:
+        return ""
+    return source_path.replace("\\", "/").strip("/")
 
 
 def _is_inside_runtime_dir(path: Path, paths: dict[str, Path], sidecar_dirs: list[Path]) -> bool:
     resolved = path.resolve()
     runtime_roots = [paths["derived"], paths["manifests"], paths["root"] / ".trash", paths["root"] / ".git"]
+    if paths.get("legacy_derived") is not None:
+        runtime_roots.append(paths["legacy_derived"])
+    if paths.get("legacy_manifests") is not None:
+        runtime_roots.append(paths["legacy_manifests"])
     runtime_roots.extend(sidecar_dirs)
     for runtime_root in runtime_roots:
         try:

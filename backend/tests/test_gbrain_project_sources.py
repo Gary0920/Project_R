@@ -1,10 +1,12 @@
 import tempfile
 import unittest
+import os
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from core.gbrain import (
-    CUSTOMER_REFERENCE_SOURCE_ID,
+    CRM_CUSTOMER_SOURCE_ID,
     GBrainAdapter,
     GBrainSettings,
     project_source_id_for_workspace,
@@ -83,6 +85,19 @@ class _StatusAdapter(GBrainAdapter):
 
 
 class GBrainProjectSourceTests(unittest.TestCase):
+    def setUp(self):
+        self._preprocessed_dir = tempfile.TemporaryDirectory()
+        self.preprocessed_root = Path(self._preprocessed_dir.name)
+        self._env = patch.dict(os.environ, {"GBRAIN_PREPROCESSED_ROOT": str(self.preprocessed_root)})
+        self._env.start()
+
+    def tearDown(self):
+        self._env.stop()
+        self._preprocessed_dir.cleanup()
+
+    def _project_ready(self) -> Path:
+        return self.preprocessed_root / "project" / "BFI" / "7-BG007" / "gbrain-ready"
+
     def test_project_source_id_is_stable_across_project_rename(self):
         before = SimpleNamespace(id=42, brand="BFI", slug="BG001", name="旧项目名")
         after = SimpleNamespace(id=42, brand="BFI", slug="BG001-renamed", name="新项目名")
@@ -90,7 +105,7 @@ class GBrainProjectSourceTests(unittest.TestCase):
         self.assertEqual(project_source_id_for_workspace(before), "project-bfi-42")
         self.assertEqual(project_source_id_for_workspace(after), "project-bfi-42")
 
-    def test_project_source_registration_plan_uses_project_derived_path(self):
+    def test_project_source_registration_plan_uses_project_gbrain_ready_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = SimpleNamespace(
                 id=7,
@@ -103,14 +118,15 @@ class GBrainProjectSourceTests(unittest.TestCase):
             plan = project_source_registration_plan(workspace)
 
         self.assertEqual(plan["source_id"], "project-bfi-7")
-        self.assertTrue(plan["path"].endswith("project\\BFI\\BG007\\derived") or plan["path"].endswith("project/BFI/BG007/derived"))
+        self.assertEqual(Path(plan["path"]), self._project_ready().resolve())
+        self.assertEqual(Path(plan["legacy_derived_path"]), (Path(temp_dir) / "project" / "BFI" / "BG007" / "derived").resolve())
         self.assertFalse(plan["federated"])
         self.assertIn("--no-federated", plan["operator_command"])
 
     def test_project_source_status_checks_expected_source_id_and_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "project" / "BFI" / "BG007"
-            derived = root / "derived"
+            derived = self._project_ready()
             workspace = SimpleNamespace(
                 id=7,
                 brand="BFI",
@@ -145,29 +161,29 @@ class GBrainProjectSourceTests(unittest.TestCase):
         self.assertEqual(sources[0]["type"], "gbrain_project_source")
         self.assertEqual(sources[0]["authority_level"], "project")
 
-    def test_customer_query_uses_unified_customer_reference_source_scope(self):
+    def test_crm_customer_query_uses_crm_source_scope(self):
         workspace = SimpleNamespace(
             id=9,
             brand="CUSTOMER",
-            slug="lucerna",
-            name="Lucerna",
+            slug="CRM",
+            name="CRM",
             workspace_kind="customer",
         )
         adapter = _RecordingQueryAdapter()
         sources = KnowledgeSources(lambda: adapter).search_scoped_workspace_gbrain_sources(workspace, "客户决策链是什么")
 
-        self.assertEqual(adapter.calls[0]["source_id"], CUSTOMER_REFERENCE_SOURCE_ID)
+        self.assertEqual(adapter.calls[0]["source_id"], CRM_CUSTOMER_SOURCE_ID)
         self.assertEqual(adapter.calls[0]["limit"], 5)
-        self.assertEqual(sources[0]["file"], "gbrain:customer-reference/meetings/kickoff")
+        self.assertEqual(sources[0]["file"], "gbrain:customer-crm/meetings/kickoff")
         self.assertEqual(sources[0]["type"], "gbrain_customer_source")
         self.assertEqual(sources[0]["authority_level"], "customer")
 
-    def test_customer_think_uses_unified_customer_reference_source_scope(self):
+    def test_crm_customer_think_uses_crm_source_scope(self):
         workspace = SimpleNamespace(
             id=9,
             brand="CUSTOMER",
-            slug="lucerna",
-            name="Lucerna",
+            slug="CRM",
+            name="CRM",
             workspace_kind="customer",
         )
 
@@ -186,13 +202,13 @@ class GBrainProjectSourceTests(unittest.TestCase):
         response = KnowledgeSources(lambda: adapter).think(_Db(), "Aaron Morris 是谁？", workspace_id=workspace.id)
 
         self.assertTrue(response["ok"])
-        self.assertEqual(response["source_id"], CUSTOMER_REFERENCE_SOURCE_ID)
-        self.assertEqual(adapter.calls[0]["source_id"], CUSTOMER_REFERENCE_SOURCE_ID)
+        self.assertEqual(response["source_id"], CRM_CUSTOMER_SOURCE_ID)
+        self.assertEqual(adapter.calls[0]["source_id"], CRM_CUSTOMER_SOURCE_ID)
 
     def test_project_query_sources_include_derived_location(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "project" / "BFI" / "BG007"
-            derived = root / "derived" / "meetings"
+            derived = self._project_ready() / "meetings"
             derived.mkdir(parents=True)
             (derived / "kickoff.md").write_text(
                 "---\n"

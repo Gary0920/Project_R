@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 from typing import Any
 
-from core.gbrain import GBrainAdapter, load_gbrain_settings
+from core.gbrain import GBrainAdapter, load_gbrain_settings, resolve_gbrain_source_paths
 
 
 TERMINAL_JOB_STATUSES = {"completed", "failed", "dead", "cancelled", "canceled"}
@@ -154,10 +154,11 @@ def rollback_citation_fixer_job(*, job_id: int, actor: str) -> dict[str, Any]:
     if str(target.get("source_id") or settings.company_source_id) != settings.company_source_id:
         return {"ok": False, "status": "unsupported_source", "job_id": job_id, "source_id": target.get("source_id")}
 
+    source_paths = resolve_gbrain_source_paths("company", settings=settings)
     sidecar_path = reconcile.get("sidecar") if isinstance(reconcile.get("sidecar"), str) else None
     cleanup_paths = [Path(sidecar_path)] if sidecar_path else []
     rollback = _revert_commit(
-        settings.derived_path,
+        source_paths.gbrain_ready,
         commit_hash,
         message=f"Revert GBrain citation-fixer job #{job_id}",
         cleanup_paths=cleanup_paths,
@@ -190,7 +191,7 @@ def reconcile_citation_fixer_sidecar(*, source_id: str, page_slug: str) -> dict[
     if source_id != settings.company_source_id:
         return {"ok": False, "status": "unsupported_source", "source_id": source_id}
 
-    derived = settings.derived_path
+    derived = resolve_gbrain_source_paths("company", settings=settings).gbrain_ready
     sidecar = _sidecar_path(derived, source_id=source_id, page_slug=page_slug)
     canonical = _canonical_path(derived, page_slug=page_slug)
     if not sidecar.exists():
@@ -206,7 +207,7 @@ def reconcile_citation_fixer_sidecar(*, source_id: str, page_slug: str) -> dict[
     commit = _commit_paths(derived, [canonical, sidecar], message="Apply GBrain citation-fixer result")
     return {
         "ok": bool(commit.get("ok")),
-        "status": "synced_to_derived" if commit.get("ok") else "git_commit_failed",
+        "status": "synced_to_gbrain_ready" if commit.get("ok") else "git_commit_failed",
         "canonical": str(canonical),
         "sidecar": str(sidecar),
         "git": commit,

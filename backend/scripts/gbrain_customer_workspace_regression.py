@@ -112,7 +112,7 @@ def main() -> int:
     _load_dotenv(BACKEND_DIR / ".env")
     sys.path.insert(0, str(BACKEND_DIR))
 
-    from core.gbrain import CUSTOMER_REFERENCE_SOURCE_ID, GBrainAdapter
+    from core.gbrain import GBrainAdapter, customer_source_id_for_workspace, customer_source_registration_plan
     from models import SessionLocal
     from models.workspace import Workspace
 
@@ -129,11 +129,8 @@ def main() -> int:
         print(json.dumps({"ok": False, "error": f"workspace {args.workspace_id} is not a customer workspace"}, ensure_ascii=False, indent=2))
         return 2
 
-    source_id = CUSTOMER_REFERENCE_SOURCE_ID
-    plan = {
-        "source_id": CUSTOMER_REFERENCE_SOURCE_ID,
-        "path": str(BACKEND_DIR / "workspace_data" / "customer" / "reference" / "derived"),
-    }
+    source_id = customer_source_id_for_workspace(workspace)
+    plan = customer_source_registration_plan(workspace)
     adapter = GBrainAdapter()
     status = adapter.source_status(plan)
     if not status.get("registered"):

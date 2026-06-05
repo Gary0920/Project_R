@@ -38,6 +38,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 WORKSPACES_ROOT = Path(__file__).resolve().parent.parent / "workspace_data"
 ANSWER_CORRECTION_REVIEW_PREFIX = "gbrain_answer_correction:"
 GBRAIN_THINK_REVIEW_PREFIX = "gbrain_think_review:"
+RESERVED_FIXTURE_USERNAMES = {"workspace", "member", "other", "system-admin"}
 
 
 class AdminUserResponse(UTCDateTimeModel):
@@ -363,6 +364,8 @@ def create_user(
     username = req.username.strip()
     if not username:
         raise HTTPException(status_code=400, detail="用户名不能为空")
+    if username.lower() in RESERVED_FIXTURE_USERNAMES:
+        raise HTTPException(status_code=400, detail="该用户名保留给自动化测试夹具，不能在真实用户管理中创建")
     if username.lower() == SYSTEM_ADMIN_USERNAME:
         raise HTTPException(status_code=400, detail="系统内置管理员账号已固定，不可创建或覆盖")
     if req.role not in {"admin", "employee"}:

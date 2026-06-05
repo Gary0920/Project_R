@@ -1,7 +1,7 @@
 # Project_R 开发流程
 
-版本：v3.0  
-更新时间：2026-06-04  
+版本：v3.1  
+更新时间：2026-06-05  
 用途：Project_R 当前开发推进清单。本文只维护阶段顺序、任务、完成标志和验证要求。
 
 ## 1. 执行原则
@@ -28,6 +28,7 @@
 
 - 自动测试必须使用临时 DB、临时 workspace root、fixture 或 monkeypatch。
 - 不得污染 `backend/app.db`、真实 `workspace_data/project/`、真实 `workspace_data/customer/`、真实 GBrain source。
+- Gary 已新建项目测试路径 `backend/workspace_data/project/TEST/TEST`；确需用真实项目目录做手工或 smoke 验证时，只能使用该路径，不得污染 `AURA/BFI/SPECWISE/SYNOVA` 等真实品牌预创目录。
 - 测试残留必须清理；无法清理时列出残留。
 
 ## 3. 当前状态总览
@@ -67,16 +68,27 @@ Phase 19 Mac mini 迁移暂缓，不作为近期阻塞项。
 
 目标：把旧 `workspace_data/.../derived/` MVP 路径迁移为 `_preprocessed/.../gbrain-ready/` 架构，让用户源文件目录只保存原始业务文件。
 
+当前真实源文件状态：
+
+- 公司知识库源文件已重新放入 `backend/workspace_data/global/company-wiki/raw/`。
+- 客户信息源文件已重新放入 `backend/workspace_data/customer/CRM/raw/`。
+- `CRM` 是全公司客户情报工作区入口，不是品牌层级、不是项目目录，也不是某个单客户 workspace 的子目录；用户在 Project_R 中点击 CRM 即进入这个服务全公司营销需求的客户情报工作区。
+- 两处源文件均为 Obsidian 导出资料，保留了大量 Obsidian 双链、embed、frontmatter、标签、反链痕迹和导出噪音；不得直接交给 GBrain sync。
+- 正式流程必须先由 Project_R 预处理清洗噪音、保留可追溯来源，再写入对应 `_preprocessed/.../gbrain-ready/`，之后才交给 GBrain 做 source sync/import、chunk、embedding、schema/enrich 等精加工。
+
 ### A1. 后端路径与 source repo 迁移
 
 任务：
 
-- [ ] 新增统一路径 resolver：company/project/customer -> `{gbrain-ready,runs,manifests}`。
-- [ ] company-wiki source path 目标改为 `_preprocessed/company/company-wiki/gbrain-ready/`。
-- [ ] project source path 目标改为 `_preprocessed/project/{brand}/{workspace_id}-{project_slug}/gbrain-ready/`。
-- [ ] customer source path 目标改为 `_preprocessed/customer/{workspace_id}-{customer_slug}/gbrain-ready/`。
-- [ ] 保留旧 `derived/` 兼容读取或迁移脚本，但新写入禁止进入用户源文件目录。
-- [ ] GBrain `sources_status` 和管理员状态页显示新路径、旧路径和迁移状态。
+- [x] 新增统一路径 resolver：company/project/customer -> `{gbrain-ready,runs,manifests}`。
+- [x] company-wiki source path 目标改为 `_preprocessed/company/company-wiki/gbrain-ready/`。
+- [x] project source path 目标改为 `_preprocessed/project/{brand}/{workspace_id}-{project_slug}/gbrain-ready/`。
+- [x] customer source path 目标改为 `_preprocessed/customer/{workspace_id}-{customer_slug}/gbrain-ready/`。
+- [x] CRM 全公司客户情报 source path 目标固定为 `_preprocessed/customer/crm/gbrain-ready/`，不套用 project brand 或 `{workspace_id}-crm` 层级。
+- [x] 保留旧 `derived/` 兼容读取或迁移脚本，但新写入禁止进入用户源文件目录。
+- [x] GBrain `sources_status` 和管理员状态页显示新路径、旧路径和迁移状态。
+- [x] 将 `global/company-wiki/raw/` 的 Obsidian 导出源文件预处理到 `_preprocessed/company/company-wiki/gbrain-ready/`。
+- [x] 将 `customer/CRM/raw/` 的 Obsidian 导出客户资料预处理到 `_preprocessed/customer/crm/gbrain-ready/`。
 
 完成标志：
 
@@ -89,18 +101,20 @@ Phase 19 Mac mini 迁移暂缓，不作为近期阻塞项。
 - 临时项目 workspace fixture。
 - GBrain source status path match。
 - 项目 `/query` 命中新 `gbrain-ready/` 内容。
+- 公司知识和客户资料的 Obsidian 噪音清理前后抽样 diff。
+- GBrain sync 前确认 source path 指向 `gbrain-ready/`，不指向 raw。
 
 ### A2. 录入范围与权限收紧
 
 任务：
 
-- [ ] 文件面板“录入”改为处理当前打开路径。
-- [ ] 递归子文件夹前弹二次确认，显示路径、数量、类型、成本风险。
-- [ ] 右键菜单新增“录入此文件”。
+- [x] 文件面板“录入”改为处理当前打开路径。
+- [x] 递归子文件夹前弹二次确认，显示路径、数量、类型、成本风险。
+- [x] 右键菜单新增“录入此文件”。
 - [ ] 右键菜单新增“忽略录入 / 取消忽略”“重新录入此文件”。
-- [ ] 项目普通成员只能录入自己上传的单文件。
-- [ ] 项目管理员和系统管理员可录入文件夹和单文件。
-- [ ] 客户录入只允许系统管理员和客户工作区管理员。
+- [x] 项目普通成员只能录入自己上传的单文件。
+- [x] 项目管理员和系统管理员可录入文件夹和单文件。
+- [x] 客户录入只允许系统管理员和客户工作区管理员。
 - [ ] 公司全局录入只允许系统管理员。
 
 完成标志：
@@ -119,11 +133,18 @@ Phase 19 Mac mini 迁移暂缓，不作为近期阻塞项。
 
 任务：
 
-- [ ] 按 source file hash 维护 `new/source_changed/needs_repreprocess/source_deleted`。
-- [ ] 按 run 维护 `queued/preprocessing/gbrain_ready/sync_pending/synced/failed/pending_capability/ignored`。
-- [ ] 源文件删除不删除 GBrain-ready Markdown。
-- [ ] 源文件变更不自动重跑，只标记待重跑。
-- [ ] sync 成功后更新状态和通知触发用户。
+- [x] 按 source file hash 维护 `new/source_changed/needs_repreprocess/source_deleted` 的第一版文件级状态。
+- [x] 按 run 维护 `queued/preprocessing/gbrain_ready/sync_pending/synced/failed/pending_capability/ignored` 的完整 manifest 状态。
+- [x] 源文件删除不删除 GBrain-ready Markdown。
+- [x] 源文件变更不自动重跑，只标记待重跑。
+- [x] sync 成功后更新文件级状态为 `synced`；通知细化仍随 run 级状态继续补。
+
+本阶段新增架构回归闸门：
+
+- [x] 先跑通当前架构下的 GBrain 主链路：`raw -> preprocess -> _preprocessed/.../gbrain-ready -> source sync -> /query`。
+- [x] 只验证 `company-wiki`、CRM `customer-crm`、TEST 项目 source；不得污染其他真实品牌目录。
+- [x] 确认 GBrain runtime 只在 `workspace_data/_gbrain/.gbrain/`，旧 `global/company-wiki/.gbrain/` 不复活。
+- [x] 本闸门不运行 Entity Enrichment、graph merge、timeline rebuild、citation-fixer、contradiction probe、maintain/dream 等高级写操作。
 
 完成标志：
 
@@ -145,6 +166,7 @@ Phase 19 Mac mini 迁移暂缓，不作为近期阻塞项。
 后续任务：
 
 - [ ] 建立 `markdown-source-preprocess`。
+- [ ] 为 Obsidian 导出 Markdown 增加专用清洗能力：移除导出 frontmatter 噪音、无效 embed、空链接、旧标签/状态字段、Notion/Obsidian 导出残留，保留有业务价值的 `[[双链]]` 语义并转换为 GBrain 友好来源关系或正文引用。
 - [ ] 建立 `docx-text-preprocess`。
 - [ ] 建立 `pdf-structured-preprocess`。
 - [ ] 建立 `drawing-pdf-vision-preprocess`。
@@ -159,6 +181,7 @@ Phase 19 Mac mini 迁移暂缓，不作为近期阻塞项。
 - 所有已支持文件类型不再依赖一个不可审查的万能 ingest。
 - 每个 Skill 输出 frontmatter、事实、实体、时间线信号、证据和预处理说明。
 - PDF 和视觉资料统一走 MiMo V2.5。
+- Obsidian 导出 Markdown 清洗后，不再把原始双链噪音、导出字段和无效附件引用原样送入 GBrain。
 
 ### B2. 模型和提示词约束
 
@@ -180,15 +203,18 @@ Phase 19 Mac mini 迁移暂缓，不作为近期阻塞项。
 
 目标：清理早期 `customer-reference` 生成物，保留原始资料，用 GBrain 原生客户情报能力重新跑客户画像链路。
 
+当前客户资料入口：`backend/workspace_data/customer/CRM/raw/`。该目录是 CRM 客户信息源文件入口，不是项目目录、不是品牌层级，也不是某个单客户 workspace 的子目录；CRM 是服务全公司营销需求的客户情报工作区。资料进入 GBrain 前必须先完成 Obsidian 导出清洗和客户情报来源记录预处理，目标路径为 `_preprocessed/customer/crm/gbrain-ready/`。
+
 任务：
 
 - [ ] 清理前列出 `customer-reference` source、OAuth client、derived/manifests/graph/regression 产物。
 - [ ] 保留 `workspace_data/customer/` 原始 Markdown 资料和客户工作区。
 - [ ] 删除旧 GBrain source/client/generated artifacts。
-- [ ] 将客户资料按新 `_preprocessed/customer/.../gbrain-ready/` 架构预处理。
+- [x] 清洗 `workspace_data/customer/CRM/raw/` 的 Obsidian 导出源文件，生成客户情报 GBrain-ready Markdown。
+- [x] 将客户资料按新 `_preprocessed/customer/crm/gbrain-ready/` 架构预处理。
 - [ ] 调用 GBrain 原生 schema / Entity Enrichment / graph / timeline 能力。
 - [ ] 跑 5Points、18 Mary Avenue、Aaron Morris 防串库回归。
-- [ ] 在客户情报 UI 中展示画像概览、图谱、时间线和 GBrain 状态。
+- [ ] 在 CRM UI 中展示画像概览、图谱、时间线和 GBrain 状态。
 
 完成标志：
 
@@ -199,6 +225,8 @@ Phase 19 Mac mini 迁移暂缓，不作为近期阻塞项。
 ## 8. 当前主线 D：项目质量与文件预览
 
 目标：让项目录入和项目查询具备可验收质量，而不只是“能同步”。
+
+项目真实目录测试约束：Gary 已提供 `backend/workspace_data/project/TEST/TEST` 作为项目测试路径。需要在真实 `workspace_data/project/` 下验证项目 source、文件录入、预处理、sync 或 query 时，只能使用该 TEST 路径；不得在 `AURA/BFI/SPECWISE/SYNOVA` 预创目录中放测试文件、生成 gbrain-ready 结果或触发 source sync。
 
 任务：
 

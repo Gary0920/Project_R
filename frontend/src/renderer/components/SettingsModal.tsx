@@ -2234,7 +2234,7 @@ export function SettingsModal({ isOpen, onClose, initialSection, initialAdminTab
               <div>
                 <p className="eyebrow">User profile</p>
                 <h3>{userDisplayName(editingUser)}</h3>
-              <span>{editingUser.username} · #{editingUser.id}</span>
+              <span>{editingUser.username}</span>
             </div>
               <button className="settings-dialog-close" onClick={() => setEditingUser(null)} title="关闭" type="button">
                 <XmarkIcon />

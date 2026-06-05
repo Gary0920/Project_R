@@ -13,7 +13,7 @@ from models.audit_log import AuditLog
 from models.generated_file import GeneratedFile
 from models.knowledge_review import KnowledgeReview
 from models.user import User
-from models.workspace import WorkspaceFile, WorkspaceGroupAccess, WorkspaceMember
+from models.workspace import Workspace, WorkspaceFile, WorkspaceGroupAccess, WorkspaceMember
 from models.workspace_ingest_job import WorkspaceIngestJob
 
 
@@ -24,11 +24,13 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         self.db = SessionLocal()
         self.temp_root = tempfile.TemporaryDirectory()
         self.original_root = workspaces_api.WORKSPACES_ROOT
+        self.original_preprocessed_root = os.environ.get("GBRAIN_PREPROCESSED_ROOT")
         workspaces_api.WORKSPACES_ROOT = Path(self.temp_root.name)
-        self.user = User(username="workspace", password_hash="hash", role="admin", nickname="Workspace")
-        self.other = User(username="other", password_hash="hash", role="employee", nickname="Other")
-        self.member_user = User(username="member", password_hash="hash", role="employee", nickname="Member")
-        self.system_admin = User(username="system-admin", password_hash="hash", role="admin", nickname="System Admin")
+        os.environ["GBRAIN_PREPROCESSED_ROOT"] = str(Path(self.temp_root.name) / "_preprocessed")
+        self.user = User(username="test-workspace", password_hash="hash", role="admin", nickname="Workspace")
+        self.other = User(username="test-other", password_hash="hash", role="employee", nickname="Other")
+        self.member_user = User(username="test-member", password_hash="hash", role="employee", nickname="Member")
+        self.system_admin = User(username="test-system-admin", password_hash="hash", role="admin", nickname="System Admin")
         self.db.add_all([self.user, self.other, self.member_user, self.system_admin])
         self.db.commit()
         self.db.refresh(self.user)
@@ -38,15 +40,24 @@ class WorkspaceFileTreeTests(unittest.TestCase):
 
     def tearDown(self):
         workspaces_api.WORKSPACES_ROOT = self.original_root
+        if self.original_preprocessed_root is None:
+            os.environ.pop("GBRAIN_PREPROCESSED_ROOT", None)
+        else:
+            os.environ["GBRAIN_PREPROCESSED_ROOT"] = self.original_preprocessed_root
         self.temp_root.cleanup()
         self.db.close()
 
     def workspace_root(self, workspace):
         if workspace.workspace_kind == "user":
-            return Path(workspace.storage_path)
+            return Path(self.temp_root.name) / "user" / workspace.slug
         if workspace.workspace_kind == "customer":
-            return Path(self.temp_root.name) / "customer" / workspace.slug
+            return Path(self.temp_root.name) / "customer" / "CRM"
         return Path(self.temp_root.name) / "project" / "BFI" / workspace.slug
+
+    def gbrain_ready_root(self, workspace):
+        if workspace.workspace_kind == "customer":
+            return workspaces_api.customer_source_paths_for_workspace(workspace)["gbrain_ready"]
+        return workspaces_api.project_source_paths_for_workspace(workspace)["gbrain_ready"]
 
     def test_create_workspace_creates_default_project_directories(self):
         workspace = workspaces_api.create_workspace(
@@ -61,7 +72,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
             self.assertTrue((root / dirname).is_dir())
         self.assertTrue((root / ".trash").is_dir())
 
-    def test_create_customer_workspace_is_hidden_and_scaffolded(self):
+    def test_create_customer_workspace_returns_global_crm_workspace(self):
         workspace = workspaces_api.create_workspace(
             workspaces_api.CreateWorkspaceRequest(
                 name="客户 Lucerna",
@@ -75,10 +86,42 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         root = self.workspace_root(workspace)
         self.assertEqual(workspace.workspace_kind, "customer")
         self.assertEqual(workspace.brand, "CUSTOMER")
+        self.assertEqual(workspace.name, "CRM")
+        self.assertEqual(workspace.slug, "CRM")
         self.assertTrue(workspace.is_hidden)
         self.assertTrue(root.exists())
-        for dirname in workspaces_api.DEFAULT_CUSTOMER_WORKSPACE_DIRS:
-            self.assertTrue((root / dirname).is_dir())
+        self.assertTrue((root / "raw").is_dir())
+        self.assertTrue((root / ".trash").is_dir())
+        self.assertFalse((Path(self.temp_root.name) / "customer" / "Lucerna").exists())
+
+    def test_existing_customer_workspace_is_normalized_to_crm(self):
+        legacy_dir = Path(self.temp_root.name) / "customer" / "Lucerna-Native"
+        legacy_dir.mkdir(parents=True)
+        legacy = Workspace(
+            name="Lucerna Native",
+            slug="Lucerna-Native",
+            description="legacy customer workspace",
+            created_by=self.user.id,
+            storage_path=str(legacy_dir),
+            brand="CUSTOMER",
+            workspace_kind="customer",
+            is_hidden=True,
+        )
+        self.db.add(legacy)
+        self.db.commit()
+        self.db.refresh(legacy)
+
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="CRM", brand="CUSTOMER", workspace_kind="customer"),
+            self.user,
+            self.db,
+        )
+
+        self.assertEqual(workspace.id, legacy.id)
+        self.assertEqual(workspace.name, "CRM")
+        self.assertEqual(workspace.slug, "CRM")
+        normalized = self.db.query(Workspace).filter(Workspace.id == workspace.id).first()
+        self.assertEqual(Path(normalized.storage_path), (Path(self.temp_root.name) / "customer" / "CRM").resolve())
 
     def test_customer_workspace_requires_member_or_group_access(self):
         customer = workspaces_api.create_workspace(
@@ -94,7 +137,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as exc:
             workspaces_api.join_workspace(customer.id, self.other, self.db)
         self.assertEqual(exc.exception.status_code, 403)
-        self.assertNotIn(customer.id, [item["id"] for item in workspaces_api.search_workspaces("客户", self.other, self.db)])
+        self.assertNotIn(customer.id, [item["id"] for item in workspaces_api.search_workspaces("CRM", self.other, self.db)])
 
         workspaces_api.upsert_workspace_member(
             customer.id,
@@ -104,7 +147,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         )
 
         self.assertEqual(workspaces_api.get_workspace(customer.id, self.other, self.db).id, customer.id)
-        self.assertIn(customer.id, [item["id"] for item in workspaces_api.search_workspaces("客户", self.other, self.db)])
+        self.assertIn(customer.id, [item["id"] for item in workspaces_api.search_workspaces("CRM", self.other, self.db)])
 
     def test_customer_workspace_can_be_authorized_by_group(self):
         self.other.work_group = "Sales"
@@ -124,7 +167,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
             self.db,
         )
 
-        results = workspaces_api.search_workspaces("Group", self.other, self.db, brand="CUSTOMER")
+        results = workspaces_api.search_workspaces("CRM", self.other, self.db, brand="CUSTOMER")
 
         self.assertIn(customer.id, [item["id"] for item in results])
         self.assertEqual(workspaces_api.join_workspace(customer.id, self.other, self.db)["message"], "你的组别已获授权访问")
@@ -173,6 +216,18 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         matched = next(item for item in results if item["name"] == "BG002")
         self.assertEqual(matched["brand"], "BFI")
         self.assertFalse(matched["is_member"])
+
+    def test_search_workspaces_syncs_dynamic_project_brand_folder(self):
+        project_dir = Path(self.temp_root.name) / "project" / "TEST" / "TEST"
+        project_dir.mkdir(parents=True)
+
+        results = workspaces_api.search_workspaces("", self.user, self.db, brand="TEST")
+
+        matched = next(item for item in results if item["name"] == "TEST")
+        self.assertEqual(matched["brand"], "TEST")
+        self.assertEqual(matched["workspace_kind"], "project")
+        workspace = self.db.query(Workspace).filter(Workspace.id == matched["id"]).first()
+        self.assertEqual(Path(workspace.storage_path), project_dir)
 
     def test_search_workspaces_can_filter_by_brand(self):
         bfi = workspaces_api.create_workspace(
@@ -310,37 +365,28 @@ class WorkspaceFileTreeTests(unittest.TestCase):
 
         self.assertEqual(exc.exception.status_code, 403)
 
-    def test_default_user_workspace_uses_personal_workbench_scaffold(self):
+    def test_default_user_workspace_has_no_backend_file_area(self):
         workspace = workspaces_api.ensure_default_workspace(self.db, self.user)
 
         self.assertEqual(workspace.name, f"{self.user.username}的工作台")
-        root = self.workspace_root(workspace)
-        self.assertTrue((root / "常用文件").is_dir())
-        self.assertTrue((root / "常用文件" / "模板").is_dir())
-        self.assertTrue((root / "常用文件" / "参考资料").is_dir())
-        self.assertTrue((root / "常用文件" / "图片素材").is_dir())
-        self.assertTrue((root / "常用文件" / "其他").is_dir())
-        self.assertTrue((root / "对话文件").is_dir())
+        self.assertEqual(workspace.storage_path, "")
+        self.assertFalse((Path(self.temp_root.name) / "user").exists())
 
-    def test_user_workspace_default_folders_can_be_renamed_or_deleted_without_recreation(self):
+    def test_user_workspace_file_operations_are_disabled(self):
         workspace = workspaces_api.ensure_default_workspace(self.db, self.user)
-        root = self.workspace_root(workspace)
 
-        renamed = workspaces_api.rename_workspace_path(
-            workspace.id,
-            workspaces_api.RenameWorkspacePathRequest(path="常用文件", new_name="我的资料"),
-            self.user,
-            self.db,
-        )
-        deleted = workspaces_api.delete_workspace_folder(workspace.id, "对话文件", self.user, self.db)
+        with self.assertRaises(HTTPException) as exc:
+            workspaces_api.rename_workspace_path(
+                workspace.id,
+                workspaces_api.RenameWorkspacePathRequest(path="常用文件", new_name="我的资料"),
+                self.user,
+                self.db,
+            )
         reloaded = workspaces_api.ensure_default_workspace(self.db, self.user)
 
-        self.assertEqual(renamed.path, "我的资料")
-        self.assertEqual(deleted.path, "对话文件")
+        self.assertEqual(exc.exception.status_code, 400)
         self.assertEqual(reloaded.id, workspace.id)
-        self.assertTrue((root / "我的资料").is_dir())
-        self.assertFalse((root / "常用文件").exists())
-        self.assertFalse((root / "对话文件").exists())
+        self.assertFalse((Path(self.temp_root.name) / "user").exists())
 
     def test_project_member_cannot_rename_workspace(self):
         workspace = workspaces_api.create_workspace(
@@ -470,7 +516,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         member_candidates = workspaces_api.list_workspace_member_candidates(workspace.id, "mem", 30, self.user, self.db)
         group_candidates = workspaces_api.list_workspace_group_candidates(workspace.id, "", 30, self.user, self.db)
 
-        member = next(item for item in member_candidates if item.username == "member")
+        member = next(item for item in member_candidates if item.username == "test-member")
         self.assertTrue(member.is_member)
         self.assertEqual(member.member_role, "member")
         self.assertEqual(member.work_group, "Ops")
@@ -529,7 +575,8 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         root = self.workspace_root(workspace)
         self.assertEqual((root / response.path).read_text(encoding="utf-8"), "hello")
         meta = self.db.query(WorkspaceFile).filter(WorkspaceFile.id == response.file_id).first()
-        self.assertEqual(meta.rag_status, "pending")
+        self.assertEqual(meta.rag_status, "new")
+        self.assertTrue(meta.source_hash)
         self.assertEqual(self.db.query(AuditLog).filter(AuditLog.action == "workspace_file_upload").count(), 1)
 
     def test_private_file_save_to_project_copies_to_unfiled_without_mutating_original(self):
@@ -675,7 +722,8 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         copied_meta = self.db.query(WorkspaceFile).filter(WorkspaceFile.id == copied.file_id).one()
         self.assertEqual(copied_meta.uploaded_by, self.user.id)
         self.assertEqual(copied_meta.content_type, "text/plain")
-        self.assertEqual(copied_meta.rag_status, "pending")
+        self.assertEqual(copied_meta.rag_status, "new")
+        self.assertTrue(copied_meta.source_hash)
 
     def test_copy_workspace_directory_creates_descendant_file_metadata(self):
         workspace = workspaces_api.create_workspace(
@@ -723,7 +771,8 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         )
         self.assertEqual(copied_meta.uploaded_by, self.user.id)
         self.assertEqual(copied_meta.content_type, "text/markdown")
-        self.assertEqual(copied_meta.rag_status, "pending")
+        self.assertEqual(copied_meta.rag_status, "new")
+        self.assertTrue(copied_meta.source_hash)
 
     def test_create_and_delete_empty_folder_only(self):
         workspace = workspaces_api.create_workspace(
@@ -797,7 +846,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         self.assertTrue((root / uploaded.path).exists())
         self.db.refresh(meta)
         self.assertIsNone(meta.deleted_at)
-        self.assertEqual(meta.rag_status, "pending")
+        self.assertEqual(meta.rag_status, "new")
 
     def test_workspace_accessor_can_restore_trash_file_without_delete_permission(self):
         workspace = workspaces_api.create_workspace(
@@ -998,8 +1047,10 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         self.assertEqual(response.gbrain_source_id, f"project-bfi-{workspace.id}")
         self.assertEqual(response.gbrain_sync_status, "ok")
         meta = self.db.query(WorkspaceFile).filter(WorkspaceFile.id == uploaded.file_id).first()
-        self.assertEqual(meta.rag_status, "indexed")
-        self.assertTrue((self.workspace_root(workspace) / "derived" / "contracts" / "index.md").exists())
+        self.assertEqual(meta.rag_status, "synced")
+        self.assertTrue(meta.source_hash)
+        self.assertTrue((self.gbrain_ready_root(workspace) / "contracts" / "index.md").exists())
+        self.assertFalse((self.workspace_root(workspace) / "derived" / "contracts" / "index.md").exists())
 
     def test_customer_workspace_knowledge_refresh_uses_customer_source(self):
         workspace = workspaces_api.create_workspace(
@@ -1014,7 +1065,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         uploaded = workspaces_api.upload_workspace_file(
             workspace.id,
             workspaces_api.UploadWorkspaceFileRequest(
-                directory="04-原始资料",
+                directory="raw",
                 filename="meeting-note.md",
                 content_base64=base64.b64encode("# Meeting\n\nCustomer decision".encode("utf-8")).decode("ascii"),
                 content_type="text/markdown",
@@ -1040,11 +1091,13 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         self.assertTrue(response.ok)
         self.assertEqual(response.indexed_files, 1)
         self.assertEqual(response.compiled_files, 1)
-        self.assertEqual(response.gbrain_source_id, f"customer-lucerna-{workspace.id}")
+        self.assertEqual(response.gbrain_source_id, "customer-crm")
         self.assertEqual(response.gbrain_sync_status, "ok")
         meta = self.db.query(WorkspaceFile).filter(WorkspaceFile.id == uploaded.file_id).first()
-        self.assertEqual(meta.rag_status, "indexed")
-        self.assertTrue((self.workspace_root(workspace) / "derived" / "raw-events").exists())
+        self.assertEqual(meta.rag_status, "synced")
+        self.assertTrue(meta.source_hash)
+        self.assertTrue((self.gbrain_ready_root(workspace) / "raw-events").exists())
+        self.assertFalse((self.workspace_root(workspace) / "derived" / "raw-events").exists())
 
     def test_customer_workspace_knowledge_refresh_marks_complex_raw_pending(self):
         workspace = workspaces_api.create_workspace(
@@ -1059,7 +1112,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         uploaded = workspaces_api.upload_workspace_file(
             workspace.id,
             workspaces_api.UploadWorkspaceFileRequest(
-                directory="04-原始资料",
+                directory="raw",
                 filename="site-photo.png",
                 content_base64=base64.b64encode(b"png").decode("ascii"),
                 content_type="image/png",
@@ -1122,7 +1175,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
             "---\n"
             "title: 2026-06-02 discovery call\n"
             "content_kind: customer_source_event\n"
-            "project_r_source_file: 04-原始资料/discovery-call.md\n"
+            "project_r_source_file: raw/discovery-call.md\n"
             "---\n\n"
             "# 2026-06-02 discovery call\n\n"
             "Jane confirmed budget owner.\n",
@@ -1135,7 +1188,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         self.assertEqual(result.workspace_kind, "customer")
         self.assertEqual(result.source_scope, "customer")
         self.assertEqual(result.intelligence_kind, "customer_intelligence")
-        self.assertEqual(result.source_id, f"customer-lucerna-graph-{workspace.id}")
+        self.assertEqual(result.source_id, "customer-crm")
         self.assertTrue(any(node["title"] == "Jane Decision Maker" for node in result.nodes))
         self.assertTrue(any(edge["relation_type"] == "source_event" for edge in result.edges))
         self.assertTrue(any(event["title"] == "2026-06-02 discovery call" for event in result.events))
@@ -1256,7 +1309,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
 
         self.assertTrue(preview["ok"])
         self.assertEqual(preview["status"], "preview_ready")
-        self.assertEqual(preview["source_id"], f"customer-lucerna-alias-{workspace.id}")
+        self.assertEqual(preview["source_id"], "customer-crm")
         self.assertEqual(preview["stats"]["planned_relink_changes"], 1)
         self.assertEqual(preview["planned_relink_changes"][0]["page_title"], "Bob Buyer")
 
@@ -1290,18 +1343,18 @@ class WorkspaceFileTreeTests(unittest.TestCase):
 
         self.assertTrue(relink["ok"])
         self.assertEqual(relink["status"], "relink_applied")
-        self.assertEqual(relink["sync"]["source_id"], f"customer-lucerna-alias-{workspace.id}")
+        self.assertEqual(relink["sync"]["source_id"], "customer-crm")
         bob_text = (derived / "contacts" / "Bob Buyer.md").read_text(encoding="utf-8")
         self.assertIn("- companies/Acme Ltd.md", bob_text)
         self.assertNotIn("- companies/Acme Ltd duplicate.md", bob_text)
         self.assertTrue(result["ok"])
         self.assertEqual(result["status"], "alias_recorded")
-        self.assertEqual(result["sync"]["source_id"], f"customer-lucerna-alias-{workspace.id}")
+        self.assertEqual(result["sync"]["source_id"], "customer-crm")
         created = derived / result["created_file"]
         self.assertTrue(created.exists())
         text = created.read_text(encoding="utf-8")
         self.assertIn("content_kind: entity_alias_override", text)
-        self.assertIn("project_r_created_by: workspace", text)
+        self.assertIn("project_r_created_by: test-workspace", text)
 
     def test_workspace_member_cannot_view_entity_merge_candidates(self):
         workspace = workspaces_api.create_workspace(
@@ -1363,7 +1416,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
             workspaces_api.GBrainAdapter = original_adapter
 
         self.assertEqual(result["status"], "ok")
-        self.assertEqual(result["source_id"], f"customer-lucerna-native-{workspace.id}")
+        self.assertEqual(result["source_id"], "customer-crm")
         self.assertEqual(result["slug"], "contacts/Jane Decision Maker.md")
 
     def test_workspace_native_graph_context_rejects_unauthorized_customer_user(self):
@@ -1491,6 +1544,10 @@ class WorkspaceFileTreeTests(unittest.TestCase):
 
         self.assertTrue(response.ok)
         self.assertEqual(response.indexed_files, 0)
+        self.assertEqual(response.run_status, "pending_capability")
+        self.assertEqual(response.manifest["run_status"], "pending_capability")
+        self.assertEqual(response.manifest["items"][0]["run_status"], "pending_capability")
+        self.assertEqual(response.manifest["items"][0]["sync_status"], "not_applicable")
         self.assertEqual(response.pending_extractor_capability_files, 1)
         self.assertEqual(response.pending_reviews_created, 0)
         meta = self.db.query(WorkspaceFile).filter(WorkspaceFile.id == uploaded.file_id).first()
@@ -1514,6 +1571,82 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as exc:
             workspaces_api.refresh_workspace_knowledge(workspace.id, self.other, self.db)
 
+        self.assertEqual(exc.exception.status_code, 403)
+
+    def test_project_member_can_ingest_own_single_file_only(self):
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 成员单文件录入"),
+            self.user,
+            self.db,
+        )
+        workspaces_api.upsert_workspace_member(
+            workspace.id,
+            workspaces_api.UpsertWorkspaceMemberRequest(user_id=self.other.id, role="member"),
+            self.user,
+            self.db,
+        )
+        uploaded = workspaces_api.upload_workspace_file(
+            workspace.id,
+            workspaces_api.UploadWorkspaceFileRequest(
+                directory=workspaces_api.DEFAULT_WORKSPACE_DIRS[2],
+                filename="member-note.md",
+                content_base64=base64.b64encode("# Member Note\n\nOwn file fact".encode("utf-8")).decode("ascii"),
+                content_type="text/markdown",
+            ),
+            self.other,
+            self.db,
+        )
+
+        def fake_compile(compiled_workspace, *, source_path="", recursive=True):
+            self.assertEqual(compiled_workspace.id, workspace.id)
+            self.assertEqual(source_path, uploaded.path)
+            self.assertFalse(recursive)
+            return {
+                "source_id": f"project-bfi-{workspace.id}",
+                "summary": {
+                    "total": 1,
+                    "compiled": 1,
+                    "pending_extractor_capability": 0,
+                    "pending_transcription": 0,
+                    "skipped": 0,
+                    "failed": 0,
+                },
+                "items": [{"source_file": uploaded.path, "status": "compiled"}],
+            }
+
+        class _FakeGBrainAdapter:
+            def ensure_project_source(self, workspace):
+                return {"ok": True, "source": {"status": "registered"}}
+
+            def sync_project_source(self, workspace, **kwargs):
+                return {"status": "ok"}
+
+        original_compile = workspaces_api.compile_project_workspace_sources
+        original_adapter = workspaces_api.GBrainAdapter
+        workspaces_api.compile_project_workspace_sources = fake_compile
+        workspaces_api.GBrainAdapter = _FakeGBrainAdapter
+        try:
+            response = workspaces_api.refresh_workspace_knowledge(
+                workspace.id,
+                self.other,
+                self.db,
+                workspaces_api.WorkspaceKnowledgeIngestRequest(path=uploaded.path, recursive=False),
+            )
+        finally:
+            workspaces_api.compile_project_workspace_sources = original_compile
+            workspaces_api.GBrainAdapter = original_adapter
+
+        self.assertTrue(response.ok)
+        self.assertEqual(response.ingest_path, uploaded.path)
+        self.assertFalse(response.ingest_recursive)
+
+        with self.assertRaises(HTTPException) as exc:
+            workspaces_api.refresh_workspace_knowledge(
+                workspace.id,
+                self.other,
+                self.db,
+                workspaces_api.WorkspaceKnowledgeIngestRequest(path=workspaces_api.DEFAULT_WORKSPACE_DIRS[2], recursive=True),
+            )
         self.assertEqual(exc.exception.status_code, 403)
 
     def test_user_workspace_cannot_ingest_knowledge(self):
@@ -1581,12 +1714,171 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         refreshed_job = self.db.query(WorkspaceIngestJob).filter(WorkspaceIngestJob.id == job.id).one()
         self.assertEqual(refreshed_job.status, "succeeded")
         self.assertIn('"indexed_files": 1', refreshed_job.result_json)
+        result = workspaces_api.json.loads(refreshed_job.result_json)
+        self.assertEqual(result["run_status"], "synced")
+        self.assertEqual(result["manifest"]["run_status"], "synced")
+        self.assertEqual(result["manifest"]["items"][0]["preprocess_status"], "compiled")
+        self.assertEqual(result["manifest"]["items"][0]["run_status"], "synced")
+        self.assertEqual(result["manifest"]["items"][0]["sync_status"], "synced")
+        self.assertTrue(result["manifest"]["run"]["status_history"])
         serialized = workspaces_api._serialize_ingest_job(self.db, refreshed_job)
         self.assertIsNotNone(serialized.agent_run)
         self.assertEqual(serialized.agent_run.status, "completed")
+        self.assertEqual(serialized.result["run_status"], "synced")
+        self.assertEqual(serialized.result["run"]["status"], "synced")
         self.assertTrue(any(event.event_type == "result" for event in serialized.agent_run.events))
         meta = self.db.query(WorkspaceFile).filter(WorkspaceFile.id == uploaded.file_id).first()
-        self.assertEqual(meta.rag_status, "indexed")
+        self.assertEqual(meta.rag_status, "synced")
+
+    def test_workspace_ingest_manifest_marks_sync_pending_when_gbrain_sync_fails(self):
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 同步失败"),
+            self.user,
+            self.db,
+        )
+        uploaded = workspaces_api.upload_workspace_file(
+            workspace.id,
+            workspaces_api.UploadWorkspaceFileRequest(
+                directory=workspaces_api.DEFAULT_WORKSPACE_DIRS[2],
+                filename="sync-pending.md",
+                content_base64=base64.b64encode("# Sync Pending\n\nFact".encode("utf-8")).decode("ascii"),
+                content_type="text/markdown",
+            ),
+            self.user,
+            self.db,
+        )
+        manifests_path = Path(self.temp_root.name) / "manifests"
+        runs_path = Path(self.temp_root.name) / "runs"
+
+        def fake_compile(compiled_workspace):
+            return {
+                "source_id": f"project-bfi-{compiled_workspace.id}",
+                "manifests_path": str(manifests_path),
+                "runs_path": str(runs_path),
+                "summary": {
+                    "total": 1,
+                    "compiled": 1,
+                    "pending_extractor_capability": 0,
+                    "pending_transcription": 0,
+                    "skipped": 0,
+                    "failed": 0,
+                },
+                "items": [
+                    {
+                        "source_file": uploaded.path,
+                        "status": "compiled",
+                        "source_sha256": "abc",
+                        "target_file": "meetings/sync-pending.md",
+                    }
+                ],
+            }
+
+        class _FakeGBrainAdapter:
+            def ensure_project_source(self, workspace):
+                return {"ok": True, "source": {"status": "registered"}}
+
+            def sync_project_source(self, workspace, **kwargs):
+                return {"status": "cli_error", "error": "sync boom"}
+
+        original_compile = workspaces_api.compile_project_workspace_sources
+        original_adapter = workspaces_api.GBrainAdapter
+        workspaces_api.compile_project_workspace_sources = fake_compile
+        workspaces_api.GBrainAdapter = _FakeGBrainAdapter
+        try:
+            workspace_model = self.db.query(Workspace).filter(Workspace.id == workspace.id).one()
+            payload = workspaces_api._execute_workspace_knowledge_ingest(self.db, workspace_model, self.user.id)
+        finally:
+            workspaces_api.compile_project_workspace_sources = original_compile
+            workspaces_api.GBrainAdapter = original_adapter
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["run_status"], "sync_pending")
+        self.assertEqual(payload["rag_status"], "pending")
+        self.assertEqual(payload["gbrain_sync_status"], "cli_error")
+        manifest = payload["manifest"]
+        self.assertEqual(manifest["run_status"], "sync_pending")
+        self.assertEqual(manifest["items"][0]["run_status"], "sync_pending")
+        self.assertEqual(manifest["items"][0]["sync_status"], "sync_pending")
+        self.assertEqual(manifest["items"][0]["gbrain_ready_file"], "meetings/sync-pending.md")
+        run_manifest_path = runs_path / f"{payload['run_id']}.json"
+        latest_manifest_path = manifests_path / workspaces_api.PROJECT_INGEST_MANIFEST_NAME
+        self.assertTrue(run_manifest_path.exists())
+        self.assertTrue(latest_manifest_path.exists())
+        persisted = workspaces_api.json.loads(run_manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["run_status"], "sync_pending")
+        meta = self.db.query(WorkspaceFile).filter(WorkspaceFile.id == uploaded.file_id).first()
+        self.assertEqual(meta.rag_status, "sync_pending")
+
+    def test_synced_file_is_marked_source_changed_without_auto_reprocess(self):
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 Source Changed"),
+            self.user,
+            self.db,
+        )
+        uploaded = workspaces_api.upload_workspace_file(
+            workspace.id,
+            workspaces_api.UploadWorkspaceFileRequest(
+                directory=workspaces_api.DEFAULT_WORKSPACE_DIRS[0],
+                filename="change.md",
+                content_base64=base64.b64encode(b"# Original").decode("ascii"),
+                content_type="text/markdown",
+            ),
+            self.user,
+            self.db,
+        )
+        meta = self.db.query(WorkspaceFile).filter(WorkspaceFile.id == uploaded.file_id).one()
+        path = self.workspace_root(workspace) / uploaded.path
+        workspaces_api._record_file_signature(meta, path)
+        meta.rag_status = "synced"
+        self.db.commit()
+
+        path.write_text("# Changed", encoding="utf-8")
+
+        def find_item(items, target_path):
+            for item in items:
+                if item.path == target_path:
+                    return item
+                found = find_item(item.children or [], target_path)
+                if found:
+                    return found
+            return None
+
+        items = workspaces_api.list_workspace_files(workspace.id, self.user, self.db).items
+        changed = find_item(items, uploaded.path)
+        self.assertIsNotNone(changed)
+        self.assertEqual(changed.rag_status, "source_changed")
+        self.db.refresh(meta)
+        self.assertEqual(meta.rag_status, "synced")
+
+    def test_deleted_synced_file_is_marked_source_deleted_without_removing_ready_markdown(self):
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 Source Deleted"),
+            self.user,
+            self.db,
+        )
+        uploaded = workspaces_api.upload_workspace_file(
+            workspace.id,
+            workspaces_api.UploadWorkspaceFileRequest(
+                directory=workspaces_api.DEFAULT_WORKSPACE_DIRS[0],
+                filename="delete.md",
+                content_base64=base64.b64encode(b"# Original").decode("ascii"),
+                content_type="text/markdown",
+            ),
+            self.user,
+            self.db,
+        )
+        ready_file = self.gbrain_ready_root(workspace) / "contracts" / "delete.md"
+        ready_file.parent.mkdir(parents=True, exist_ok=True)
+        ready_file.write_text("# Ready", encoding="utf-8")
+        meta = self.db.query(WorkspaceFile).filter(WorkspaceFile.id == uploaded.file_id).one()
+        workspaces_api._record_file_signature(meta, self.workspace_root(workspace) / uploaded.path)
+        meta.rag_status = "synced"
+        self.db.commit()
+
+        deleted = workspaces_api.delete_workspace_file(workspace.id, uploaded.path, self.user, self.db)
+
+        self.assertEqual(deleted.rag_status, "source_deleted")
+        self.assertTrue(ready_file.exists())
 
 
 if __name__ == "__main__":

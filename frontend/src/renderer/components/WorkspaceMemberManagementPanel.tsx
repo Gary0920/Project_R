@@ -336,7 +336,7 @@ export function WorkspaceMemberManagementPanel({ apiOptions, workspace, onClose,
           <span className="workspace-member-drawer-icon"><ShieldIcon /></span>
           <div>
             <h2>成员管理</h2>
-            <p>{isCustomerWorkspace ? "客户情报" : workspace.brand || "PROJECT"} · {workspace.name}</p>
+            <p>{isCustomerWorkspace ? "CRM" : workspace.brand || "PROJECT"} · {workspace.name}</p>
           </div>
           <button className="workspace-member-close" onClick={onClose} title="关闭" type="button"><XmarkIcon /></button>
         </header>
@@ -352,7 +352,7 @@ export function WorkspaceMemberManagementPanel({ apiOptions, workspace, onClose,
             <strong>{isCustomerWorkspace ? "受限客户工作区" : isHidden ? "隐藏项目" : "开放项目"}</strong>
             <span>
               {isCustomerWorkspace
-                ? "客户情报默认只允许系统管理员、成员或授权组别搜索和进入。"
+                ? "CRM 默认只允许系统管理员、成员或授权组别搜索和进入。"
                 : isHidden ? "仅白名单人员或组别可搜索和进入该项目。" : "所有用户均可搜索和进入该项目；成员列表只用于项目管理员和敏感项目白名单。"}
             </span>
           </div>

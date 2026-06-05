@@ -1,7 +1,9 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
@@ -11,6 +13,16 @@ from core.pdf_structured_extraction import PDFStructuredExtractionResult
 
 
 class GBrainIngestTests(unittest.TestCase):
+    def setUp(self):
+        self._preprocessed_dir = tempfile.TemporaryDirectory()
+        self.preprocessed_root = Path(self._preprocessed_dir.name)
+        self._env = patch.dict(os.environ, {"GBRAIN_PREPROCESSED_ROOT": str(self.preprocessed_root)})
+        self._env.start()
+
+    def tearDown(self):
+        self._env.stop()
+        self._preprocessed_dir.cleanup()
+
     def _settings_for_root(self, root: Path) -> GBrainSettings:
         return GBrainSettings(
             enabled=False,
@@ -21,6 +33,12 @@ class GBrainIngestTests(unittest.TestCase):
             manifests_path=root / "manifests",
             local_git_enabled=False,
         )
+
+    def _company_ready(self) -> Path:
+        return self.preprocessed_root / "company" / "company-wiki" / "gbrain-ready"
+
+    def _company_manifests(self) -> Path:
+        return self.preprocessed_root / "company" / "company-wiki" / "manifests"
 
     def test_compiles_markdown_with_existing_frontmatter_and_provenance(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -42,9 +60,10 @@ class GBrainIngestTests(unittest.TestCase):
 
             manifest = compile_company_wiki_sources(settings)
 
-            target = settings.derived_path / "rules" / "书面化原则.md"
+            target = self._company_ready() / "rules" / "书面化原则.md"
             self.assertEqual(manifest["summary"]["compiled"], 1)
             self.assertTrue(target.exists())
+            self.assertFalse((settings.derived_path / "rules" / "书面化原则.md").exists())
             frontmatter, body = self._read_frontmatter(target)
             self.assertEqual(frontmatter["title"], "书面化原则")
             self.assertEqual(frontmatter["type"], "rule")
@@ -71,7 +90,7 @@ class GBrainIngestTests(unittest.TestCase):
 
             manifest = compile_company_wiki_sources(settings)
 
-            target = settings.derived_path / "meetings" / "项目会议.md"
+            target = self._company_ready() / "meetings" / "项目会议.md"
             self.assertEqual(manifest["summary"]["compiled"], 1)
             frontmatter, body = self._read_frontmatter(target)
             self.assertEqual(frontmatter["type"], "meeting")
@@ -88,7 +107,7 @@ class GBrainIngestTests(unittest.TestCase):
 
             manifest = compile_company_wiki_sources(settings)
 
-            manifest_path = settings.manifests_path / "company-wiki-ingest-manifest.json"
+            manifest_path = self._company_manifests() / "company-wiki-ingest-manifest.json"
             saved_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(manifest["summary"]["skipped"], 1)
             self.assertEqual(saved_manifest["summary"]["skipped"], 1)
@@ -113,7 +132,7 @@ class GBrainIngestTests(unittest.TestCase):
 
             manifest = compile_company_wiki_sources(settings)
 
-            target = settings.derived_path / ".pending_review" / "meetings" / "客户会议.md"
+            target = self._company_ready() / ".pending_review" / "meetings" / "客户会议.md"
             self.assertEqual(manifest["summary"]["total"], 1)
             self.assertEqual(manifest["summary"]["compiled"], 1)
             self.assertTrue(target.exists())
@@ -142,7 +161,7 @@ class GBrainIngestTests(unittest.TestCase):
 
             self.assertEqual(manifest["summary"]["compiled"], 0)
             self.assertEqual(manifest["summary"]["skipped"], 1)
-            self.assertFalse((settings.derived_path / "standards" / "standard.md").exists())
+            self.assertFalse((self._company_ready() / "standards" / "standard.md").exists())
             self.assertIn("structured extraction", manifest["items"][0]["error"])
 
     def test_compiles_pdf_with_structured_extractor_when_enabled(self):
@@ -152,7 +171,7 @@ class GBrainIngestTests(unittest.TestCase):
             settings.raw_path.mkdir(parents=True)
             source = settings.raw_path / "standard.pdf"
             source.write_bytes(b"%PDF-1.4\nnot a real pdf")
-            stale_approved = settings.derived_path / "standards" / "standard.md"
+            stale_approved = self._company_ready() / "standards" / "standard.md"
             stale_approved.parent.mkdir(parents=True)
             stale_approved.write_text(
                 "---\nreview_status: approved\n---\n\n# stale approved version\n",
@@ -189,7 +208,7 @@ class GBrainIngestTests(unittest.TestCase):
                 enable_pdf_structured_extraction=True,
             )
 
-            target = settings.derived_path / ".pending_review" / "standards" / "standard.md"
+            target = self._company_ready() / ".pending_review" / "standards" / "standard.md"
             self.assertEqual(manifest["summary"]["compiled"], 1)
             self.assertTrue(target.exists())
             self.assertFalse(stale_approved.exists())

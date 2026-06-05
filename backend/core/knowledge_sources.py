@@ -10,12 +10,13 @@ from typing import Any, Callable
 from sqlalchemy.orm import Session
 
 from core.gbrain import (
-    CUSTOMER_INTELLIGENCE_SOURCE_ID,
     GBrainAdapter,
     GBrainSettings,
+    customer_source_id_for_workspace,
     load_gbrain_settings,
     project_source_id_for_workspace,
     project_source_paths_for_workspace,
+    resolve_gbrain_source_paths,
 )
 from core.gbrain_customer_sources import CUSTOMER_REFERENCE_DERIVED
 from core.gbrain_ingest import _split_frontmatter, approve_pending_review_markdown
@@ -205,7 +206,10 @@ class KnowledgeSources:
             if project_source_id:
                 source_id = project_source_id
         elif workspace and str(workspace.workspace_kind or "") == "customer":
-            source_id = CUSTOMER_INTELLIGENCE_SOURCE_ID
+            try:
+                source_id = customer_source_id_for_workspace(workspace)
+            except ValueError:
+                source_id = ""
 
         adapter = self.gbrain_factory()
         try:
@@ -368,7 +372,10 @@ class KnowledgeSources:
             return self.search_project_gbrain_sources(workspace, content)
         if workspace_kind != "customer":
             return []
-        source_id = CUSTOMER_INTELLIGENCE_SOURCE_ID
+        try:
+            source_id = customer_source_id_for_workspace(workspace)
+        except ValueError:
+            return []
         adapter = self.gbrain_factory()
         try:
             response = adapter.query(content, source_id=source_id, limit=5, detail="medium")
@@ -1065,7 +1072,9 @@ def approve_project_pending_review_to_gbrain(
 
 def append_approved_knowledge(review: Any, settings: GBrainSettings | None = None) -> dict[str, Any]:
     settings = settings or load_gbrain_settings()
-    rules_dir = settings.derived_path / "reviews"
+    source_paths = resolve_gbrain_source_paths("company", settings=settings)
+    gbrain_ready = source_paths.gbrain_ready
+    rules_dir = gbrain_ready / "reviews"
     rules_dir.mkdir(parents=True, exist_ok=True)
     target = rules_dir / "知识审核沉淀.md"
     marker = f"<!-- knowledge_review:{review.id} -->"
@@ -1073,7 +1082,7 @@ def append_approved_knowledge(review: Any, settings: GBrainSettings | None = Non
         text = target.read_text(encoding="utf-8")
         if marker in text:
             return {
-                "approved_file": target.relative_to(settings.derived_path).as_posix(),
+                "approved_file": target.relative_to(gbrain_ready).as_posix(),
                 "pending_file": None,
                 "scope": "company",
                 "source_id": settings.company_source_id,
@@ -1101,7 +1110,7 @@ def append_approved_knowledge(review: Any, settings: GBrainSettings | None = Non
     )
     target.write_text(text.rstrip() + section, encoding="utf-8")
     return {
-        "approved_file": target.relative_to(settings.derived_path).as_posix(),
+        "approved_file": target.relative_to(gbrain_ready).as_posix(),
         "pending_file": None,
         "scope": "company",
         "source_id": settings.company_source_id,

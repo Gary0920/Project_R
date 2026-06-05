@@ -74,6 +74,9 @@ class WorkspaceFile(Base):
     size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     trash_path: Mapped[str] = mapped_column(String(512), nullable=False, default="")
     rag_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    source_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source_mtime: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )

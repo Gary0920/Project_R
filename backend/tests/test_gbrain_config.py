@@ -74,6 +74,7 @@ class GBrainConfigTests(unittest.TestCase):
             "GBRAIN_COMPANY_RAW_PATH": str(root / "raw"),
             "GBRAIN_COMPANY_DERIVED_PATH": str(root / "derived"),
             "GBRAIN_COMPANY_MANIFESTS_PATH": str(root / "manifests"),
+            "GBRAIN_PREPROCESSED_ROOT": str(root / "_preprocessed"),
             "GBRAIN_LOCAL_GIT_ENABLED": "false",
         }
         for key in ("PATH", "Path", "SystemRoot", "WINDIR"):
@@ -89,9 +90,14 @@ class GBrainConfigTests(unittest.TestCase):
         self.assertTrue(settings.enabled)
         self.assertEqual(settings.base_url, "http://127.0.0.1:3131")
         self.assertEqual(settings.company_source_id, "company-wiki")
+        self.assertTrue(settings.home_path.as_posix().endswith("workspace_data/_gbrain"))
         self.assertTrue(settings.raw_path.as_posix().endswith("workspace_data/global/company-wiki/raw"))
-        self.assertTrue(settings.derived_path.as_posix().endswith("workspace_data/global/company-wiki/derived"))
-        self.assertTrue(settings.manifests_path.as_posix().endswith("workspace_data/global/company-wiki/manifests"))
+        self.assertTrue(
+            settings.derived_path.as_posix().endswith(
+                "workspace_data/_preprocessed/company/company-wiki/gbrain-ready"
+            )
+        )
+        self.assertTrue(settings.manifests_path.as_posix().endswith("workspace_data/_gbrain/manifests"))
 
     def test_ensure_environment_creates_company_wiki_directories(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -101,8 +107,10 @@ class GBrainConfigTests(unittest.TestCase):
 
             self.assertTrue(status["ok"])
             self.assertTrue((root / "raw").is_dir())
-            self.assertTrue((root / "derived").is_dir())
-            self.assertTrue((root / "manifests").is_dir())
+            self.assertTrue((root / "_preprocessed" / "company" / "company-wiki" / "gbrain-ready").is_dir())
+            self.assertTrue((root / "_preprocessed" / "company" / "company-wiki" / "manifests").is_dir())
+            self.assertTrue((root / "_preprocessed" / "company" / "company-wiki" / "runs").is_dir())
+            self.assertFalse((root / "derived").exists())
             self.assertFalse(status["local_git"]["enabled"])
 
     def test_ensure_environment_initializes_local_git_when_enabled(self):
@@ -115,7 +123,7 @@ class GBrainConfigTests(unittest.TestCase):
             self.assertTrue(status["ok"])
             self.assertTrue(status["local_git"]["enabled"])
             self.assertTrue(status["local_git"]["initialized"])
-            self.assertTrue((root / "derived" / ".git").is_dir())
+            self.assertTrue((root / "_preprocessed" / "company" / "company-wiki" / "gbrain-ready" / ".git").is_dir())
 
     def test_health_does_not_expose_service_token(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -140,7 +148,7 @@ class GBrainConfigTests(unittest.TestCase):
                 GBRAIN_BASE_URL="http://127.0.0.1:3131",
             )
             with patch.dict(os.environ, env, clear=True), patch(
-                "core.gbrain.urlopen",
+                "core.gbrain._adapter.urllib.request.urlopen",
                 side_effect=URLError("connection refused"),
             ):
                 health = GBrainAdapter().health()
@@ -157,7 +165,7 @@ class GBrainConfigTests(unittest.TestCase):
                 GBRAIN_BASE_URL="http://127.0.0.1:3131",
             )
             with patch.dict(os.environ, env, clear=True), patch(
-                "core.gbrain.urlopen",
+                "core.gbrain._adapter.urllib.request.urlopen",
                 return_value=FakeHttpResponse('{"status":"ok","engine":"pglite"}'),
             ):
                 health = GBrainAdapter().health()
@@ -260,7 +268,7 @@ class GBrainConfigTests(unittest.TestCase):
             )
             env = self._env_for_root(root, OLLAMA_BASE_URL="http://127.0.0.1:11434/v1")
             with patch.dict(os.environ, env, clear=True), patch(
-                "core.gbrain.urlopen",
+                "core.gbrain._adapter.urllib.request.urlopen",
                 return_value=FakeHttpResponse('{"models":[{"name":"mxbai-embed-large:latest"}]}'),
             ):
                 health = GBrainAdapter().health()
@@ -290,7 +298,7 @@ class GBrainConfigTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with patch.dict(os.environ, self._env_for_root(root), clear=True), patch(
-                "core.gbrain.urlopen",
+                "core.gbrain._adapter.urllib.request.urlopen",
                 return_value=FakeHttpResponse('{"models":[]}'),
             ):
                 health = GBrainAdapter().health()
@@ -323,7 +331,7 @@ class GBrainConfigTests(unittest.TestCase):
                 GBRAIN_SERVICE_BEARER_TOKEN="service-token",
             )
             with patch.dict(os.environ, env, clear=True), patch(
-                "core.gbrain.urlopen",
+                "core.gbrain._adapter.urllib.request.urlopen",
                 return_value=FakeHttpResponse(sse),
             ):
                 sources = GBrainAdapter().list_sources()
@@ -334,7 +342,7 @@ class GBrainConfigTests(unittest.TestCase):
     def test_company_source_status_reads_mcp_sse_payload(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            derived_path = root / "derived"
+            derived_path = root / "_preprocessed" / "company" / "company-wiki" / "gbrain-ready"
             source_payload = {
                 "id": "company-wiki",
                 "name": "Project_R Company Wiki",
@@ -363,7 +371,7 @@ class GBrainConfigTests(unittest.TestCase):
                 GBRAIN_SERVICE_BEARER_TOKEN="service-token",
             )
             with patch.dict(os.environ, env, clear=True), patch(
-                "core.gbrain.urlopen",
+                "core.gbrain._adapter.urllib.request.urlopen",
                 return_value=FakeHttpResponse(sse),
             ):
                 status = GBrainAdapter().company_source_status()
@@ -401,7 +409,10 @@ class GBrainConfigTests(unittest.TestCase):
                 GBRAIN_BASE_URL="http://127.0.0.1:3131",
                 GBRAIN_SERVICE_BEARER_TOKEN="service-token",
             )
-            with patch.dict(os.environ, env, clear=True), patch("core.gbrain.urlopen", side_effect=fake_urlopen):
+            with patch.dict(os.environ, env, clear=True), patch(
+                "core.gbrain._adapter.urllib.request.urlopen",
+                side_effect=fake_urlopen,
+            ):
                 result = GBrainAdapter().query("VMU")
 
         self.assertEqual(result["status"], "ok")
@@ -497,7 +508,10 @@ class GBrainConfigTests(unittest.TestCase):
                 GBRAIN_THINK_OAUTH_CLIENT_SECRET="secret",
                 GBRAIN_THINK_ROUNDS="2",
             )
-            with patch.dict(os.environ, env, clear=True), patch("core.gbrain.urlopen", side_effect=fake_urlopen):
+            with patch.dict(os.environ, env, clear=True), patch(
+                "core.gbrain._adapter.urllib.request.urlopen",
+                side_effect=fake_urlopen,
+            ):
                 result = GBrainAdapter().think("书面化原则是什么")
 
         self.assertEqual(result["status"], "ok")
@@ -578,7 +592,10 @@ class GBrainConfigTests(unittest.TestCase):
                 GBRAIN_THINK_SOURCE_SCOPE_VERIFIED="true",
                 GBRAIN_THINK_ALLOWED_SOURCES="company-wiki",
             )
-            with patch.dict(os.environ, env, clear=True), patch("core.gbrain.urlopen", side_effect=fake_urlopen):
+            with patch.dict(os.environ, env, clear=True), patch(
+                "core.gbrain._adapter.urllib.request.urlopen",
+                side_effect=fake_urlopen,
+            ):
                 result = GBrainAdapter().think("项目启动会结论是什么", source_id=project_source_id)
 
         self.assertEqual(result["status"], "ok")
@@ -634,6 +651,72 @@ class GBrainConfigTests(unittest.TestCase):
         self.assertIn("--federated-read", args)
         self.assertIn("project-bfi-7", args)
 
+    def test_ensure_project_think_client_replaces_stale_manifest_client(self):
+        stdout = (
+            'OAuth client registered: "project-r-think-project-test-6"\n'
+            "  Client ID:           refreshed-client\n"
+            "  Client Secret:       refreshed-secret\n"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "manifests").mkdir(parents=True)
+            (root / "manifests" / "gbrain-think-source-clients.json").write_text(
+                json.dumps(
+                    {
+                        "clients": {
+                            "project-test-6": {
+                                "source_id": "project-test-6",
+                                "name": "old-client",
+                                "client_id": "stale-client",
+                                "client_secret": "stale-secret",
+                                "scope": "read write",
+                                "token_auth_method": "client_secret_post",
+                                "allowed_sources": ["project-test-6"],
+                                "created_at": "2026-06-01T00:00:00+00:00",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            cli_root = root / "gbrain"
+            (cli_root / "src" / "commands").mkdir(parents=True)
+            (cli_root / "src" / "commands" / "auth.ts").write_text("// fake", encoding="utf-8")
+            env = self._env_for_root(
+                root,
+                GBRAIN_ENABLED="true",
+                GBRAIN_CLI_WORKDIR=str(cli_root),
+                GBRAIN_THINK_ENABLED="true",
+                GBRAIN_THINK_SOURCE_SCOPE_VERIFIED="true",
+            )
+            with patch.dict(os.environ, env, clear=True):
+                adapter = GBrainAdapter()
+                with patch.object(
+                    adapter,
+                    "_fetch_oauth_token",
+                    return_value={
+                        "status": "token_request_failed",
+                        "http_status": 400,
+                        "error": '{"error":"invalid_grant","error_description":"Client not found"}',
+                    },
+                ), patch.object(
+                    adapter,
+                    "_run_cli_exclusive",
+                    return_value={"status": "ok", "result": {"stdout": stdout, "stderr": ""}},
+                ) as run_cli:
+                    result = adapter.ensure_think_source_client("project-test-6")
+
+            manifest = json.loads((root / "manifests" / "gbrain-think-source-clients.json").read_text(encoding="utf-8"))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "registered")
+        self.assertEqual(result["client_id"], "refreshed-client")
+        self.assertEqual(result["client_secret"], "refreshed-secret")
+        self.assertEqual(manifest["clients"]["project-test-6"]["client_id"], "refreshed-client")
+        self.assertEqual(manifest["clients"]["project-test-6"]["client_secret"], "refreshed-secret")
+        args = run_cli.call_args.args[0]
+        self.assertIn("register-client", args)
+
     def test_citation_fixer_uses_agent_oauth_and_submit_agent(self):
         agent_payload = {
             "result": {
@@ -669,7 +752,10 @@ class GBrainConfigTests(unittest.TestCase):
                 GBRAIN_AGENT_OAUTH_CLIENT_SECRET="secret",
                 GBRAIN_AGENT_MODEL="deepseek:deepseek-chat",
             )
-            with patch.dict(os.environ, env, clear=True), patch("core.gbrain.urlopen", side_effect=fake_urlopen):
+            with patch.dict(os.environ, env, clear=True), patch(
+                "core.gbrain._adapter.urllib.request.urlopen",
+                side_effect=fake_urlopen,
+            ):
                 result = GBrainAdapter().submit_citation_fixer(
                     page_slug="rules/written-principle",
                     review_id=7,
@@ -706,7 +792,10 @@ class GBrainConfigTests(unittest.TestCase):
                 GBRAIN_BASE_URL="http://127.0.0.1:3131",
                 GBRAIN_SERVICE_BEARER_TOKEN="service-token",
             )
-            with patch.dict(os.environ, env, clear=True), patch("core.gbrain.urlopen", side_effect=fake_urlopen):
+            with patch.dict(os.environ, env, clear=True), patch(
+                "core.gbrain._adapter.urllib.request.urlopen",
+                side_effect=fake_urlopen,
+            ):
                 result = GBrainAdapter().get_page("reviews/citation-fixer-smoke/project-r-citation-fixer-smoke")
 
         self.assertEqual(result["status"], "ok")
@@ -854,14 +943,20 @@ class GBrainConfigTests(unittest.TestCase):
                 GBRAIN_BASE_URL="http://127.0.0.1:3131",
                 GBRAIN_SERVICE_BEARER_TOKEN="service-token",
             )
-            with patch.dict(os.environ, env, clear=True), patch("core.gbrain.urlopen", side_effect=fake_urlopen):
+            with patch.dict(os.environ, env, clear=True), patch(
+                "core.gbrain._adapter.urllib.request.urlopen",
+                side_effect=fake_urlopen,
+            ):
                 result = GBrainAdapter().sync_source()
 
         self.assertEqual(result["status"], "ok")
         body = captured["body"]
         self.assertEqual(body["params"]["name"], "sync_brain")
         arguments = body["params"]["arguments"]
-        self.assertEqual(arguments["repo"], str((root / "derived").resolve()))
+        self.assertEqual(
+            arguments["repo"],
+            str((root / "_preprocessed" / "company" / "company-wiki" / "gbrain-ready").resolve()),
+        )
         self.assertTrue(arguments["no_pull"])
         self.assertFalse(arguments["no_embed"])
 
@@ -901,8 +996,8 @@ class GBrainConfigTests(unittest.TestCase):
             )
             with (
                 patch.dict(os.environ, env, clear=True),
-                patch("core.gbrain.urlopen", return_value=FakeHttpResponse(sse)),
-                patch("core.gbrain.subprocess.run", side_effect=fake_run),
+                patch("core.gbrain._adapter.urllib.request.urlopen", return_value=FakeHttpResponse(sse)),
+                patch("core.gbrain._adapter.subprocess.run", side_effect=fake_run),
             ):
                 result = GBrainAdapter().sync_source()
 

@@ -20,12 +20,18 @@ import urllib.request
 BASE_DIR = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = BASE_DIR.parent
 DEFAULT_COMPANY_WIKI_ROOT = BASE_DIR / "workspace_data" / "global" / "company-wiki"
+DEFAULT_GBRAIN_HOME = BASE_DIR / "workspace_data" / "_gbrain"
+DEFAULT_PREPROCESSED_ROOT = BASE_DIR / "workspace_data" / "_preprocessed"
+DEFAULT_COMPANY_GBRAIN_READY_PATH = DEFAULT_PREPROCESSED_ROOT / "company" / "company-wiki" / "gbrain-ready"
+DEFAULT_COMPANY_RUNTIME_MANIFESTS_PATH = DEFAULT_GBRAIN_HOME / "manifests"
 DEFAULT_GBRAIN_CLI_WORKDIR = PROJECT_ROOT / "reference" / "gbrain-master"
 DEFAULT_COMPANY_SOURCE_NAME = "Project_R Company Wiki"
 PROJECT_SOURCE_ID_MAX_LENGTH = 32
 PROJECT_SOURCE_ID_PREFIX = "project"
 CUSTOMER_SOURCE_ID_PREFIX = "customer"
 CUSTOMER_INTELLIGENCE_SOURCE_ID = "customer-reference"
+CRM_CUSTOMER_SOURCE_ID = "customer-crm"
+CRM_CUSTOMER_SLUG = "CRM"
 # Backward-compatible source id alias. The persisted GBrain source is still
 # registered as "customer-reference"; product language should say customer
 # intelligence / customer profile instead of customer reference.
@@ -132,12 +138,12 @@ class GBrainSettings:
     base_url: str
     service_bearer_token: str = field(default="", repr=False)
     timeout_seconds: float = 5.0
-    home_path: Path = DEFAULT_COMPANY_WIKI_ROOT
+    home_path: Path = DEFAULT_GBRAIN_HOME
     company_source_id: str = "company-wiki"
     company_source_name: str = DEFAULT_COMPANY_SOURCE_NAME
     raw_path: Path = DEFAULT_COMPANY_WIKI_ROOT / "raw"
-    derived_path: Path = DEFAULT_COMPANY_WIKI_ROOT / "derived"
-    manifests_path: Path = DEFAULT_COMPANY_WIKI_ROOT / "manifests"
+    derived_path: Path = DEFAULT_COMPANY_GBRAIN_READY_PATH
+    manifests_path: Path = DEFAULT_COMPANY_RUNTIME_MANIFESTS_PATH
     local_git_enabled: bool = True
     cli_workdir: Path = DEFAULT_GBRAIN_CLI_WORKDIR
     bun_executable: str = "bun"
@@ -192,19 +198,48 @@ class GBrainSettings:
         return self.manifests_path / "gbrain-think-source-clients.json"
 
 
+@dataclass(frozen=True)
+class GBrainSourcePaths:
+    source_scope: str
+    source_id: str
+    raw: Path
+    gbrain_ready: Path
+    runs: Path
+    manifests: Path
+    preprocessed_root: Path
+    legacy_derived: Path | None = None
+    legacy_manifests: Path | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "source_scope": self.source_scope,
+            "source_id": self.source_id,
+            "raw": self.raw,
+            "gbrain_ready": self.gbrain_ready,
+            "runs": self.runs,
+            "manifests": self.manifests,
+            "preprocessed_root": self.preprocessed_root,
+        }
+        if self.legacy_derived is not None:
+            payload["legacy_derived"] = self.legacy_derived
+        if self.legacy_manifests is not None:
+            payload["legacy_manifests"] = self.legacy_manifests
+        return payload
+
+
 def load_gbrain_settings() -> GBrainSettings:
     return GBrainSettings(
         enabled=_env_bool("GBRAIN_ENABLED", True),
         base_url=os.getenv("GBRAIN_BASE_URL", "http://127.0.0.1:3131").strip(),
         service_bearer_token=os.getenv("GBRAIN_SERVICE_BEARER_TOKEN", "").strip(),
         timeout_seconds=_env_float("GBRAIN_TIMEOUT_SECONDS", 5.0),
-        home_path=_env_path("GBRAIN_HOME", DEFAULT_COMPANY_WIKI_ROOT),
+        home_path=_env_path("GBRAIN_HOME", DEFAULT_GBRAIN_HOME),
         company_source_id=os.getenv("GBRAIN_COMPANY_SOURCE_ID", "company-wiki").strip() or "company-wiki",
         company_source_name=os.getenv("GBRAIN_COMPANY_SOURCE_NAME", DEFAULT_COMPANY_SOURCE_NAME).strip()
         or DEFAULT_COMPANY_SOURCE_NAME,
         raw_path=_env_path("GBRAIN_COMPANY_RAW_PATH", DEFAULT_COMPANY_WIKI_ROOT / "raw"),
-        derived_path=_env_path("GBRAIN_COMPANY_DERIVED_PATH", DEFAULT_COMPANY_WIKI_ROOT / "derived"),
-        manifests_path=_env_path("GBRAIN_COMPANY_MANIFESTS_PATH", DEFAULT_COMPANY_WIKI_ROOT / "manifests"),
+        derived_path=_env_path("GBRAIN_COMPANY_DERIVED_PATH", DEFAULT_COMPANY_GBRAIN_READY_PATH),
+        manifests_path=_env_path("GBRAIN_COMPANY_MANIFESTS_PATH", DEFAULT_COMPANY_RUNTIME_MANIFESTS_PATH),
         local_git_enabled=_env_bool("GBRAIN_LOCAL_GIT_ENABLED", True),
         cli_workdir=_env_path("GBRAIN_CLI_WORKDIR", DEFAULT_GBRAIN_CLI_WORKDIR),
         bun_executable=os.getenv("GBRAIN_BUN_BIN", "bun").strip() or "bun",
@@ -296,12 +331,19 @@ def _ensure_local_git_repo(path: Path, enabled: bool) -> dict[str, Any]:
 
 def ensure_gbrain_environment(settings: GBrainSettings | None = None) -> dict[str, Any]:
     settings = settings or load_gbrain_settings()
+    source_paths = resolve_gbrain_source_paths("company", settings=settings)
     errors: list[str] = []
 
-    for path in (settings.raw_path, settings.derived_path, settings.manifests_path):
+    for path in (
+        source_paths.raw,
+        source_paths.gbrain_ready,
+        source_paths.runs,
+        source_paths.manifests,
+        settings.manifests_path,
+    ):
         _ensure_directory(path, errors)
 
-    git_status = _ensure_local_git_repo(settings.derived_path, settings.local_git_enabled)
+    git_status = _ensure_local_git_repo(source_paths.gbrain_ready, settings.local_git_enabled)
     if git_status.get("error"):
         errors.append(f"local git: {git_status['error']}")
 
@@ -311,9 +353,15 @@ def ensure_gbrain_environment(settings: GBrainSettings | None = None) -> dict[st
         "gbrain_home": _path_status(settings.home_path),
         "gbrain_config_dir": _path_status(settings.home_path / ".gbrain"),
         "paths": {
-            "raw": _path_status(settings.raw_path),
-            "derived": _path_status(settings.derived_path),
-            "manifests": _path_status(settings.manifests_path),
+            "raw": _path_status(source_paths.raw),
+            "gbrain_ready": _path_status(source_paths.gbrain_ready),
+            "runs": _path_status(source_paths.runs),
+            "manifests": _path_status(source_paths.manifests),
+            "legacy_derived": _path_status(source_paths.legacy_derived or settings.derived_path),
+            "legacy_manifests": _path_status(source_paths.legacy_manifests or settings.manifests_path),
+            # Compatibility key for older admin UI code; now points at gbrain-ready.
+            "derived": _path_status(source_paths.gbrain_ready),
+            "migration_status": _gbrain_path_migration_status(source_paths.gbrain_ready, source_paths.legacy_derived),
         },
         "local_git": git_status,
         "errors": errors,
@@ -332,6 +380,9 @@ def project_source_id_for_workspace(workspace: Any) -> str:
 
 
 def customer_source_id_for_workspace(workspace: Any) -> str:
+    slug_value = str(getattr(workspace, "slug", "") or getattr(workspace, "name", "") or "").strip()
+    if slug_value.casefold() == CRM_CUSTOMER_SLUG.casefold():
+        return CRM_CUSTOMER_SOURCE_ID
     workspace_id = getattr(workspace, "id", None)
     if not isinstance(workspace_id, int) or workspace_id <= 0:
         raise ValueError("customer workspace must be persisted before creating a GBrain source id")
@@ -342,34 +393,145 @@ def customer_source_id_for_workspace(workspace: Any) -> str:
     return f"{CUSTOMER_SOURCE_ID_PREFIX}-{slug}-{suffix}"
 
 
-def project_source_paths_for_workspace(workspace: Any) -> dict[str, Path]:
+def resolve_gbrain_source_paths(
+    source_scope: str,
+    *,
+    workspace: Any | None = None,
+    settings: GBrainSettings | None = None,
+) -> GBrainSourcePaths:
+    scope = source_scope.strip().lower().replace("_", "-")
+    preprocessed_root = _env_path("GBRAIN_PREPROCESSED_ROOT", DEFAULT_PREPROCESSED_ROOT)
+    if scope in {"company", "company-wiki", "global"}:
+        settings = settings or load_gbrain_settings()
+        root = _env_path(
+            "GBRAIN_COMPANY_PREPROCESSED_ROOT",
+            preprocessed_root / "company" / settings.company_source_id,
+        )
+        return GBrainSourcePaths(
+            source_scope="company",
+            source_id=settings.company_source_id,
+            raw=settings.raw_path.resolve(),
+            gbrain_ready=_env_path("GBRAIN_COMPANY_GBRAIN_READY_PATH", root / "gbrain-ready"),
+            runs=_env_path("GBRAIN_COMPANY_PREPROCESS_RUNS_PATH", root / "runs"),
+            manifests=_env_path("GBRAIN_COMPANY_PREPROCESS_MANIFESTS_PATH", root / "manifests"),
+            preprocessed_root=root.resolve(),
+            legacy_derived=(settings.raw_path.parent / "derived").resolve(),
+            legacy_manifests=(settings.raw_path.parent / "manifests").resolve(),
+        )
+    if workspace is None:
+        raise ValueError(f"{scope or 'source'} scope requires a workspace")
+    if scope == "project":
+        raw_root = _workspace_raw_root(workspace, "project")
+        source_id = project_source_id_for_workspace(workspace)
+        brand = _path_segment(str(getattr(workspace, "brand", "") or "BFI"), fallback="BFI").upper()
+        slug = _path_segment(str(getattr(workspace, "slug", "") or getattr(workspace, "name", "") or "project"), fallback="project")
+        root = preprocessed_root / "project" / brand / f"{getattr(workspace, 'id')}-{slug}"
+        return GBrainSourcePaths(
+            source_scope="project",
+            source_id=source_id,
+            raw=raw_root,
+            gbrain_ready=(root / "gbrain-ready").resolve(),
+            runs=(root / "runs").resolve(),
+            manifests=(root / "manifests").resolve(),
+            preprocessed_root=root.resolve(),
+            legacy_derived=(raw_root / "derived").resolve(),
+            legacy_manifests=(raw_root / "manifests").resolve(),
+        )
+    if scope == "customer":
+        raw_root = _workspace_raw_root(workspace, "customer")
+        source_id = customer_source_id_for_workspace(workspace)
+        slug_value = str(getattr(workspace, "slug", "") or getattr(workspace, "name", "") or "").strip()
+        if slug_value.casefold() == CRM_CUSTOMER_SLUG.casefold():
+            root = preprocessed_root / "customer" / "crm"
+            return GBrainSourcePaths(
+                source_scope="customer",
+                source_id=source_id,
+                raw=raw_root,
+                gbrain_ready=(root / "gbrain-ready").resolve(),
+                runs=(root / "runs").resolve(),
+                manifests=(root / "manifests").resolve(),
+                preprocessed_root=root.resolve(),
+                legacy_derived=(raw_root / "derived").resolve(),
+                legacy_manifests=(raw_root / "manifests").resolve(),
+            )
+        slug = _path_segment(
+            str(getattr(workspace, "slug", "") or getattr(workspace, "name", "") or "customer"),
+            fallback="customer",
+        )
+        root = preprocessed_root / "customer" / f"{getattr(workspace, 'id')}-{slug}"
+        return GBrainSourcePaths(
+            source_scope="customer",
+            source_id=source_id,
+            raw=raw_root,
+            gbrain_ready=(root / "gbrain-ready").resolve(),
+            runs=(root / "runs").resolve(),
+            manifests=(root / "manifests").resolve(),
+            preprocessed_root=root.resolve(),
+            legacy_derived=(raw_root / "derived").resolve(),
+            legacy_manifests=(raw_root / "manifests").resolve(),
+        )
+    raise ValueError(f"unsupported GBrain source scope: {source_scope}")
+
+
+def _workspace_raw_root(workspace: Any, workspace_kind: str) -> Path:
     storage_path = str(getattr(workspace, "storage_path", "") or "").strip()
     if storage_path:
-        root = Path(storage_path).resolve()
-    else:
+        return Path(storage_path).resolve()
+    if workspace_kind == "project":
         brand = str(getattr(workspace, "brand", "") or "BFI").strip().upper() or "BFI"
         slug = str(getattr(workspace, "slug", "") or getattr(workspace, "name", "") or "project").strip() or "project"
-        root = (BASE_DIR / "workspace_data" / "project" / brand / slug).resolve()
+        return (BASE_DIR / "workspace_data" / "project" / brand / slug).resolve()
+    slug = str(getattr(workspace, "slug", "") or getattr(workspace, "name", "") or "customer").strip() or "customer"
+    if slug.casefold() == CRM_CUSTOMER_SLUG.casefold():
+        return (BASE_DIR / "workspace_data" / "customer" / CRM_CUSTOMER_SLUG).resolve()
+    return (BASE_DIR / "workspace_data" / "customer" / slug).resolve()
+
+
+def _path_segment(value: str, *, fallback: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-._")
+    normalized = re.sub(r"-{2,}", "-", normalized)
+    return normalized or fallback
+
+
+def _gbrain_path_migration_status(gbrain_ready: Path, legacy_derived: Path | None) -> str:
+    has_ready = gbrain_ready.exists() and any(gbrain_ready.iterdir())
+    has_legacy = bool(legacy_derived and legacy_derived.exists() and any(legacy_derived.iterdir()))
+    if has_ready and has_legacy:
+        return "both_present"
+    if has_ready:
+        return "gbrain_ready"
+    if has_legacy:
+        return "legacy_only"
+    return "empty"
+
+
+def project_source_paths_for_workspace(workspace: Any) -> dict[str, Path]:
+    resolved = resolve_gbrain_source_paths("project", workspace=workspace)
     return {
-        "root": root,
-        "raw": root,
-        "derived": root / "derived",
-        "manifests": root / "manifests",
+        "root": resolved.raw,
+        "raw": resolved.raw,
+        "derived": resolved.gbrain_ready,
+        "gbrain_ready": resolved.gbrain_ready,
+        "runs": resolved.runs,
+        "manifests": resolved.manifests,
+        "preprocessed_root": resolved.preprocessed_root,
+        "legacy_derived": resolved.legacy_derived,
+        "legacy_manifests": resolved.legacy_manifests,
     }
 
 
 def customer_source_paths_for_workspace(workspace: Any) -> dict[str, Path]:
-    storage_path = str(getattr(workspace, "storage_path", "") or "").strip()
-    if storage_path:
-        root = Path(storage_path).resolve()
-    else:
-        slug = str(getattr(workspace, "slug", "") or getattr(workspace, "name", "") or "customer").strip() or "customer"
-        root = (BASE_DIR / "workspace_data" / "customer" / slug).resolve()
+    resolved = resolve_gbrain_source_paths("customer", workspace=workspace)
     return {
-        "root": root,
-        "raw": root,
-        "derived": root / "derived",
-        "manifests": root / "manifests",
+        "root": resolved.raw,
+        "raw": resolved.raw,
+        "derived": resolved.gbrain_ready,
+        "gbrain_ready": resolved.gbrain_ready,
+        "runs": resolved.runs,
+        "manifests": resolved.manifests,
+        "preprocessed_root": resolved.preprocessed_root,
+        "legacy_derived": resolved.legacy_derived,
+        "legacy_manifests": resolved.legacy_manifests,
     }
 
 
@@ -377,7 +539,7 @@ def ensure_project_gbrain_environment(workspace: Any, settings: GBrainSettings |
     settings = settings or load_gbrain_settings()
     paths = project_source_paths_for_workspace(workspace)
     errors: list[str] = []
-    for key in ("root", "derived", "manifests"):
+    for key in ("root", "derived", "runs", "manifests"):
         _ensure_directory(paths[key], errors)
     git_status = _ensure_local_git_repo(paths["derived"], settings.local_git_enabled)
     if git_status.get("error"):
@@ -395,7 +557,7 @@ def ensure_customer_gbrain_environment(workspace: Any, settings: GBrainSettings 
     settings = settings or load_gbrain_settings()
     paths = customer_source_paths_for_workspace(workspace)
     errors: list[str] = []
-    for key in ("root", "derived", "manifests"):
+    for key in ("root", "derived", "runs", "manifests"):
         _ensure_directory(paths[key], errors)
     git_status = _ensure_local_git_repo(paths["derived"], settings.local_git_enabled)
     if git_status.get("error"):
@@ -417,6 +579,9 @@ def project_source_registration_plan(workspace: Any) -> dict[str, Any]:
         "source_id": source_id,
         "name": name,
         "path": str(paths["derived"].resolve()),
+        "gbrain_ready_path": str(paths["gbrain_ready"].resolve()),
+        "legacy_derived_path": str(paths["legacy_derived"].resolve()) if paths.get("legacy_derived") else None,
+        "migration_status": _gbrain_path_migration_status(paths["gbrain_ready"], paths.get("legacy_derived")),
         "federated": False,
         "operator_command": (
             f"gbrain sources add {source_id} "
@@ -434,6 +599,9 @@ def customer_source_registration_plan(workspace: Any) -> dict[str, Any]:
         "source_id": source_id,
         "name": name,
         "path": str(paths["derived"].resolve()),
+        "gbrain_ready_path": str(paths["gbrain_ready"].resolve()),
+        "legacy_derived_path": str(paths["legacy_derived"].resolve()) if paths.get("legacy_derived") else None,
+        "migration_status": _gbrain_path_migration_status(paths["gbrain_ready"], paths.get("legacy_derived")),
         "federated": False,
         "operator_command": (
             f"gbrain sources add {source_id} "
@@ -508,7 +676,8 @@ class GBrainAdapter:
             "environment": health.get("environment"),
             "readiness": health.get("readiness"),
             # Compatibility fields for older admin UI code.
-            "source_dirs": [str(self.settings.derived_path.resolve())],
+            "source_dirs": [str(resolve_gbrain_source_paths("company", settings=self.settings).gbrain_ready.resolve())],
+            "legacy_source_dirs": [str(self.settings.derived_path.resolve())],
             "embedding_model": embedding.get("model") or "",
             "indexed_files": page_count,
             "indexed_chunks": chunk_count,
@@ -516,11 +685,16 @@ class GBrainAdapter:
         }
 
     def latest_ingest_manifest(self) -> dict[str, Any]:
-        manifest_path = self.settings.manifests_path / "company-wiki-ingest-manifest.json"
+        source_paths = resolve_gbrain_source_paths("company", settings=self.settings)
+        manifest_path = source_paths.manifests / "company-wiki-ingest-manifest.json"
+        legacy_manifest_path = self.settings.manifests_path / "company-wiki-ingest-manifest.json"
+        if not manifest_path.exists() and legacy_manifest_path.exists():
+            manifest_path = legacy_manifest_path
         if not manifest_path.exists():
             return {
                 "exists": False,
                 "path": str(manifest_path.resolve()),
+                "legacy_path": str(legacy_manifest_path.resolve()),
                 "summary": {"total": 0, "compiled": 0, "skipped": 0, "failed": 0},
                 "items": [],
             }
@@ -536,17 +710,22 @@ class GBrainAdapter:
             }
         payload["exists"] = True
         payload["path"] = str(manifest_path.resolve())
+        payload["legacy_path"] = str(legacy_manifest_path.resolve())
         return payload
 
     def source_registration_plan(self) -> dict[str, Any]:
+        source_paths = resolve_gbrain_source_paths("company", settings=self.settings)
         return {
             "source_id": self.settings.company_source_id,
             "name": self.settings.company_source_name,
-            "path": str(self.settings.derived_path.resolve()),
+            "path": str(source_paths.gbrain_ready.resolve()),
+            "gbrain_ready_path": str(source_paths.gbrain_ready.resolve()),
+            "legacy_derived_path": str((source_paths.legacy_derived or self.settings.derived_path).resolve()),
+            "migration_status": _gbrain_path_migration_status(source_paths.gbrain_ready, source_paths.legacy_derived),
             "federated": True,
             "operator_command": (
                 f"gbrain sources add {self.settings.company_source_id} "
-                f"--path {self.settings.derived_path.resolve()} "
+                f"--path {source_paths.gbrain_ready.resolve()} "
                 f"--name \"{self.settings.company_source_name}\" --federated"
             ),
         }
@@ -563,10 +742,11 @@ class GBrainAdapter:
         }
 
     def company_source_status(self) -> dict[str, Any]:
+        plan = self.source_registration_plan()
         return self._source_status(
             self.settings.company_source_id,
-            self.settings.derived_path.resolve(),
-            self.source_registration_plan(),
+            Path(plan["path"]).resolve(),
+            plan,
         )
 
     def source_status(self, registration_plan: dict[str, Any]) -> dict[str, Any]:
@@ -1420,12 +1600,28 @@ class GBrainAdapter:
         clients = manifest["clients"]
         existing = clients.get(source_id)
         if self._is_valid_think_source_client(existing, source_id):
-            return {
-                "ok": True,
-                "status": "already_registered",
-                "source_id": source_id,
-                **existing,
-            }
+            token_check = self._fetch_oauth_token(
+                client_id=str(existing["client_id"]),
+                client_secret=str(existing["client_secret"]),
+                scope=str(existing.get("scope") or self.settings.think_oauth_scope),
+                token_auth_method=str(existing.get("token_auth_method") or self.settings.think_oauth_token_auth_method),
+            )
+            if token_check.get("status") == "ok":
+                return {
+                    "ok": True,
+                    "status": "already_registered",
+                    "source_id": source_id,
+                    **existing,
+                }
+            if not _oauth_token_error_is_missing_client(token_check):
+                return {
+                    "ok": False,
+                    "status": token_check.get("status") or "token_check_failed",
+                    "source_id": source_id,
+                    "error": token_check.get("error") or "GBrain OAuth client token check failed",
+                }
+            clients.pop(source_id, None)
+            self._think_oauth_tokens.pop(f"manifest:{source_id}:{existing['client_id']}", None)
 
         registered = self.register_think_source_client(source_id)
         if not registered.get("ok"):
@@ -1975,7 +2171,8 @@ class GBrainAdapter:
         no_embed: bool = False,
     ) -> dict[str, Any]:
         source_id = source_id or self.settings.company_source_id
-        repo = (repo_path or self.settings.derived_path).resolve()
+        default_repo = resolve_gbrain_source_paths("company", settings=self.settings).gbrain_ready
+        repo = (repo_path or default_repo).resolve()
         # GBrain currently marks sync_brain as localOnly, so HTTP MCP may hide it.
         # Try MCP first for future compatibility, then fall back to same-host CLI.
         mcp_response = self._call_mcp_tool(
@@ -2537,6 +2734,13 @@ def _mcp_tool_invocation_succeeded(response: dict[str, Any]) -> bool:
     if isinstance(result, dict) and result.get("error"):
         return False
     return True
+
+
+def _oauth_token_error_is_missing_client(response: dict[str, Any]) -> bool:
+    if response.get("status") == "ok":
+        return False
+    text = f"{response.get('error') or ''} {response.get('error_description') or ''}".lower()
+    return any(marker in text for marker in ("client not found", "invalid_client", "invalid_grant"))
 
 
 def _timestamp_for_ui(value: Any) -> float | None:
