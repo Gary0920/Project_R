@@ -256,15 +256,25 @@ export function permanentlyDeleteWorkspaceFile(options: ApiClientOptions, worksp
   );
 }
 
-export function refreshWorkspaceKnowledge(options: ApiClientOptions, workspaceId: number) {
+export function refreshWorkspaceKnowledge(
+  options: ApiClientOptions,
+  workspaceId: number,
+  data: { path?: string; recursive?: boolean } = {},
+) {
   return apiRequest<WorkspaceKnowledgeRefreshResponse>(options, `/workspaces/${workspaceId}/knowledge/ingest`, {
     method: "POST",
+    body: JSON.stringify(data),
   });
 }
 
-export function enqueueWorkspaceKnowledgeIngest(options: ApiClientOptions, workspaceId: number) {
+export function enqueueWorkspaceKnowledgeIngest(
+  options: ApiClientOptions,
+  workspaceId: number,
+  data: { path?: string; recursive?: boolean } = {},
+) {
   return apiRequest<WorkspaceKnowledgeIngestJobResponse>(options, `/workspaces/${workspaceId}/knowledge/ingest/async`, {
     method: "POST",
+    body: JSON.stringify(data),
   });
 }
 

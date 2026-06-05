@@ -361,6 +361,8 @@ export type WorkspaceKnowledgeRefreshResponse = {
   skipped_files: number;
   failed_files: number;
   pending_reviews_created: number;
+  ingest_path?: string;
+  ingest_recursive?: boolean;
   gbrain_source_id: string | null;
   gbrain_status: string | null;
   gbrain_sync_status: string | null;

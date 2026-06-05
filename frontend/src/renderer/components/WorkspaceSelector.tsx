@@ -36,13 +36,12 @@ export type WorkspaceSelectorProps = {
 };
 
 const ORDER_KEY = "project_r_workspace_order";
-const BRANDS = ["AURA", "BFI", "SPECWISE", "SYNOVA"];
-const DIRECTORY_GROUPS = [...BRANDS, "CUSTOMER"];
+const DEFAULT_BRANDS = ["AURA", "BFI", "SPECWISE", "SYNOVA"];
 const CUSTOMER_GROUP = "CUSTOMER";
 type DirectoryWorkspace = WorkspaceSearchResult;
 
 function groupLabel(group: string) {
-  return group === CUSTOMER_GROUP ? "客户情报" : group;
+  return group === CUSTOMER_GROUP ? "CRM" : group;
 }
 
 function workspaceKindFromGroup(group: string) {
@@ -99,23 +98,36 @@ export function WorkspaceSelector({ apiOptions, canCreateProject = false, onWork
   const activeWorkspace = workspaces.find((item) => item.id === activeWorkspaceId);
   const managingWorkspace = workspaces.find((item) => item.id === managingWorkspaceId) ?? null;
   const queryText = directoryQuery.trim();
-  const brandSummaries = useMemo(() => {
-    return DIRECTORY_GROUPS.map((brand) => ({
-      brand,
-      items: directoryResults.filter((item) => item.brand === brand),
-    }));
+  const directoryGroups = useMemo(() => {
+    const groups = new Set<string>([...DEFAULT_BRANDS, CUSTOMER_GROUP]);
+    directoryResults.forEach((item) => groups.add(item.workspace_kind === "customer" ? CUSTOMER_GROUP : item.brand));
+    return [...groups].filter(Boolean).sort((a, b) => {
+      if (a === CUSTOMER_GROUP) return 1;
+      if (b === CUSTOMER_GROUP) return -1;
+      const ai = DEFAULT_BRANDS.indexOf(a);
+      const bi = DEFAULT_BRANDS.indexOf(b);
+      if (ai !== -1 || bi !== -1) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+      return a.localeCompare(b, "en");
+    });
   }, [directoryResults]);
+  const projectBrandOptions = useMemo(() => directoryGroups.filter((group) => group !== CUSTOMER_GROUP), [directoryGroups]);
+  const brandSummaries = useMemo(() => {
+    return directoryGroups.map((brand) => ({
+      brand,
+      items: directoryResults.filter((item) => (item.workspace_kind === "customer" ? CUSTOMER_GROUP : item.brand) === brand),
+    }));
+  }, [directoryGroups, directoryResults]);
   const groupedSearchResults = useMemo(() => {
-    return DIRECTORY_GROUPS.map((brand) => ({
+    return directoryGroups.map((brand) => ({
       brand,
       items: directoryResults
-        .filter((item) => item.brand === brand)
+        .filter((item) => (item.workspace_kind === "customer" ? CUSTOMER_GROUP : item.brand) === brand)
         .sort(sortDirectoryProjects),
     })).filter((group) => group.items.length > 0);
-  }, [directoryResults]);
+  }, [directoryGroups, directoryResults]);
   const visibleProjects = useMemo(() => {
     const filtered = selectedBrand && !queryText
-      ? directoryResults.filter((item) => item.brand === selectedBrand)
+      ? directoryResults.filter((item) => (item.workspace_kind === "customer" ? CUSTOMER_GROUP : item.brand) === selectedBrand)
       : directoryResults;
     return [...filtered].sort(sortDirectoryProjects);
   }, [directoryResults, queryText, selectedBrand]);
@@ -174,10 +186,10 @@ export function WorkspaceSelector({ apiOptions, canCreateProject = false, onWork
 
   async function handleCreate() {
     if (!canCreateProject) return;
-    const name = newName.trim();
+    const workspaceKind = workspaceKindFromGroup(newBrand);
+    const name = workspaceKind === "customer" ? "CRM" : newName.trim();
     if (!name) return;
     try {
-      const workspaceKind = workspaceKindFromGroup(newBrand);
       const workspace = await createWorkspace(apiOptions, name, newDescription.trim(), newBrand, workspaceKind);
       await reloadWorkspaces(workspace.id);
       setSelectedBrand(workspace.brand || newBrand);
@@ -206,7 +218,10 @@ export function WorkspaceSelector({ apiOptions, canCreateProject = false, onWork
     return workspace.can_open;
   }
 
-  function openAccessibleWorkspace(workspace: DirectoryWorkspace) {
+  async function openAccessibleWorkspace(workspace: DirectoryWorkspace) {
+    if (!workspaces.some((item) => item.id === workspace.id)) {
+      await reloadWorkspaces(workspace.id);
+    }
     setActiveWorkspaceId(workspace.id);
     onWorkspaceChanged?.(workspace.id);
     setDirectoryOpen(false);
@@ -214,7 +229,7 @@ export function WorkspaceSelector({ apiOptions, canCreateProject = false, onWork
 
   async function handleDirectoryProject(workspace: DirectoryWorkspace) {
     if (canOpenWorkspace(workspace)) {
-      openAccessibleWorkspace(workspace);
+      await openAccessibleWorkspace(workspace);
       return;
     }
     await joinWorkspace(apiOptions, workspace.id);
@@ -297,7 +312,7 @@ export function WorkspaceSelector({ apiOptions, canCreateProject = false, onWork
         <span className="project-directory-row-meta">{workspace.member_count} 人</span>
         <span className="project-directory-row-status">
           {workspace.workspace_kind === "customer"
-            ? joined ? "客户成员" : "受限情报"
+            ? joined ? "CRM 成员" : "受限 CRM"
             : workspace.is_hidden ? (joined ? "隐藏成员" : "隐藏授权") : joined ? "已加入" : "开放项目"}
         </span>
         <b>{accessible ? "打开" : "等待邀请"}</b>
@@ -429,7 +444,7 @@ export function WorkspaceSelector({ apiOptions, canCreateProject = false, onWork
               {workspace.is_default ? <span className="workspace-default-badge">私人</span> : <span className="workspace-default-badge">{workspace.is_hidden ? "隐藏" : workspace.brand}</span>}
             </div>
           );})}
-          {customerWorkspaces.length ? <div className="workspace-list-group"><span className="workspace-list-group-title">客户</span></div> : null}
+          {customerWorkspaces.length ? <div className="workspace-list-group"><span className="workspace-list-group-title">CRM</span></div> : null}
           {customerWorkspaces.map((workspace) => {
             const index = workspaces.findIndex((item) => item.id === workspace.id);
             return (
@@ -494,7 +509,7 @@ export function WorkspaceSelector({ apiOptions, canCreateProject = false, onWork
                   </button>
                 ) : null}
               </div>
-              <span className="workspace-default-badge">客户</span>
+              <span className="workspace-default-badge">CRM</span>
             </div>
           );})}
         </div>
@@ -506,7 +521,7 @@ export function WorkspaceSelector({ apiOptions, canCreateProject = false, onWork
             <header className="project-directory-header">
               <div>
                 <h2>工作区目录</h2>
-                <p>搜索、打开或新建项目与受限客户情报工作区。</p>
+                <p>搜索、打开或新建项目与 CRM 工作区。</p>
               </div>
               <button className="prompt-panel-close" onClick={() => setDirectoryOpen(false)} type="button">×</button>
             </header>
@@ -530,12 +545,12 @@ export function WorkspaceSelector({ apiOptions, canCreateProject = false, onWork
             {creating && canCreateProject ? (
               <div className="project-directory-create">
                 <select value={newBrand} onChange={(event) => setNewBrand(event.target.value)}>
-                  {BRANDS.map((brand) => <option key={brand} value={brand}>{brand}</option>)}
-                  <option value={CUSTOMER_GROUP}>客户情报</option>
+                  {projectBrandOptions.map((brand) => <option key={brand} value={brand}>{brand}</option>)}
+                  <option value={CUSTOMER_GROUP}>CRM</option>
                 </select>
-                <input value={newName} onChange={(event) => setNewName(event.target.value)} onKeyDown={handleCreateKeyDown} placeholder={newBrand === CUSTOMER_GROUP ? "客户名称，例如 Lucerna" : "项目代号，例如 BG001"} />
+                <input disabled={newBrand === CUSTOMER_GROUP} value={newBrand === CUSTOMER_GROUP ? "CRM" : newName} onChange={(event) => setNewName(event.target.value)} onKeyDown={handleCreateKeyDown} placeholder={newBrand === CUSTOMER_GROUP ? "CRM" : "项目代号，例如 BG001"} />
                 <input value={newDescription} onChange={(event) => setNewDescription(event.target.value)} placeholder="项目说明，可选" />
-                <button disabled={!newName.trim()} onClick={() => void handleCreate()} type="button">创建</button>
+                <button disabled={newBrand !== CUSTOMER_GROUP && !newName.trim()} onClick={() => void handleCreate()} type="button">{newBrand === CUSTOMER_GROUP ? "打开/创建" : "创建"}</button>
                 {createError ? <p>{createError}</p> : null}
               </div>
             ) : null}

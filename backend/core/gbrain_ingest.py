@@ -5,14 +5,14 @@ import json
 import os
 import re
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 import yaml
 
-from core.gbrain import GBrainSettings, ensure_gbrain_environment, load_gbrain_settings
+from core.gbrain import GBrainSettings, ensure_gbrain_environment, load_gbrain_settings, resolve_gbrain_source_paths
 from core.meeting_structured_extraction import (
     MeetingStructuredExtractionResult,
     extract_meeting_structured_markdown,
@@ -63,7 +63,13 @@ def compile_company_wiki_sources(
     enable_pdf_structured_extraction: bool | None = None,
 ) -> dict[str, Any]:
     settings = settings or load_gbrain_settings()
+    source_paths = resolve_gbrain_source_paths("company", settings=settings)
     environment = ensure_gbrain_environment(settings)
+    settings = replace(
+        settings,
+        derived_path=source_paths.gbrain_ready,
+        manifests_path=source_paths.manifests,
+    )
     started_at = _utc_now()
     results: list[CompiledSource] = []
     pdf_enabled = (
@@ -93,8 +99,15 @@ def compile_company_wiki_sources(
     manifest = {
         "schema_version": 1,
         "source_id": settings.company_source_id,
+        "source_scope": "company",
         "started_at": started_at,
         "finished_at": _utc_now(),
+        "raw_path": str(settings.raw_path.resolve()),
+        "gbrain_ready_path": str(settings.derived_path.resolve()),
+        "derived_path": str(settings.derived_path.resolve()),
+        "legacy_derived_path": str((source_paths.legacy_derived or source_paths.gbrain_ready).resolve()),
+        "runs_path": str(source_paths.runs.resolve()),
+        "manifests_path": str(settings.manifests_path.resolve()),
         "environment_ok": environment["ok"],
         "items": [_result_to_manifest_item(result, settings) for result in results],
         "summary": {

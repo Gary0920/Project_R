@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from core.gbrain import CUSTOMER_INTELLIGENCE_SOURCE_ID, load_gbrain_settings
+from core.gbrain import CUSTOMER_INTELLIGENCE_SOURCE_ID, load_gbrain_settings, resolve_gbrain_source_paths
 from core.gbrain_customer_sources import CUSTOMER_REFERENCE_DERIVED
 from core.gbrain_ingest import _relative_posix, _split_frontmatter, _write_markdown
 
@@ -324,7 +324,7 @@ def _default_derived_path(source_id: str) -> Path:
         return CUSTOMER_REFERENCE_DERIVED
     settings = load_gbrain_settings()
     if source_id == settings.company_source_id:
-        return settings.derived_path
+        return resolve_gbrain_source_paths("company", settings=settings).gbrain_ready
     raise ValueError(f"Unknown graph source path for {source_id!r}")
 
 

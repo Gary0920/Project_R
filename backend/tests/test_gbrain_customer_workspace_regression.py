@@ -18,7 +18,7 @@ class GBrainCustomerWorkspaceRegressionTests(unittest.TestCase):
             "status": "ok",
             "result": [
                 {
-                    "source_id": "customer-reference",
+                    "source_id": "customer-crm",
                     "title": "Lucerna Meeting",
                     "slug": "raw-events/lucerna-meeting",
                     "chunk_text": "Aaron approved the next step.",
@@ -28,7 +28,7 @@ class GBrainCustomerWorkspaceRegressionTests(unittest.TestCase):
 
         failures = gbrain_customer_workspace_regression.validate_query_response(
             response,
-            expected_source_id="customer-reference",
+            expected_source_id="customer-crm",
             expected_terms=["Aaron", "approved"],
         )
 
@@ -42,7 +42,7 @@ class GBrainCustomerWorkspaceRegressionTests(unittest.TestCase):
 
         failures = gbrain_customer_workspace_regression.validate_query_response(
             response,
-            expected_source_id="customer-reference",
+            expected_source_id="customer-crm",
             expected_terms=["Aaron"],
         )
 
@@ -51,11 +51,11 @@ class GBrainCustomerWorkspaceRegressionTests(unittest.TestCase):
     def test_validate_think_response_accepts_token_bound_customer_scope(self):
         response = {
             "status": "ok",
-            "source_id": "customer-reference",
+            "source_id": "customer-crm",
             "source_scope": {
                 "verified": True,
                 "scope_is_token_bound": True,
-                "allowed_sources": ["customer-reference"],
+                "allowed_sources": ["customer-crm"],
             },
             "result": {
                 "answer": "Aaron is the customer-side decision contact.",
@@ -66,7 +66,7 @@ class GBrainCustomerWorkspaceRegressionTests(unittest.TestCase):
 
         failures = gbrain_customer_workspace_regression.validate_think_response(
             response,
-            expected_source_id="customer-reference",
+            expected_source_id="customer-crm",
             expected_terms=["Aaron"],
         )
 
@@ -75,7 +75,7 @@ class GBrainCustomerWorkspaceRegressionTests(unittest.TestCase):
     def test_validate_think_response_rejects_unscoped_or_uncited_answer(self):
         response = {
             "status": "ok",
-            "source_id": "customer-reference",
+            "source_id": "customer-crm",
             "source_scope": {
                 "verified": False,
                 "scope_is_token_bound": False,
@@ -89,7 +89,7 @@ class GBrainCustomerWorkspaceRegressionTests(unittest.TestCase):
 
         failures = gbrain_customer_workspace_regression.validate_think_response(
             response,
-            expected_source_id="customer-reference",
+            expected_source_id="customer-crm",
             expected_terms=["Aaron"],
         )
 

@@ -2,10 +2,12 @@ import json
 import re
 import base64
 import binascii
+import hashlib
 import mimetypes
 from datetime import datetime, timezone
 from pathlib import Path
 import shutil
+import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -25,14 +27,14 @@ from core.gbrain import (
     project_source_id_for_workspace,
     project_source_paths_for_workspace,
 )
-from core.gbrain_customer_sources import compile_customer_workspace_sources
+from core.gbrain_customer_sources import CUSTOMER_WORKSPACE_INGEST_MANIFEST_NAME, compile_customer_workspace_sources
 from core.gbrain_graph import (
     apply_entity_merge_candidate_action,
     build_entity_merge_candidate_preview,
     build_entity_merge_candidates,
     build_source_graph,
 )
-from core.gbrain_project_ingest import compile_project_workspace_sources
+from core.gbrain_project_ingest import PROJECT_INGEST_MANIFEST_NAME, compile_project_workspace_sources
 from core.notification_service import (
     notify_user,
     notify_workspace_bulk_delete_risk,
@@ -40,8 +42,6 @@ from core.notification_service import (
 )
 from core.workspace_files import (
     DEFAULT_UNFILED_DIR,
-    DEFAULT_CUSTOMER_WORKSPACE_DIRS,
-    DEFAULT_USER_WORKSPACE_DIRS,
     DEFAULT_WORKSPACE_DIRS,
     MAX_WORKSPACE_ADMIN_UPLOAD_BYTES,
     MAX_WORKSPACE_ADMIN_UPLOAD_MB,
@@ -75,6 +75,9 @@ USER_ROOT_NAME = "user"
 CUSTOMER_ROOT_NAME = "customer"
 PROJECT_BRANDS = ("AURA", "BFI", "SPECWISE", "SYNOVA")
 CUSTOMER_BRAND = "CUSTOMER"
+CRM_WORKSPACE_NAME = "CRM"
+CRM_WORKSPACE_SLUG = "CRM"
+CRM_RAW_DIR = "raw"
 
 
 def _normalize_group_name(value: str | None) -> str:
@@ -242,6 +245,11 @@ class RestoreWorkspaceFileRequest(BaseModel):
     file_id: int
 
 
+class WorkspaceKnowledgeIngestRequest(BaseModel):
+    path: str = ""
+    recursive: bool = True
+
+
 class WorkspaceKnowledgeRefreshResponse(BaseModel):
     ok: bool
     workspace_id: int
@@ -253,11 +261,15 @@ class WorkspaceKnowledgeRefreshResponse(BaseModel):
     skipped_files: int = 0
     failed_files: int = 0
     pending_reviews_created: int = 0
+    ingest_path: str = ""
+    ingest_recursive: bool = True
     gbrain_source_id: str | None = None
     gbrain_status: str | None = None
     gbrain_sync_status: str | None = None
     gbrain_think_status: str | None = None
     gbrain_error: str | None = None
+    run_status: str | None = None
+    run_id: str | None = None
     manifest: dict | None = None
     agent_run: AgentRunResponse | None = None
 
@@ -326,9 +338,32 @@ def _safe_username(username: str) -> str:
     return _slugify(username).replace("/", "-") or "user"
 
 
+def _project_brand_names() -> list[str]:
+    names = set(PROJECT_BRANDS)
+    for brand, _ in _project_brand_dirs():
+        names.add(brand)
+    return sorted(names)
+
+
+def _project_brand_dirs() -> list[tuple[str, Path]]:
+    project_root = (WORKSPACES_ROOT / PROJECT_ROOT_NAME).resolve()
+    entries: dict[str, Path] = {}
+    for brand in PROJECT_BRANDS:
+        entries[brand] = (project_root / brand).resolve()
+    if project_root.exists():
+        for child in project_root.iterdir():
+            if child.is_dir() and not child.is_symlink():
+                normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", child.name.strip()).strip("-._")
+                if normalized:
+                    entries[normalized.upper()] = child.resolve()
+    return sorted(entries.items(), key=lambda item: item[0])
+
+
 def _normalize_brand(brand: str) -> str:
     normalized = brand.strip().upper()
-    if normalized not in PROJECT_BRANDS:
+    if not re.fullmatch(r"[A-Z0-9][A-Z0-9._-]{0,63}", normalized or ""):
+        raise HTTPException(status_code=400, detail="项目品牌不合法")
+    if normalized not in _project_brand_names():
         raise HTTPException(status_code=400, detail="项目品牌不合法")
     return normalized
 
@@ -348,7 +383,7 @@ def _workspace_dirs(workspace: Workspace) -> tuple[str, ...]:
     if workspace.workspace_kind == "project":
         return DEFAULT_WORKSPACE_DIRS
     if workspace.workspace_kind == "customer":
-        return DEFAULT_CUSTOMER_WORKSPACE_DIRS
+        return (CRM_RAW_DIR,)
     return ()
 
 
@@ -363,15 +398,16 @@ def _ensure_not_trash_path(path: Path) -> None:
 
 def _target_storage_path(workspace: Workspace, owner: User | None = None) -> Path:
     if workspace.workspace_kind == "user":
-        username = _safe_username(owner.username if owner else workspace.slug.removeprefix("user-"))
-        return (WORKSPACES_ROOT / USER_ROOT_NAME / username).resolve()
+        return WORKSPACES_ROOT.resolve()
     if workspace.workspace_kind == "customer":
-        return (WORKSPACES_ROOT / CUSTOMER_ROOT_NAME / workspace.slug).resolve()
+        return (WORKSPACES_ROOT / CUSTOMER_ROOT_NAME / CRM_WORKSPACE_SLUG).resolve()
     brand = _normalize_brand(workspace.brand or "BFI")
     return (WORKSPACES_ROOT / PROJECT_ROOT_NAME / brand / workspace.slug).resolve()
 
 
 def _ensure_storage_path(workspace: Workspace, *, create_user_scaffold: bool = False) -> str:
+    if workspace.workspace_kind == "user":
+        return ""
     root = WORKSPACES_ROOT.resolve()
     target = _target_storage_path(workspace)
     path = Path(workspace.storage_path) if workspace.storage_path else target
@@ -387,23 +423,24 @@ def _ensure_storage_path(workspace: Workspace, *, create_user_scaffold: bool = F
         and not resolved.is_relative_to((WORKSPACES_ROOT / PROJECT_ROOT_NAME).resolve())
     ):
         path = target
-    if workspace.workspace_kind == "customer" and not path.resolve().is_relative_to((WORKSPACES_ROOT / CUSTOMER_ROOT_NAME).resolve()):
-        path = target
-    if workspace.workspace_kind == "user" and not path.resolve().is_relative_to((WORKSPACES_ROOT / USER_ROOT_NAME).resolve()):
+    if workspace.workspace_kind == "customer" and path.resolve() != target:
         path = target
     path.mkdir(parents=True, exist_ok=True)
     for dirname in _workspace_dirs(workspace):
         (path / dirname).mkdir(parents=True, exist_ok=True)
-    if workspace.workspace_kind == "user" and create_user_scaffold:
-        for dirname in DEFAULT_USER_WORKSPACE_DIRS:
-            (path / dirname).mkdir(parents=True, exist_ok=True)
     (path / TRASH_DIRNAME).mkdir(exist_ok=True)
     return str(path)
 
 
+def _workspace_file_root(workspace: Workspace) -> Path:
+    if workspace.workspace_kind == "user":
+        raise HTTPException(status_code=400, detail="个人工作台不提供后端文件区")
+    return Path(_ensure_storage_path(workspace)).resolve()
+
+
 def _candidate_storage_path(slug: str, brand: str, workspace_kind: str = "project") -> Path:
     if workspace_kind == "customer":
-        return (WORKSPACES_ROOT / CUSTOMER_ROOT_NAME / slug).resolve()
+        return (WORKSPACES_ROOT / CUSTOMER_ROOT_NAME / CRM_WORKSPACE_SLUG).resolve()
     return (WORKSPACES_ROOT / PROJECT_ROOT_NAME / brand / slug).resolve()
 
 
@@ -510,7 +547,9 @@ def _workspace_gbrain_graph_scope(workspace: Workspace) -> dict[str, object]:
         paths = project_source_paths_for_workspace(workspace)
         return {
             "source_id": project_source_id_for_workspace(workspace),
-            "derived_path": paths["derived"],
+            "derived_path": _workspace_gbrain_read_path(paths),
+            "gbrain_ready_path": paths["gbrain_ready"],
+            "legacy_derived_path": paths.get("legacy_derived"),
             "source_scope": "project",
             "intelligence_kind": "project_event_graph",
         }
@@ -518,11 +557,29 @@ def _workspace_gbrain_graph_scope(workspace: Workspace) -> dict[str, object]:
         paths = customer_source_paths_for_workspace(workspace)
         return {
             "source_id": customer_source_id_for_workspace(workspace),
-            "derived_path": paths["derived"],
+            "derived_path": _workspace_gbrain_read_path(paths),
+            "gbrain_ready_path": paths["gbrain_ready"],
+            "legacy_derived_path": paths.get("legacy_derived"),
             "source_scope": "customer",
             "intelligence_kind": "customer_intelligence",
         }
     raise HTTPException(status_code=400, detail="当前工作区不支持 GBrain 图谱")
+
+
+def _workspace_gbrain_read_path(paths: dict[str, Path]) -> Path:
+    ready = paths["gbrain_ready"]
+    legacy = paths.get("legacy_derived")
+    if _has_markdown_files(ready) or legacy is None:
+        return ready
+    if _has_markdown_files(legacy):
+        return legacy
+    return ready
+
+
+def _has_markdown_files(path: Path) -> bool:
+    if not path.exists():
+        return False
+    return any(item.is_file() and item.suffix.lower() in {".md", ".markdown"} for item in path.rglob("*"))
 
 
 def _workspace_profile_cards(graph: dict[str, object]) -> list[dict[str, object]]:
@@ -630,9 +687,8 @@ def ensure_default_workspace(db: Session, user: User) -> Workspace:
         if existing.name.endswith(" 的私人空间") or existing.name.endswith("的私人空间"):
             existing.name = expected_name
             existing.description = "用户默认个人工作台"
-        storage_path = _ensure_storage_path(existing)
-        if existing.storage_path != storage_path:
-            existing.storage_path = storage_path
+        if existing.storage_path:
+            existing.storage_path = ""
             db.commit()
         elif existing.name == expected_name:
             db.commit()
@@ -655,7 +711,7 @@ def ensure_default_workspace(db: Session, user: User) -> Workspace:
     )
     db.add(workspace)
     db.flush()
-    workspace.storage_path = _ensure_storage_path(workspace, create_user_scaffold=True)
+    workspace.storage_path = ""
     db.add(WorkspaceMember(workspace_id=workspace.id, user_id=user.id, role="admin"))
     db.commit()
     db.refresh(workspace)
@@ -710,12 +766,59 @@ def _register_existing_project_folder(
     return workspace
 
 
+def _find_crm_workspace(db: Session) -> Workspace | None:
+    exact = (
+        db.query(Workspace)
+        .filter(
+            Workspace.workspace_kind == "customer",
+            or_(Workspace.slug == CRM_WORKSPACE_SLUG, Workspace.name == CRM_WORKSPACE_NAME),
+        )
+        .order_by(Workspace.id.asc())
+        .first()
+    )
+    if exact:
+        return exact
+    return (
+        db.query(Workspace)
+        .filter(Workspace.workspace_kind == "customer")
+        .order_by(Workspace.id.asc())
+        .first()
+    )
+
+
+def _ensure_crm_workspace(db: Session, user: User, *, add_member: bool = False) -> Workspace:
+    workspace = _find_crm_workspace(db)
+    if workspace is None:
+        workspace = Workspace(
+            name=CRM_WORKSPACE_NAME,
+            slug=CRM_WORKSPACE_SLUG,
+            description="全公司 CRM 客户情报工作区",
+            created_by=user.id,
+            storage_path=str((WORKSPACES_ROOT / CUSTOMER_ROOT_NAME / CRM_WORKSPACE_SLUG).resolve()),
+            brand=CUSTOMER_BRAND,
+            workspace_kind="customer",
+            is_default=False,
+            is_hidden=True,
+        )
+        db.add(workspace)
+        db.flush()
+    workspace.name = CRM_WORKSPACE_NAME
+    workspace.slug = CRM_WORKSPACE_SLUG
+    workspace.brand = CUSTOMER_BRAND
+    workspace.workspace_kind = "customer"
+    workspace.storage_path = _ensure_storage_path(workspace)
+    if add_member and not _workspace_membership(db, user.id, workspace.id):
+        db.add(WorkspaceMember(workspace_id=workspace.id, user_id=user.id, role="admin"))
+    db.commit()
+    db.refresh(workspace)
+    return workspace
+
+
 def _sync_project_folders(db: Session, user: User) -> None:
     project_root = (WORKSPACES_ROOT / PROJECT_ROOT_NAME).resolve()
     if not project_root.exists():
         return
-    for brand in PROJECT_BRANDS:
-        brand_dir = (project_root / brand).resolve()
+    for brand, brand_dir in _project_brand_dirs():
         if not brand_dir.exists() or not brand_dir.is_dir():
             continue
         for project_dir in sorted(brand_dir.iterdir(), key=lambda item: item.name.lower()):
@@ -801,10 +904,50 @@ def _raise_with_audit(
 
 
 def _mark_workspace_rag_pending(db: Session, workspace_id: int) -> None:
-    db.query(WorkspaceFile).filter(
-        WorkspaceFile.workspace_id == workspace_id,
-        WorkspaceFile.deleted_at.is_(None),
-    ).update({"rag_status": "pending"}, synchronize_session=False)
+    # A3 keeps ingest state at file/run granularity. Historical callers still
+    # invoke this after broad file mutations, but bulk-flipping the whole
+    # workspace would mark unrelated synced files as dirty.
+    return
+
+
+def _file_signature(path: Path) -> dict[str, str | int]:
+    stat = path.stat()
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return {
+        "source_hash": digest.hexdigest(),
+        "source_size": stat.st_size,
+        "source_mtime": str(stat.st_mtime_ns),
+    }
+
+
+def _record_file_signature(meta: WorkspaceFile, path: Path) -> None:
+    signature = _file_signature(path)
+    meta.source_hash = str(signature["source_hash"])
+    meta.source_size = int(signature["source_size"])
+    meta.source_mtime = str(signature["source_mtime"])
+
+
+def _source_status_for_file(meta: WorkspaceFile | None, path: Path | None = None) -> str:
+    if not meta:
+        return "not_indexed"
+    status = meta.rag_status or "new"
+    if meta.deleted_at is not None:
+        return "source_deleted"
+    if path is None:
+        return status
+    if not path.exists():
+        return "source_deleted" if status in {"indexed", "synced", "gbrain_ready"} else status
+    if status in {"indexed", "synced", "gbrain_ready"} and meta.source_hash:
+        try:
+            signature = _file_signature(path)
+        except OSError:
+            return status
+        if signature["source_hash"] != meta.source_hash:
+            return "source_changed"
+    return status
 
 
 def _upload_limit_for(user: User, member: WorkspaceMember, workspace: Workspace | None = None) -> tuple[int, str]:
@@ -831,7 +974,7 @@ def _sync_file_descendant_paths(db: Session, workspace_id: int, old_prefix: str,
     )
     for meta in metas:
         meta.relative_path = f"{new_prefix}/{meta.relative_path[len(old_prefix) + 1:]}"
-        meta.rag_status = "pending"
+        meta.rag_status = "new"
         meta.updated_at = datetime.now(timezone.utc)
 
 
@@ -875,9 +1018,10 @@ def _create_copied_file_metadata(
         original_name=target_file.name,
         content_type=content_type[:128],
         size=target_file.stat().st_size,
-        rag_status="pending",
+        rag_status="new",
         updated_at=now,
     )
+    _record_file_signature(meta, target_file)
     db.add(meta)
     db.flush()
     return meta
@@ -964,7 +1108,7 @@ def _build_file_tree(
                 uploader_name=uploader_names.get(meta.uploaded_by) if meta else None,
                 deleted_at=meta.deleted_at if meta else None,
                 deleted_by=meta.deleted_by if meta else None,
-                rag_status=meta.rag_status if meta else ("not_indexed" if item_type == "file" else None),
+                rag_status=_source_status_for_file(meta, child) if item_type == "file" else None,
                 can_delete=(
                     item_type == "file" and _member_can_mutate_file(member, user_id, meta, user_role)
                 ) or (
@@ -1013,7 +1157,7 @@ def _build_deleted_file_items(
             uploader_name=names.get(item.uploaded_by),
             deleted_at=item.deleted_at,
             deleted_by=item.deleted_by,
-            rag_status=item.rag_status,
+            rag_status=_source_status_for_file(item),
             can_delete=_member_can_restore_file(member, user_id, item, user_role),
             can_restore=True,
             children=[],
@@ -1030,6 +1174,7 @@ def _upsert_workspace_file(
     filename: str,
     content_type: str,
     size: int,
+    source_path: Path | None = None,
 ) -> WorkspaceFile:
     existing = (
         db.query(WorkspaceFile)
@@ -1046,9 +1191,11 @@ def _upsert_workspace_file(
         existing.original_name = filename
         existing.content_type = content_type[:128]
         existing.size = size
-        existing.rag_status = "pending"
+        existing.rag_status = "new"
         existing.updated_at = now
         existing.trash_path = ""
+        if source_path and source_path.exists() and source_path.is_file():
+            _record_file_signature(existing, source_path)
         return existing
     meta = WorkspaceFile(
         workspace_id=workspace_id,
@@ -1057,9 +1204,11 @@ def _upsert_workspace_file(
         original_name=filename,
         content_type=content_type[:128],
         size=size,
-        rag_status="pending",
+        rag_status="new",
         updated_at=now,
     )
+    if source_path and source_path.exists() and source_path.is_file():
+        _record_file_signature(meta, source_path)
     db.add(meta)
     db.flush()
     return meta
@@ -1074,14 +1223,18 @@ def create_workspace(
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="仅系统管理员可新建工作区")
 
+    workspace_kind = _normalize_workspace_kind(req.workspace_kind, req.brand)
+    if workspace_kind == "customer":
+        workspace = _ensure_crm_workspace(db, user, add_member=True)
+        return _workspace_response(db, workspace, user=user)
+
     name = req.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="工作区名称不能为空")
     if len(name) > 128:
         raise HTTPException(status_code=400, detail="工作区名称不能超过 128 个字符")
 
-    workspace_kind = _normalize_workspace_kind(req.workspace_kind, req.brand)
-    brand = CUSTOMER_BRAND if workspace_kind == "customer" else _normalize_brand(req.brand)
+    brand = _normalize_brand(req.brand)
     slug = _slugify(name)
     existing = db.query(Workspace).filter(Workspace.slug == slug).first()
     if existing:
@@ -1129,6 +1282,8 @@ def list_workspaces(
     db: Session = Depends(get_db),
 ):
     ensure_default_workspace(db, user)
+    _sync_project_folders(db, user)
+    _ensure_crm_workspace(db, user)
     if user.role == "admin":
         workspaces = (
             db.query(Workspace)
@@ -1136,6 +1291,7 @@ def list_workspaces(
             .order_by(Workspace.is_default.desc(), Workspace.updated_at.desc())
             .all()
         )
+        workspaces = [w for w in workspaces if w.workspace_kind != "customer" or w.slug == CRM_WORKSPACE_SLUG]
     else:
         member_workspace_ids = select(WorkspaceMember.workspace_id).where(WorkspaceMember.user_id == user.id)
         group_workspace_ids = select(WorkspaceGroupAccess.workspace_id).where(
@@ -1155,6 +1311,7 @@ def list_workspaces(
             .all()
         )
         workspaces = [w for w in workspaces if _can_open_workspace(db, user, w)]
+        workspaces = [w for w in workspaces if w.workspace_kind != "customer" or w.slug == CRM_WORKSPACE_SLUG]
     return [_workspace_response(db, w, user=user) for w in workspaces]
 
 
@@ -1166,6 +1323,7 @@ def search_workspaces(
     brand: str | None = None,
 ):
     _sync_project_folders(db, user)
+    _ensure_crm_workspace(db, user)
     query = q.strip()
     raw_brand = (brand or "").strip().upper()
     search_customer = raw_brand == CUSTOMER_BRAND
@@ -1181,6 +1339,12 @@ def search_workspaces(
     )
     if normalized_brand:
         workspace_query = workspace_query.filter(Workspace.workspace_kind == "project", Workspace.brand == normalized_brand)
+    if search_customer:
+        workspace_query = workspace_query.filter(Workspace.slug == CRM_WORKSPACE_SLUG)
+    else:
+        workspace_query = workspace_query.filter(
+            or_(Workspace.workspace_kind == "project", Workspace.slug == CRM_WORKSPACE_SLUG)
+        )
     if user.role != "admin":
         member_workspace_ids = select(WorkspaceMember.workspace_id).where(WorkspaceMember.user_id == user.id)
         group_workspace_ids = select(WorkspaceGroupAccess.workspace_id).where(
@@ -1334,7 +1498,7 @@ def get_workspace_file_content(
     if not workspace:
         raise HTTPException(status_code=404, detail="项目不存在")
     _ensure_member(db, user.id, workspace_id)
-    root = Path(_ensure_storage_path(workspace)).resolve()
+    root = _workspace_file_root(workspace)
     rel = _safe_relative_path(path)
     target = _resolve_workspace_child(root, rel)
     if not target.exists() or not target.is_file():
@@ -1368,7 +1532,7 @@ async def upload_workspace_files(
         raise HTTPException(status_code=404, detail="项目不存在")
     member = _ensure_member(db, user.id, workspace_id)
     limit_bytes, limit_message = _upload_limit_for(user, member, workspace)
-    root = Path(_ensure_storage_path(workspace)).resolve()
+    root = _workspace_file_root(workspace)
     rel_dir = _safe_relative_path(directory)
     _ensure_not_trash_path(rel_dir)
     target_dir = _resolve_workspace_child(root, rel_dir)
@@ -1420,6 +1584,7 @@ async def upload_workspace_files(
             filename,
             upload.content_type or "application/octet-stream",
             len(content),
+            target_path,
         )
         _write_workspace_audit(
             db,
@@ -1455,7 +1620,7 @@ def upload_workspace_file(
         raise HTTPException(status_code=404, detail="项目不存在")
     member = _ensure_member(db, user.id, workspace_id)
     limit_bytes, limit_message = _upload_limit_for(user, member, workspace)
-    root = Path(_ensure_storage_path(workspace)).resolve()
+    root = _workspace_file_root(workspace)
     directory = _safe_relative_path(req.directory)
     _ensure_not_trash_path(directory)
     filename = _safe_name(req.filename)
@@ -1500,7 +1665,7 @@ def upload_workspace_file(
         raise HTTPException(status_code=400, detail="不能覆盖文件夹")
     target_path.write_bytes(content)
     rel_path = target_path.relative_to(root).as_posix()
-    meta = _upsert_workspace_file(db, workspace_id, user.id, rel_path, filename, req.content_type, len(content))
+    meta = _upsert_workspace_file(db, workspace_id, user.id, rel_path, filename, req.content_type, len(content), target_path)
     _write_workspace_audit(
         db,
         user.id,
@@ -1532,7 +1697,7 @@ def create_workspace_folder(
     if not workspace:
         raise HTTPException(status_code=404, detail="项目不存在")
     _ensure_member(db, user.id, workspace_id)
-    root = Path(_ensure_storage_path(workspace)).resolve()
+    root = _workspace_file_root(workspace)
     parent_rel = _safe_relative_path(req.parent_path)
     _ensure_not_trash_path(parent_rel)
     parent = _resolve_workspace_child(root, parent_rel)
@@ -1573,7 +1738,7 @@ def delete_workspace_file(
     if not workspace:
         raise HTTPException(status_code=404, detail="项目不存在")
     member = _ensure_member(db, user.id, workspace_id)
-    root = Path(_ensure_storage_path(workspace)).resolve()
+    root = _workspace_file_root(workspace)
     rel = _safe_relative_path(path)
     target = _resolve_workspace_child(root, rel)
     if not target.exists() or not target.is_file():
@@ -1606,6 +1771,7 @@ def delete_workspace_file(
             target.name,
             "application/octet-stream",
             target.stat().st_size,
+            target,
         )
     trash_path = _trash_target(root, meta, rel_path)
     shutil.move(str(target), str(trash_path))
@@ -1613,7 +1779,7 @@ def delete_workspace_file(
     meta.deleted_at = now
     meta.deleted_by = user.id
     meta.trash_path = trash_path.relative_to(root).as_posix()
-    meta.rag_status = "pending"
+    meta.rag_status = "source_deleted"
     meta.updated_at = now
     _mark_workspace_rag_pending(db, workspace_id)
     _write_workspace_audit(
@@ -1660,7 +1826,7 @@ def restore_workspace_file(
     if not workspace:
         raise HTTPException(status_code=404, detail="项目不存在")
     _ensure_member(db, user.id, workspace_id)
-    root = Path(_ensure_storage_path(workspace)).resolve()
+    root = _workspace_file_root(workspace)
     meta = (
         db.query(WorkspaceFile)
         .filter(WorkspaceFile.workspace_id == workspace_id, WorkspaceFile.id == req.file_id)
@@ -1687,7 +1853,8 @@ def restore_workspace_file(
     meta.deleted_at = None
     meta.deleted_by = None
     meta.trash_path = ""
-    meta.rag_status = "pending"
+    meta.rag_status = "new"
+    _record_file_signature(meta, target)
     meta.updated_at = now
     _mark_workspace_rag_pending(db, workspace_id)
     _write_workspace_audit(
@@ -1720,7 +1887,7 @@ def permanently_delete_workspace_file(
     if not workspace:
         raise HTTPException(status_code=404, detail="项目不存在")
     member = _ensure_member(db, user.id, workspace_id)
-    root = Path(_ensure_storage_path(workspace)).resolve()
+    root = _workspace_file_root(workspace)
     meta = (
         db.query(WorkspaceFile)
         .filter(WorkspaceFile.workspace_id == workspace_id, WorkspaceFile.id == file_id)
@@ -1773,7 +1940,7 @@ def clear_workspace_trash(
     if not workspace:
         raise HTTPException(status_code=404, detail="项目不存在")
     member = _ensure_member(db, user.id, workspace_id)
-    root = Path(_ensure_storage_path(workspace)).resolve()
+    root = _workspace_file_root(workspace)
     query = db.query(WorkspaceFile).filter(WorkspaceFile.workspace_id == workspace_id, WorkspaceFile.deleted_at.is_not(None))
     if member.role != "admin":
         query = query.filter(WorkspaceFile.uploaded_by == user.id, WorkspaceFile.deleted_by == user.id)
@@ -1825,7 +1992,7 @@ def save_attachment_to_workspace(
     source = Path(attachment.stored_path)
     if not source.exists() or not source.is_file():
         raise HTTPException(status_code=404, detail="附件文件不存在")
-    root = Path(_ensure_storage_path(workspace)).resolve()
+    root = _workspace_file_root(workspace)
     target_dir = _resolve_workspace_child(root, Path(DEFAULT_UNFILED_DIR))
     target_dir.mkdir(exist_ok=True)
     filename = _safe_name(attachment.original_name)
@@ -1848,7 +2015,16 @@ def save_attachment_to_workspace(
     target = _resolve_workspace_child(root, conflict_path.relative_to(root))
     shutil.copy2(source, target)
     rel_path = target.relative_to(root).as_posix()
-    meta = _upsert_workspace_file(db, workspace_id, user.id, rel_path, target.name, attachment.content_type, target.stat().st_size)
+    meta = _upsert_workspace_file(
+        db,
+        workspace_id,
+        user.id,
+        rel_path,
+        target.name,
+        attachment.content_type,
+        target.stat().st_size,
+        target,
+    )
     _write_workspace_audit(db, user.id, "workspace_attachment_save", _audit_detail(workspace_id, rel_path, meta.id, actor_id=user.id, attachment_id=attachment.id))
     agent_run = _write_workspace_file_agent_run(
         db,
@@ -1874,7 +2050,7 @@ def delete_workspace_folder(
     if not workspace:
         raise HTTPException(status_code=404, detail="项目不存在")
     _ensure_member(db, user.id, workspace_id)
-    root = Path(_ensure_storage_path(workspace)).resolve()
+    root = _workspace_file_root(workspace)
     rel = _safe_relative_path(path)
     _ensure_not_trash_path(rel)
     if _is_template_root(rel):
@@ -1915,7 +2091,7 @@ def rename_workspace_path(
     if not workspace:
         raise HTTPException(status_code=404, detail="项目不存在")
     member = _ensure_member(db, user.id, workspace_id)
-    root = Path(_ensure_storage_path(workspace)).resolve()
+    root = _workspace_file_root(workspace)
     rel = _safe_relative_path(req.path)
     _ensure_not_trash_path(rel)
     if _is_template_root(rel):
@@ -1975,7 +2151,7 @@ def move_workspace_path(
     if not workspace:
         raise HTTPException(status_code=404, detail="项目不存在")
     member = _ensure_member(db, user.id, workspace_id)
-    root = Path(_ensure_storage_path(workspace)).resolve()
+    root = _workspace_file_root(workspace)
     rel = _safe_relative_path(req.path)
     _ensure_not_trash_path(rel)
     if _is_template_root(rel):
@@ -2071,7 +2247,7 @@ def copy_workspace_path(
     if not workspace:
         raise HTTPException(status_code=404, detail="项目不存在")
     _ensure_member(db, user.id, workspace_id)
-    root = Path(_ensure_storage_path(workspace)).resolve()
+    root = _workspace_file_root(workspace)
     rel = _safe_relative_path(req.path)
     _ensure_not_trash_path(rel)
     if _is_template_root(rel):
@@ -2172,6 +2348,7 @@ def refresh_workspace_knowledge(
     workspace_id: int,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    req: WorkspaceKnowledgeIngestRequest | None = None,
 ):
     workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
     if not workspace:
@@ -2179,9 +2356,14 @@ def refresh_workspace_knowledge(
     _ensure_member(db, user.id, workspace_id)
     if workspace.workspace_kind not in {"project", "customer"}:
         raise HTTPException(status_code=400, detail="当前工作区类型暂不支持一键录入知识库")
-    if not _is_workspace_admin(db, user, workspace_id):
-        raise HTTPException(status_code=403, detail="仅系统管理员或工作区管理员可一键录入知识库")
-    payload = _execute_workspace_knowledge_ingest(db, workspace, user.id)
+    ingest_request = _normalize_workspace_ingest_request(db, workspace, user, req)
+    payload = _execute_workspace_knowledge_ingest(
+        db,
+        workspace,
+        user.id,
+        source_path=ingest_request["path"],
+        recursive=ingest_request["recursive"],
+    )
     agent_run = _write_immediate_workspace_ingest_agent_run(db, workspace, user.id, payload)
     payload["agent_run"] = serialize_agent_run(db, agent_run)
     db.commit()
@@ -2194,6 +2376,7 @@ def enqueue_workspace_knowledge_ingest(
     background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    req: WorkspaceKnowledgeIngestRequest | None = None,
 ):
     workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
     if not workspace:
@@ -2201,16 +2384,38 @@ def enqueue_workspace_knowledge_ingest(
     _ensure_member(db, user.id, workspace_id)
     if workspace.workspace_kind not in {"project", "customer"}:
         raise HTTPException(status_code=400, detail="当前工作区类型暂不支持一键录入知识库")
-    if not _is_workspace_admin(db, user, workspace_id):
-        raise HTTPException(status_code=403, detail="仅系统管理员或工作区管理员可一键录入知识库")
+    ingest_request = _normalize_workspace_ingest_request(db, workspace, user, req)
     job = WorkspaceIngestJob(
         workspace_id=workspace_id,
         requested_by=user.id,
         status="queued",
-        result_json="{}",
+        result_json=json.dumps({"request": ingest_request}, ensure_ascii=False),
     )
     db.add(job)
     db.flush()
+    run_id = _workspace_ingest_job_run_id(job)
+    job.result_json = json.dumps(
+        {
+            "request": ingest_request,
+            "run": _workspace_ingest_run_payload(
+                run_id=run_id,
+                status="queued",
+                workspace=workspace,
+                source_id=None,
+                source_path=ingest_request["path"],
+                recursive=ingest_request["recursive"],
+                started_at=None,
+                finished_at=None,
+                error=None,
+                status_history=[
+                    _workspace_ingest_status_event("queued", "任务已排队", job.created_at),
+                ],
+            ),
+            "run_status": "queued",
+            "run_id": run_id,
+        },
+        ensure_ascii=False,
+    )
     agent_run = create_agent_run(
         db,
         user_id=user.id,
@@ -2225,9 +2430,9 @@ def enqueue_workspace_knowledge_ingest(
         agent_run,
         event_type="queued",
         title="工作区录入任务已排队",
-        detail=f"待录入文件 {workspace.name}",
+        detail=_workspace_ingest_request_detail(workspace, ingest_request),
         status="queued",
-        payload={"workspace_id": workspace.id, "workspace_name": workspace.name},
+        payload={"workspace_id": workspace.id, "workspace_name": workspace.name, **ingest_request},
     )
     notify_user(
         db,
@@ -2235,7 +2440,7 @@ def enqueue_workspace_knowledge_ingest(
         category="workspace",
         severity="info",
         title="工作区知识库录入已排队",
-        content=f"{workspace.name}：后台正在处理工作区资料，完成后会再次通知你。",
+        content=f"{workspace.name}：后台正在处理{_workspace_ingest_request_label(ingest_request)}，完成后会再次通知你。",
         action_status="pending",
         action_kind="open_workspace",
         action_payload={"workspace_id": workspace.id, "ingest_job_id": job.id},
@@ -2511,7 +2716,330 @@ def workspace_native_graph_context(
     return result
 
 
-def _execute_workspace_knowledge_ingest(db: Session, workspace: Workspace, actor_user_id: int) -> dict:
+def _normalize_workspace_ingest_request(
+    db: Session,
+    workspace: Workspace,
+    user: User,
+    req: WorkspaceKnowledgeIngestRequest | None,
+) -> dict:
+    requested_path = (req.path if req else "").replace("\\", "/").strip("/")
+    recursive = True if req is None else bool(req.recursive)
+    root = _workspace_file_root(workspace)
+    rel = _safe_relative_path(requested_path) if requested_path else Path()
+    _ensure_not_trash_path(rel)
+    target = _resolve_workspace_child(root, rel)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="录入路径不存在")
+    rel_path = target.relative_to(root).as_posix()
+    if rel_path == ".":
+        rel_path = ""
+    is_file = target.is_file()
+    is_directory = target.is_dir()
+    if not is_file and not is_directory:
+        raise HTTPException(status_code=400, detail="录入路径不是文件或文件夹")
+
+    is_admin = _is_workspace_admin(db, user, workspace.id)
+    if workspace.workspace_kind == "customer" and not is_admin:
+        raise HTTPException(status_code=403, detail="客户资料录入仅允许系统管理员或客户工作区管理员执行")
+    if workspace.workspace_kind == "project":
+        if is_admin:
+            pass
+        elif is_file and not recursive:
+            meta = (
+                db.query(WorkspaceFile)
+                .filter(
+                    WorkspaceFile.workspace_id == workspace.id,
+                    WorkspaceFile.relative_path == rel_path,
+                    WorkspaceFile.deleted_at.is_(None),
+                )
+                .first()
+            )
+            if not meta or meta.uploaded_by != user.id:
+                raise HTTPException(status_code=403, detail="普通成员只能录入自己上传的单个文件")
+        else:
+            raise HTTPException(status_code=403, detail="递归录入文件夹仅允许系统管理员或项目管理员执行")
+    if not is_directory:
+        recursive = False
+    return {
+        "path": rel_path,
+        "recursive": recursive,
+        "target_type": "directory" if is_directory else "file",
+    }
+
+
+def _workspace_ingest_request_label(request: dict) -> str:
+    path = str(request.get("path") or "")
+    if not path:
+        return "当前工作区资料"
+    if request.get("target_type") == "file":
+        return f"文件「{path}」"
+    return f"文件夹「{path}」"
+
+
+def _workspace_ingest_request_detail(workspace: Workspace, request: dict) -> str:
+    mode = "递归录入" if request.get("recursive") else "单文件录入"
+    return f"{workspace.name}：{mode} {_workspace_ingest_request_label(request)}"
+
+
+def _workspace_ingest_request_from_job(job: WorkspaceIngestJob) -> dict:
+    try:
+        payload = json.loads(job.result_json or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    request = payload.get("request") if isinstance(payload, dict) else {}
+    if not isinstance(request, dict):
+        request = {}
+    return {
+        "path": str(request.get("path") or ""),
+        "recursive": bool(request.get("recursive", True)),
+        "target_type": str(request.get("target_type") or "directory"),
+    }
+
+
+def _compile_project_workspace_sources_for_request(workspace: Workspace, source_path: str, recursive: bool) -> dict:
+    try:
+        return compile_project_workspace_sources(workspace, source_path=source_path, recursive=recursive)
+    except TypeError:
+        if source_path or not recursive:
+            raise
+        return compile_project_workspace_sources(workspace)
+
+
+def _compile_customer_workspace_sources_for_request(workspace: Workspace, source_path: str, recursive: bool) -> dict:
+    try:
+        return compile_customer_workspace_sources(workspace, source_path=source_path, recursive=recursive)
+    except TypeError:
+        if source_path or not recursive:
+            raise
+        return compile_customer_workspace_sources(workspace)
+
+
+WORKSPACE_INGEST_RUN_STATUSES = {
+    "queued",
+    "preprocessing",
+    "gbrain_ready",
+    "sync_pending",
+    "synced",
+    "failed",
+    "pending_capability",
+    "ignored",
+}
+
+
+def _new_workspace_ingest_run_id(workspace: Workspace) -> str:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    return f"workspace-{workspace.id}-{stamp}-{uuid.uuid4().hex[:8]}"
+
+
+def _workspace_ingest_job_run_id(job: WorkspaceIngestJob) -> str:
+    return f"workspace-ingest-job-{job.id}"
+
+
+def _workspace_ingest_run_id_from_job(job: WorkspaceIngestJob) -> str:
+    try:
+        payload = json.loads(job.result_json or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    if isinstance(payload, dict):
+        run = payload.get("run")
+        if isinstance(run, dict) and run.get("run_id"):
+            return str(run["run_id"])
+        if payload.get("run_id"):
+            return str(payload["run_id"])
+    return _workspace_ingest_job_run_id(job)
+
+
+def _workspace_ingest_status_event(status: str, message: str = "", at: datetime | None = None) -> dict:
+    normalized = status if status in WORKSPACE_INGEST_RUN_STATUSES else "failed"
+    return {
+        "status": normalized,
+        "message": message,
+        "at": serialize_datetime_utc(at or datetime.now(timezone.utc)),
+    }
+
+
+def _workspace_ingest_run_payload(
+    *,
+    run_id: str,
+    status: str,
+    workspace: Workspace | None,
+    source_id: str | None,
+    source_path: str,
+    recursive: bool,
+    started_at: datetime | None,
+    finished_at: datetime | None,
+    error: str | None,
+    status_history: list[dict],
+) -> dict:
+    normalized = status if status in WORKSPACE_INGEST_RUN_STATUSES else "failed"
+    return {
+        "run_id": run_id,
+        "status": normalized,
+        "workspace_id": getattr(workspace, "id", None),
+        "workspace_kind": getattr(workspace, "workspace_kind", None),
+        "workspace_name": getattr(workspace, "name", ""),
+        "source_id": source_id,
+        "source_path": source_path,
+        "recursive": recursive,
+        "started_at": serialize_datetime_utc(started_at) if started_at else None,
+        "finished_at": serialize_datetime_utc(finished_at) if finished_at else None,
+        "error": error or None,
+        "status_history": status_history,
+    }
+
+
+def _derive_workspace_ingest_run_status(
+    *,
+    compiled_files: int,
+    failed_files: int,
+    pending_extractor_capability_files: int,
+    pending_transcription_files: int,
+    skipped_files: int,
+    sync_ok: bool,
+    ok: bool,
+) -> str:
+    if failed_files > 0:
+        return "failed"
+    if compiled_files > 0 and not sync_ok:
+        return "sync_pending"
+    if compiled_files > 0 and ok:
+        return "synced"
+    if pending_extractor_capability_files > 0 or pending_transcription_files > 0:
+        return "pending_capability"
+    if not ok:
+        return "failed"
+    if skipped_files > 0:
+        return "ignored"
+    return "ignored"
+
+
+def _workspace_ingest_run_status_label(status: str) -> str:
+    return {
+        "queued": "任务已排队",
+        "preprocessing": "正在预处理源文件",
+        "gbrain_ready": "已生成 GBrain-ready Markdown",
+        "sync_pending": "GBrain 同步待处理",
+        "synced": "GBrain 同步完成",
+        "failed": "录入失败",
+        "pending_capability": "等待预处理能力补齐",
+        "ignored": "已忽略或无可处理文件",
+    }.get(status, status)
+
+
+def _workspace_ingest_item_run_status(item: dict, *, sync_ok: bool) -> str:
+    status = str(item.get("status") or "")
+    if status == "compiled":
+        return "synced" if sync_ok else "sync_pending"
+    if status in {"pending_extractor_capability", "pending_transcription"} or status.startswith("pending_"):
+        return "pending_capability"
+    if status == "failed":
+        return "failed"
+    if status in {"skipped", "ignored"}:
+        return "ignored"
+    return "failed" if status else "ignored"
+
+
+def _workspace_ingest_manifest_name(workspace: Workspace) -> str:
+    if workspace.workspace_kind == "customer":
+        return CUSTOMER_WORKSPACE_INGEST_MANIFEST_NAME
+    return PROJECT_INGEST_MANIFEST_NAME
+
+
+def _finalize_workspace_ingest_manifest(
+    workspace: Workspace,
+    manifest: dict | None,
+    *,
+    run_id: str,
+    run_status: str,
+    source_path: str,
+    recursive: bool,
+    started_at: datetime,
+    finished_at: datetime,
+    status_history: list[dict],
+    sync_ok: bool,
+    gbrain_sync_status: str | None,
+    gbrain_error: str | None,
+    gbrain_think_status: str | None,
+) -> None:
+    if not isinstance(manifest, dict):
+        return
+    source_id = str(manifest.get("source_id") or "")
+    run_payload = _workspace_ingest_run_payload(
+        run_id=run_id,
+        status=run_status,
+        workspace=workspace,
+        source_id=source_id,
+        source_path=source_path,
+        recursive=recursive,
+        started_at=started_at,
+        finished_at=finished_at,
+        error=gbrain_error,
+        status_history=status_history,
+    )
+    manifest["run_id"] = run_id
+    manifest["run_status"] = run_status
+    manifest["run"] = run_payload
+    manifest["status_history"] = status_history
+    manifest["sync"] = {
+        "ok": bool(sync_ok),
+        "status": gbrain_sync_status,
+        "error": gbrain_error,
+        "think_status": gbrain_think_status,
+    }
+    for item in manifest.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        item["preprocess_status"] = str(item.get("status") or "")
+        item["source_hash"] = item.get("source_hash") or item.get("source_sha256")
+        if item.get("target_file"):
+            item["gbrain_ready_file"] = item.get("gbrain_ready_file") or item["target_file"]
+            item["output_file"] = item.get("output_file") or item["target_file"]
+        item_run_status = _workspace_ingest_item_run_status(item, sync_ok=sync_ok)
+        item["run_status"] = item_run_status
+        item["sync_status"] = item_run_status if item_run_status in {"synced", "sync_pending"} else "not_applicable"
+        item["model_profile"] = item.get("model_profile") or item.get("extractor_profile") or "not_applicable"
+        item["skill_version"] = (
+            item.get("skill_version")
+            or item.get("preprocessor_version")
+            or item.get("extractor_profile")
+            or item.get("content_kind")
+            or "workspace-ingest-v1"
+        )
+        item["prompt_version"] = item.get("prompt_version") or item.get("extractor_prompt_version") or "not_applicable"
+
+    manifests_path = manifest.get("manifests_path")
+    runs_path = manifest.get("runs_path")
+    try:
+        run_path = None
+        if runs_path:
+            run_path = Path(str(runs_path)) / f"{run_id}.json"
+            manifest["run_manifest_path"] = str(run_path.resolve())
+        if manifests_path:
+            path = Path(str(manifests_path)) / _workspace_ingest_manifest_name(workspace)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        if run_path is not None:
+            run_path.parent.mkdir(parents=True, exist_ok=True)
+            run_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError as exc:
+        manifest["run_manifest_write_error"] = str(exc)
+
+
+def _execute_workspace_knowledge_ingest(
+    db: Session,
+    workspace: Workspace,
+    actor_user_id: int,
+    *,
+    source_path: str = "",
+    recursive: bool = True,
+    run_id: str | None = None,
+    initial_status_history: list[dict] | None = None,
+) -> dict:
+    run_id = run_id or _new_workspace_ingest_run_id(workspace)
+    started_at = datetime.now(timezone.utc)
+    status_history = list(initial_status_history or [])
+    if not any(item.get("status") == "preprocessing" for item in status_history if isinstance(item, dict)):
+        status_history.append(_workspace_ingest_status_event("preprocessing", "开始预处理源文件", started_at))
     indexed = 0
     rag_status = "indexed"
     ok = True
@@ -2528,8 +3056,9 @@ def _execute_workspace_knowledge_ingest(db: Session, workspace: Workspace, actor
     gbrain_error = None
     gbrain_think_ok = True
     manifest = None
+    run_status = "preprocessing"
     if workspace.workspace_kind == "project":
-        manifest = compile_project_workspace_sources(workspace)
+        manifest = _compile_project_workspace_sources_for_request(workspace, source_path, recursive)
         summary = manifest.get("summary") or {}
         compiled_files = int(summary.get("compiled", 0) or 0)
         pending_extractor_capability_files = int(summary.get("pending_extractor_capability", 0) or 0)
@@ -2539,6 +3068,7 @@ def _execute_workspace_knowledge_ingest(db: Session, workspace: Workspace, actor
         gbrain_source_id = str(manifest.get("source_id") or "")
         source_ok = True
         if compiled_files > 0:
+            status_history.append(_workspace_ingest_status_event("gbrain_ready", "已生成 GBrain-ready Markdown"))
             adapter = GBrainAdapter()
             source_result = adapter.ensure_project_source(workspace)
             source_ok = bool(source_result.get("ok"))
@@ -2575,6 +3105,31 @@ def _execute_workspace_knowledge_ingest(db: Session, workspace: Workspace, actor
             gbrain_think_status = "not_required_no_compiled_files"
         sync_ok = compiled_files == 0 or gbrain_sync_status == "ok"
         ok = bool(failed_files == 0 and source_ok and sync_ok and gbrain_think_ok)
+        run_status = _derive_workspace_ingest_run_status(
+            compiled_files=compiled_files,
+            failed_files=failed_files,
+            pending_extractor_capability_files=pending_extractor_capability_files,
+            pending_transcription_files=pending_transcription_files,
+            skipped_files=skipped_files,
+            sync_ok=sync_ok,
+            ok=ok,
+        )
+        status_history.append(_workspace_ingest_status_event(run_status, _workspace_ingest_run_status_label(run_status)))
+        _finalize_workspace_ingest_manifest(
+            workspace,
+            manifest,
+            run_id=run_id,
+            run_status=run_status,
+            source_path=source_path,
+            recursive=recursive,
+            started_at=started_at,
+            finished_at=datetime.now(timezone.utc),
+            status_history=status_history,
+            sync_ok=sync_ok,
+            gbrain_sync_status=gbrain_sync_status,
+            gbrain_error=gbrain_error,
+            gbrain_think_status=gbrain_think_status,
+        )
         indexed = _update_workspace_file_rag_statuses_from_manifest(db, workspace, manifest, sync_ok, actor_user_id)
         rag_status = _overall_project_ingest_status(
             ok=ok,
@@ -2585,7 +3140,7 @@ def _execute_workspace_knowledge_ingest(db: Session, workspace: Workspace, actor
             skipped_files=skipped_files,
         )
     elif workspace.workspace_kind == "customer":
-        manifest = compile_customer_workspace_sources(workspace)
+        manifest = _compile_customer_workspace_sources_for_request(workspace, source_path, recursive)
         summary = manifest.get("summary") or {}
         compiled_files = int(summary.get("compiled", 0) or 0)
         pending_extractor_capability_files = int(summary.get("pending_extractor_capability", 0) or 0)
@@ -2595,6 +3150,7 @@ def _execute_workspace_knowledge_ingest(db: Session, workspace: Workspace, actor
         gbrain_source_id = str(manifest.get("source_id") or "")
         source_ok = True
         if compiled_files > 0:
+            status_history.append(_workspace_ingest_status_event("gbrain_ready", "已生成 GBrain-ready Markdown"))
             adapter = GBrainAdapter()
             source_result = adapter.ensure_customer_source(workspace)
             source_ok = bool(source_result.get("ok"))
@@ -2631,6 +3187,31 @@ def _execute_workspace_knowledge_ingest(db: Session, workspace: Workspace, actor
             gbrain_think_status = "not_required_no_compiled_files"
         sync_ok = compiled_files == 0 or gbrain_sync_status == "ok"
         ok = bool(failed_files == 0 and source_ok and sync_ok and gbrain_think_ok)
+        run_status = _derive_workspace_ingest_run_status(
+            compiled_files=compiled_files,
+            failed_files=failed_files,
+            pending_extractor_capability_files=pending_extractor_capability_files,
+            pending_transcription_files=pending_transcription_files,
+            skipped_files=skipped_files,
+            sync_ok=sync_ok,
+            ok=ok,
+        )
+        status_history.append(_workspace_ingest_status_event(run_status, _workspace_ingest_run_status_label(run_status)))
+        _finalize_workspace_ingest_manifest(
+            workspace,
+            manifest,
+            run_id=run_id,
+            run_status=run_status,
+            source_path=source_path,
+            recursive=recursive,
+            started_at=started_at,
+            finished_at=datetime.now(timezone.utc),
+            status_history=status_history,
+            sync_ok=sync_ok,
+            gbrain_sync_status=gbrain_sync_status,
+            gbrain_error=gbrain_error,
+            gbrain_think_status=gbrain_think_status,
+        )
         indexed = _update_workspace_file_rag_statuses_from_manifest(db, workspace, manifest, sync_ok, actor_user_id)
         rag_status = _overall_project_ingest_status(
             ok=ok,
@@ -2643,9 +3224,11 @@ def _execute_workspace_knowledge_ingest(db: Session, workspace: Workspace, actor
     else:
         ok = False
         rag_status = "skipped"
+        run_status = "failed"
         gbrain_status = "not_applicable_private_workspace"
         gbrain_sync_status = "not_applicable_private_workspace"
         gbrain_error = "该工作区类型不进入 GBrain 知识库"
+        status_history.append(_workspace_ingest_status_event(run_status, gbrain_error))
     _write_workspace_audit(
         db,
         actor_user_id,
@@ -2662,6 +3245,8 @@ def _execute_workspace_knowledge_ingest(db: Session, workspace: Workspace, actor
             pending_extractor_capability_files=pending_extractor_capability_files,
             pending_transcription_files=pending_transcription_files,
             pending_reviews_created=pending_reviews_created,
+            ingest_path=source_path,
+            ingest_recursive=recursive,
         ),
     )
     if workspace.workspace_kind in {"project", "customer"}:
@@ -2687,11 +3272,16 @@ def _execute_workspace_knowledge_ingest(db: Session, workspace: Workspace, actor
         "skipped_files": skipped_files,
         "failed_files": failed_files,
         "pending_reviews_created": pending_reviews_created,
+        "ingest_path": source_path,
+        "ingest_recursive": recursive,
         "gbrain_source_id": gbrain_source_id,
         "gbrain_status": gbrain_status,
         "gbrain_sync_status": gbrain_sync_status,
         "gbrain_think_status": gbrain_think_status,
         "gbrain_error": gbrain_error,
+        "run_status": run_status,
+        "run_id": run_id,
+        "run": manifest.get("run") if isinstance(manifest, dict) else None,
         "manifest": manifest,
     }
 
@@ -2705,6 +3295,32 @@ def _run_workspace_knowledge_ingest_job(job_id: int) -> None:
         job.status = "running"
         job.started_at = datetime.now(timezone.utc)
         workspace = db.query(Workspace).filter(Workspace.id == job.workspace_id).first()
+        ingest_request = _workspace_ingest_request_from_job(job)
+        run_id = _workspace_ingest_run_id_from_job(job)
+        initial_history = [
+            _workspace_ingest_status_event("queued", "任务已排队", job.created_at),
+            _workspace_ingest_status_event("preprocessing", "开始预处理源文件", job.started_at),
+        ]
+        job.result_json = json.dumps(
+            {
+                "request": ingest_request,
+                "run": _workspace_ingest_run_payload(
+                    run_id=run_id,
+                    status="preprocessing",
+                    workspace=workspace,
+                    source_id=None,
+                    source_path=str(ingest_request.get("path") or ""),
+                    recursive=bool(ingest_request.get("recursive", True)),
+                    started_at=job.started_at,
+                    finished_at=None,
+                    error=None,
+                    status_history=initial_history,
+                ),
+                "run_status": "preprocessing",
+                "run_id": run_id,
+            },
+            ensure_ascii=False,
+        )
         agent_run = _get_or_create_workspace_ingest_agent_run(db, job, workspace)
         agent_run.status = "running"
         add_agent_event(
@@ -2712,15 +3328,23 @@ def _run_workspace_knowledge_ingest_job(job_id: int) -> None:
             agent_run,
             event_type="started",
             title="开始处理工作区资料",
-            detail=workspace.name if workspace else "",
+            detail=_workspace_ingest_request_detail(workspace, ingest_request) if workspace else "",
             status="running",
-            payload={"workspace_id": job.workspace_id},
+            payload={"workspace_id": job.workspace_id, **ingest_request},
         )
         db.commit()
 
         if not workspace:
             raise ValueError("workspace no longer exists")
-        payload = _execute_workspace_knowledge_ingest(db, workspace, job.requested_by)
+        payload = _execute_workspace_knowledge_ingest(
+            db,
+            workspace,
+            job.requested_by,
+            source_path=str(ingest_request.get("path") or ""),
+            recursive=bool(ingest_request.get("recursive", True)),
+            run_id=run_id,
+            initial_status_history=initial_history,
+        )
         job.status = "succeeded" if payload.get("ok") else "failed"
         job.result_json = json.dumps(payload, ensure_ascii=False)
         job.error_message = str(payload.get("gbrain_error") or "")
@@ -2750,6 +3374,34 @@ def _run_workspace_knowledge_ingest_job(job_id: int) -> None:
             job.error_message = str(exc)
             job.finished_at = datetime.now(timezone.utc)
             workspace = db.query(Workspace).filter(Workspace.id == job.workspace_id).first()
+            request = _workspace_ingest_request_from_job(job)
+            run_id = _workspace_ingest_run_id_from_job(job)
+            history = [
+                _workspace_ingest_status_event("queued", "任务已排队", job.created_at),
+                _workspace_ingest_status_event("preprocessing", "开始预处理源文件", job.started_at),
+                _workspace_ingest_status_event("failed", str(exc), job.finished_at),
+            ]
+            job.result_json = json.dumps(
+                {
+                    "request": request,
+                    "run": _workspace_ingest_run_payload(
+                        run_id=run_id,
+                        status="failed",
+                        workspace=workspace,
+                        source_id=None,
+                        source_path=str(request.get("path") or ""),
+                        recursive=bool(request.get("recursive", True)),
+                        started_at=job.started_at,
+                        finished_at=job.finished_at,
+                        error=str(exc),
+                        status_history=history,
+                    ),
+                    "run_status": "failed",
+                    "run_id": run_id,
+                    "error": str(exc),
+                },
+                ensure_ascii=False,
+            )
             agent_run = _get_or_create_workspace_ingest_agent_run(db, job, workspace)
             add_agent_event(
                 db,
@@ -2857,6 +3509,7 @@ def _write_immediate_workspace_ingest_agent_run(
 
 
 def _workspace_ingest_result_payload(payload: dict) -> dict:
+    manifest = payload.get("manifest") if isinstance(payload.get("manifest"), dict) else {}
     return {
         "workspace_id": payload.get("workspace_id"),
         "indexed_files": payload.get("indexed_files", 0),
@@ -2867,11 +3520,17 @@ def _workspace_ingest_result_payload(payload: dict) -> dict:
         "gbrain_source_id": payload.get("gbrain_source_id"),
         "gbrain_sync_status": payload.get("gbrain_sync_status"),
         "rag_status": payload.get("rag_status"),
+        "run_id": payload.get("run_id"),
+        "run_status": payload.get("run_status"),
+        "run": manifest.get("run"),
+        "manifest_summary": manifest.get("summary"),
     }
 
 
 def _workspace_ingest_summary_text(payload: dict) -> str:
+    run_status = payload.get("run_status") or payload.get("rag_status") or "unknown"
     return (
+        f"状态 {run_status}，"
         f"已入库 {payload.get('indexed_files', 0)} 个，"
         f"已编译 {payload.get('compiled_files', 0)} 个，"
         f"待能力补齐 {payload.get('pending_extractor_capability_files', 0)} 个，"
@@ -2938,9 +3597,10 @@ def _update_workspace_file_rag_statuses_from_manifest(
             original_name=source_path.name,
             content_type=guessed_type[:128],
             size=source_path.stat().st_size,
-            rag_status="pending",
+            rag_status="new",
             updated_at=now,
         )
+        _record_file_signature(meta, source_path)
         db.add(meta)
         db.flush()
         metas_by_path[rel_path] = meta
@@ -2951,7 +3611,10 @@ def _update_workspace_file_rag_statuses_from_manifest(
             continue
         status = str(item.get("status") or "")
         if status == "compiled":
-            meta.rag_status = "indexed" if sync_ok else "pending"
+            meta.rag_status = "synced" if sync_ok else "sync_pending"
+            source_path = (root / meta.relative_path).resolve()
+            if source_path.exists() and source_path.is_file():
+                _record_file_signature(meta, source_path)
         elif status == "pending_extractor_capability":
             meta.rag_status = "pending_extractor_capability"
         elif status == "pending_transcription":
@@ -2963,7 +3626,7 @@ def _update_workspace_file_rag_statuses_from_manifest(
         else:
             meta.rag_status = "pending"
         meta.updated_at = now
-        if meta.rag_status == "indexed":
+        if meta.rag_status in {"indexed", "synced"}:
             indexed += 1
     return indexed
 
@@ -3421,3 +4084,4 @@ def _ensure_member(db: Session, user_id: int, workspace_id: int):
     if not member:
         raise HTTPException(status_code=403, detail="你尚未加入该工作区")
     return member
+

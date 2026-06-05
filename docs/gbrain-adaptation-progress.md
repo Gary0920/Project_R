@@ -40,6 +40,8 @@ raw 真实样本
 
 2026-06-04 资料预处理架构已重新冻结：Project_R 只负责源文件粗处理、结构化预处理、权限审计、后端保存、信息检索转发和 UI 展示；GBrain 仍是真正知识库系统。用户源文件目录不再创建 `derived/`，也不保存普通用户可见的过程文件；预处理过程文件写入 `backend/workspace_data/_preprocessed/.../runs/`，最终给 GBrain 吸收的 Markdown 写入 `_preprocessed/.../gbrain-ready/`。旧 `workspace_data/.../derived/` 路径保留为已验证 MVP 和当前代码实现事实，后续迁移时不得继续把它当成目标架构。
 
+2026-06-05 GBrain runtime home 已固定为 `backend/workspace_data/_gbrain/`。`global/company-wiki/` 不再承载 `.gbrain/`、PGLite brain、运行审计或服务日志，只保留公司知识源文件入口；GBrain source repo 继续指向 `_preprocessed/.../gbrain-ready/`。
+
 2026-06-04 `/query` source scope 决策：个人工作台只查询 `company-wiki`；项目工作区查询 `company-wiki + 当前项目 source`，其中公司全局规则、通用流程和跨项目沉淀来自 `company-wiki`，项目特有资料、会议、邮件、图纸和事件来自当前项目 source；客户工作区只查询受限客户情报 GBrain 数据，不叠加 `company-wiki` 或项目 source。`customer-reference` 如仍出现在代码、manifest 或测试中，只视为早期统一客户情报 source id，不是产品层术语。
 
 2026-06-01 已按 Gary 确认清退早期测试知识数据：`company-wiki` 的测试 raw/derived/manifests 已移入 `backend/workspace_data/_backups/gbrain-reset-20260601-140029/`，活动目录重新建为空目录；GBrain 中 `company-wiki` 已保留 source 与 OAuth client 绑定，但清空 pages/chunks/embeddings/query cache。测试期项目资料目录 `backend/workspace_data/project/` 也已整体备份并重建为空，GBrain 中测试项目 source `project-bfi-2`、`project-bfi-6` 已删除。
@@ -50,9 +52,9 @@ raw 真实样本
 
 | 模块 | 状态 | 当前事实 |
 |---|---|---|
-| GBrain 运行方式 | 已完成 MVP | `core/gbrain.py` 已支持配置、health、source status、query、sync、doctor、启动/重启服务。正式调用走后端 service-account adapter，CLI 仅作初始化/诊断/应急。 |
-| 全局 source | 已完成 MVP，目标架构待迁移 | 本机当前实现已注册 `company-wiki`，source path 仍指向 `backend/workspace_data/global/company-wiki/derived/`。2026-06-04 新目标是迁移到 `backend/workspace_data/_preprocessed/company/company-wiki/gbrain-ready/`。 |
-| 原始资料目录 | 已完成 MVP，目标架构待迁移 | 当前实现使用 `workspace_data/global/company-wiki/{raw,derived,manifests}`；新架构要求 `raw/` 只保留源文件，过程文件进入 `_preprocessed/.../runs/`，GBrain source repo 进入 `_preprocessed/.../gbrain-ready/`。 |
+| GBrain 运行方式 | 已完成 MVP，路径已迁移 | `core/gbrain.py` 已支持配置、health、source status、query、sync、doctor、启动/重启服务。正式调用走后端 service-account adapter，CLI 仅作初始化/诊断/应急。GBrain runtime home 固定为 `workspace_data/_gbrain/`。 |
+| 全局 source | 已完成 MVP，目标架构迁移中 | `company-wiki` source 目标 path 为 `backend/workspace_data/_preprocessed/company/company-wiki/gbrain-ready/`。旧 `global/company-wiki/derived/` 仅为早期 MVP/迁移兼容来源。 |
+| 原始资料目录 | 已完成 MVP，目标架构迁移中 | `workspace_data/global/company-wiki/raw/` 只保留公司知识源文件；过程文件进入 `_preprocessed/.../runs/`，GBrain source repo 进入 `_preprocessed/.../gbrain-ready/`，`.gbrain/` 不得再出现在 `global/company-wiki/` 下。 |
 | 预处理产物目录 | 设计已冻结，待实现 | 新增目标结构：`workspace_data/_preprocessed/{company,project,customer}/.../{gbrain-ready,runs,manifests}`。普通用户文件面板不展示这些目录，管理员可通过后端文件夹和状态面板排查。 |
 | derived 本地 Git | 已完成 MVP，目标架构待迁移 | 当前 `derived/` 已作为本地 Git repo 用于派生 Markdown 审计、对比和回滚。迁移后版本审计应落在 `gbrain-ready/`、manifest、审计日志和知识审核记录上。 |
 | Markdown / txt 摄取 | 已完成第一版，目标架构待迁移 | 当前可从 `raw/` 编译到 `derived/` 并进入 GBrain sync。迁移后应通过独立 `markdown-source-preprocess` Skill 写入对应 `gbrain-ready/`。 |
@@ -76,7 +78,7 @@ raw 真实样本
 | 模块 | 状态 | 需要完成什么 |
 |---|---|---|
 | GBrain `think` | company-wiki 已提升为 `/query` 默认回答层，项目 source 授权准备已补代码级闭环，客户情报防串库回归已补 | `GBrainAdapter.think()` 已接入 MCP `think`，`/query ...` 直接调用该 native 回答层；citations 归一化为聊天来源项，gaps、conflicts、warnings 写入 `context_trace.gbrain_think`，前端“本轮上下文”卡片可显示缺口、冲突和警告，并可提交 `gbrain_think_review:*` 知识审核项。2026-06-04 最新边界：个人工作台 `/query` 只查 `company-wiki`；项目工作区 `/query` 查 `company-wiki + 当前项目 source`；客户工作区 `/query` 必须先通过 Project_R 权限判断，只查询 GBrain 已精炼吸收整理后的客户情报数据，不得默认回落到 `company-wiki`，也不得查询项目 source。本轮 Think fixture 已加入 5Points、18 Mary Avenue、Aaron Morris 三个客户问题，并用 forbidden answer/citation terms 验证同一客户情报数据中查询特定客户不混淆其他客户资料。项目 source 仍使用 `project-*` source-scoped OAuth client；更多项目真实样本 Think 回归等待 Gary 新建测试项目。 |
-| 项目级 source | 已完成真实样本闭环 MVP，已补项目 Think 授权准备 | 已完成 adapter + 项目一键录入路径：项目 source id 稳定生成为 `project-{brand}-{workspace_id}`，路径绑定 `workspace_data/project/{品牌}/{项目代号}/derived/`，项目工作区 `/query` 必须允许 `company-wiki + 当前项目 source`，管理员状态返回项目 source 列表。项目一键录入现在会在 source sync 成功后准备项目专属 GBrain Think OAuth client，避免项目 source 因未列入 `GBRAIN_THINK_ALLOWED_SOURCES` 被拒绝；组合查询仍必须保留 `company-wiki` 作为全局知识范围。2026-05-30/31 已用测试项目完成闭环验收；2026-06-01 这些测试项目 source 已从 GBrain 删除，活动 `workspace_data/project/` 已清空，等待 Gary 新建测试专用项目重新验收。 |
+| 项目级 source | 已完成真实样本闭环 MVP，已补项目 Think 授权准备 | 已完成 adapter + 项目一键录入路径：项目 source id 稳定生成为 `project-{brand}-{workspace_id}`，GBrain-ready 路径绑定 `_preprocessed/project/{brand}/{workspace_id}-{project_slug}/gbrain-ready/`，项目源文件路径为 `workspace_data/project/{品牌}/{项目代号}/`。`workspace_data/project/` 首层目录是动态品牌大类，当前默认品牌为 `AURA`、`BFI`、`SPECWISE`、`SYNOVA`，Gary 手动验收专用品牌目录为 `TEST`。项目工作区 `/query` 必须允许 `company-wiki + 当前项目 source`，管理员状态返回项目 source 列表。项目一键录入现在会在 source sync 成功后准备项目专属 GBrain Think OAuth client，避免项目 source 因未列入 `GBRAIN_THINK_ALLOWED_SOURCES` 被拒绝；组合查询仍必须保留 `company-wiki` 作为全局知识范围。 |
 | 客户情报 / 客户画像 source | 已完成早期统一客户情报 source 竖切片、客户工作区权限入口、客户查询路由和防串库回归 | `workspace_data/customer/` 是 CRM 客户画像资料根，不是项目目录；主要保存客户往来邮件、会议记录、联系人、公司、项目关系、沟通事件和销售判断线索。客户画像是受限业务情报，不是公司公共知识库；不得写入 `company-wiki`，客户 `/query` 也不叠加 `company-wiki`。客户情报目标是通过 GBrain Entity Enrichment 自动建立 People Graph、Company Graph 和 Project Graph，服务销售团队做客户关系管理、关键人判断、公司关系判断和项目关系判断。`workspace_data/customer/reference` 已编译并同步为早期统一客户情报 source id `customer-reference`；该 id 只是当前实现细节，不是产品层术语。`01_Clients`、`02_Projects`、`03_Companies` 和 `04_Raw` 文本资料已入库，图片/ZIP/Excel 等复杂资料继续留在 manifest 的 `pending_extractor_capability`，不污染 GBrain。 |
 | 项目资料真实索引 | 已完成真实样本闭环 MVP | `POST /workspaces/{id}/knowledge/ingest` 会先运行 extractor classifier，再编译项目文件、注册/同步项目 GBrain source，并按 sync 结果更新 `rag_status`。新增异步队列 `POST /workspaces/{id}/knowledge/ingest/async` 和 job 查询接口；前端一键录入改为排队 + 轮询。历史测试 manifest 为 `total=11, compiled=11, pending_extractor_capability=0, pending_transcription=0, failed=0`；2026-06-01 数据已清退，下一轮需用新项目重新生成 manifest。仍缺文件预览 UI 和更严格质量回归。 |
 | 音视频会议 | 自动转写项目 MVP 已完成 | 已支持 MP3/MP4/MOV/MKV/WEBM + 同名 transcript 的会议结构化提炼；项目 source 无 transcript 的 MP4 会优先用本地 ffmpeg 抽取音轨，长媒体按分段转写，生成 `.auto.transcript.md`，再用 DeepSeek 进行说话人映射和术语纠错，随后进入会议结构化 Markdown。company-wiki 会议直入规则、置信度、绝对时间戳回链、人工抽检和真实音视频查询回归仍需加强。 |
@@ -125,7 +127,7 @@ raw 真实样本
 ## 2026-05-30 项目级 Source Adapter
 
 - 新增项目 source 映射规则：每个 Project_R 项目工作区使用稳定 source id `project-{brand}-{workspace_id}`，例如 `project-bfi-7`；不使用项目名称或 slug 作为主键，避免项目改名导致历史引用漂移。
-- 当前 MVP 项目 source path 绑定到该项目工作区下的 `derived/`：`backend/workspace_data/project/{品牌}/{项目代号}/derived/`。2026-06-04 目标架构已改为 `backend/workspace_data/_preprocessed/project/{brand}/{workspace_id}-{project_slug}/gbrain-ready/`，项目源文件目录只保存用户上传或生成的原始业务文件。
+- 当前项目 source path 绑定到 `backend/workspace_data/_preprocessed/project/{brand}/{workspace_id}-{project_slug}/gbrain-ready/`，项目源文件目录 `backend/workspace_data/project/{品牌}/{项目代号}/` 只保存用户上传或生成的原始业务文件，不再承载 `derived/`。
 - GBrain 注册命令使用 `--no-federated`，项目 source 默认不参与跨 source 联合检索；只有用户具备该项目权限且查询当前项目时，Project_R 才显式传入该项目 `source_id`。
 - `core/gbrain.py` 已提供 `project_source_id_for_workspace`、项目 source registration plan/status、项目 source ensure/sync adapter。
 - `core/knowledge_sources.py` 已支持项目级 GBrain query scope：项目资料查询会调用 `GBrainAdapter.query(..., source_id=project-bfi-*)`，避免跨项目泄露；未注册或服务未配置时仍保留现有轻量项目文本召回作为过渡。

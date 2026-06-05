@@ -72,9 +72,19 @@ type WorkspaceFilePreview = {
 };
 
 type WorkspaceFileContextMenu = {
-  item: WorkspaceFileItemResponse;
+  item?: WorkspaceFileItemResponse;
+  targetDirectory: string;
+  kind: "item" | "blank";
   x: number;
   y: number;
+};
+
+type WorkspaceTextPrompt = {
+  title: string;
+  label: string;
+  initialValue: string;
+  confirmLabel: string;
+  onConfirm: (value: string) => Promise<void>;
 };
 
 type WorkspaceClipboardItem = {
@@ -139,17 +149,26 @@ function formatSize(size: number | null) {
 }
 
 function getRagStatusMeta(status: string | null | undefined) {
+  if (status === "synced") return { label: "已同步", tone: "indexed", title: "已同步到当前工作区知识库" };
   if (status === "indexed") return { label: "已入库", tone: "indexed", title: "已同步到当前工作区知识库" };
   if (status === "failed") return { label: "索引失败", tone: "failed", title: "索引失败，右键文件后可重新处理或联系管理员" };
-  if (status === "pending" || status === "pending_review") return { label: "处理中", tone: "processing", title: "正在排队或等待处理" };
+  if (status === "new" || status === "pending") return { label: "待处理", tone: "pending", title: "已上传，等待用户触发录入" };
+  if (status === "source_changed") return { label: "需重录", tone: "processing", title: "源文件已变更，需要用户显式重新录入" };
+  if (status === "needs_repreprocess") return { label: "需重录", tone: "processing", title: "预处理产物已过期，需要重新录入" };
+  if (status === "source_deleted") return { label: "源已删", tone: "muted", title: "源文件已删除，已同步知识不会自动删除" };
+  if (status === "sync_pending") return { label: "待同步", tone: "processing", title: "已生成 GBrain-ready 文件，等待 GBrain 同步" };
+  if (status === "gbrain_ready") return { label: "待同步", tone: "processing", title: "已生成 GBrain-ready 文件，等待同步" };
+  if (status === "pending_review") return { label: "待审核", tone: "pending", title: "已提炼，等待审核后进入知识库" };
+  if (status === "pending_capability") return { label: "待能力", tone: "processing", title: "当前文件类型等待提炼能力补齐" };
   if (status === "pending_extractor_capability") return { label: "待能力", tone: "processing", title: "当前文件类型等待提炼能力补齐" };
   if (status === "pending_transcription") return { label: "待转写", tone: "processing", title: "音视频文件等待转写处理" };
+  if (status === "ignored") return { label: "已忽略", tone: "muted", title: "该文件已被用户忽略，不参与默认录入" };
   if (status === "skipped") return { label: "暂不入库", tone: "muted", title: "当前文件暂不进入知识库" };
   return { label: "未入库", tone: "empty", title: "尚未录入当前工作区知识库" };
 }
 
 function knowledgeStoreLabel(workspaceKind: string) {
-  if (workspaceKind === "customer") return "客户情报库";
+  if (workspaceKind === "customer") return "CRM 知识库";
   if (workspaceKind === "project") return "项目知识库";
   return "工作区知识库";
 }
@@ -239,7 +258,7 @@ function countPendingIngestFiles(items: WorkspaceFileItemResponse[]): number {
       continue;
     }
     const status = item.rag_status ?? "not_indexed";
-    if (!["indexed", "skipped"].includes(status)) count += 1;
+    if (!["indexed", "synced", "skipped", "source_deleted", "ignored"].includes(status)) count += 1;
   }
   return count;
 }
@@ -594,36 +613,78 @@ function agentRunStatusLabel(status: string) {
   return "执行中";
 }
 
-function renderWorkspaceAgentRun(run: AgentRunResponse) {
+function compactText(value: string, maxLength = 140) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}...` : normalized;
+}
+
+function renderWorkspaceAgentRun(
+  run: AgentRunResponse,
+  {
+    expanded,
+    leaving,
+    onDismiss,
+    onToggleDetails,
+  }: {
+    expanded: boolean;
+    leaving: boolean;
+    onDismiss: () => void;
+    onToggleDetails: () => void;
+  },
+) {
+  const events = run.events ?? [];
+  const failedIndexFromEnd = [...events].reverse().findIndex((event) => event.status === "failed");
+  const latestIndex = failedIndexFromEnd >= 0 ? events.length - 1 - failedIndexFromEnd : events.length - 1;
+  const latestEvent = latestIndex >= 0 ? events[latestIndex] : undefined;
+  const hasDetails = events.length > 0 || Boolean(run.error_message);
   return (
-    <div className={`message-agent-run-card workspace-agent-run-card is-${run.status}`}>
-      <div className="message-agent-run-header">
-        <span className="message-agent-run-icon"><AgentIcon /></span>
+    <div className={`workspace-agent-run-toast is-${run.status} ${leaving ? "is-leaving" : ""}`}>
+      <div className="workspace-agent-run-header">
+        <span className="workspace-agent-run-icon"><AgentIcon /></span>
         <div>
           <strong>{run.title}</strong>
           <span>{agentRunStatusLabel(run.status)}</span>
         </div>
+        <button aria-label="关闭录入状态" onClick={onDismiss} title="关闭" type="button">×</button>
       </div>
-      {run.events?.length ? (
-        <ol className="message-agent-event-list">
-          {run.events.map((event) => (
-            <li className={`message-agent-event is-${event.status}`} key={event.id}>
-              <span className="message-agent-event-dot" />
-              <div>
-                <div className="message-agent-event-title">
-                  <strong>{event.title}</strong>
-                  <small>{event.status}</small>
-                </div>
-                {event.detail ? <p>{event.detail}</p> : null}
-              </div>
-            </li>
-          ))}
-        </ol>
+      {latestEvent ? (
+        <div className={`workspace-agent-run-latest is-${latestEvent.status}`}>
+          <span className="workspace-agent-run-dot" />
+          <div>
+            <strong>{latestEvent.title}</strong>
+          </div>
+          <small>{latestEvent.status}</small>
+        </div>
       ) : null}
-      {run.error_message ? (
-        <p className="message-agent-run-error">
-          {run.error_message}。请检查文件权限、网络或 GBrain 服务状态后重新执行。
-        </p>
+      {hasDetails ? (
+        <>
+          <button className="workspace-agent-run-detail-button" onClick={onToggleDetails} type="button">
+            {expanded ? "收起详情" : "查看详情"}
+          </button>
+          {expanded ? (
+          <div className="workspace-agent-run-details">
+          {events.length ? (
+            <ol>
+              {events.map((event) => (
+                <li className={`workspace-agent-run-history is-${event.status}`} key={event.id}>
+                  <span className="workspace-agent-run-dot" />
+                  <div>
+                    <strong>{event.title}</strong>
+                    {event.detail ? <p>{compactText(event.detail, 420)}</p> : null}
+                  </div>
+                  <small>{event.status}</small>
+                </li>
+              ))}
+            </ol>
+          ) : null}
+          {run.error_message ? (
+            <p className="workspace-agent-run-error">
+              {run.error_message}。请检查文件权限、网络或 GBrain 服务状态后重新执行。
+            </p>
+          ) : null}
+          </div>
+          ) : null}
+        </>
       ) : null}
     </div>
   );
@@ -640,6 +701,8 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [latestAgentRun, setLatestAgentRun] = useState<AgentRunResponse | null>(null);
+  const [agentRunToastExpanded, setAgentRunToastExpanded] = useState(false);
+  const [agentRunToastLeaving, setAgentRunToastLeaving] = useState(false);
   const [pendingConfirmation, setPendingConfirmation] = useState<WorkspaceConfirmation | null>(null);
   const [confirmationBusy, setConfirmationBusy] = useState(false);
   const [filePreview, setFilePreview] = useState<WorkspaceFilePreview | null>(null);
@@ -667,6 +730,9 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
   const [refreshingKnowledge, setRefreshingKnowledge] = useState(false);
   const [actionMenuOpen, setActionMenuOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<WorkspaceFileContextMenu | null>(null);
+  const [textPrompt, setTextPrompt] = useState<WorkspaceTextPrompt | null>(null);
+  const [textPromptValue, setTextPromptValue] = useState("");
+  const [textPromptBusy, setTextPromptBusy] = useState(false);
   const [clipboardItem, setClipboardItem] = useState<WorkspaceClipboardItem | null>(null);
   const [draggedItem, setDraggedItem] = useState<WorkspaceFileItemResponse | null>(null);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
@@ -683,7 +749,7 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
   const displayItems = useMemo(() => filterSystemWorkspaceItems(items), [items]);
   const visibleItems = useMemo(() => viewMode === "trash" ? items : getItemsAtPath(displayItems, currentPath), [currentPath, displayItems, items, viewMode]);
   const breadcrumb = useMemo(() => makeBreadcrumb(currentPath), [currentPath]);
-  const pendingIngestCount = useMemo(() => countPendingIngestFiles(displayItems), [displayItems]);
+  const pendingIngestCount = useMemo(() => countPendingIngestFiles(visibleItems), [visibleItems]);
 
   function navigateTo(path: string) {
     if (path === currentPath) return;
@@ -740,6 +806,27 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
   useEffect(() => {
     void refresh();
   }, [apiOptions, workspaceId, viewMode]);
+
+  useEffect(() => {
+    if (!latestAgentRun) {
+      setAgentRunToastExpanded(false);
+      setAgentRunToastLeaving(false);
+      return;
+    }
+    setAgentRunToastLeaving(false);
+    if (agentRunToastExpanded) return;
+    const hideTimer = window.setTimeout(() => {
+      setAgentRunToastLeaving(true);
+    }, 4000);
+    const removeTimer = window.setTimeout(() => {
+      setLatestAgentRun(null);
+      setAgentRunToastLeaving(false);
+    }, 4300);
+    return () => {
+      window.clearTimeout(hideTimer);
+      window.clearTimeout(removeTimer);
+    };
+  }, [latestAgentRun, agentRunToastExpanded]);
 
   useEffect(() => {
     if (viewMode !== "files") return;
@@ -905,38 +992,66 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
     }
   }
 
-  async function handleCreateFolder(parentPath = currentPath) {
+  function openTextPrompt(prompt: WorkspaceTextPrompt) {
+    setTextPrompt(prompt);
+    setTextPromptValue(prompt.initialValue);
+    setTextPromptBusy(false);
+  }
+
+  async function handleTextPromptSubmit() {
+    if (!textPrompt || textPromptBusy) return;
+    const value = textPromptValue.trim();
+    if (!value) return;
+    setTextPromptBusy(true);
+    setError(null);
+    try {
+      await textPrompt.onConfirm(value);
+      setTextPrompt(null);
+      setTextPromptValue("");
+    } catch (promptError: unknown) {
+      setError(promptError instanceof Error ? promptError.message : "操作失败");
+    } finally {
+      setTextPromptBusy(false);
+    }
+  }
+
+  function handleCreateFolder(parentPath = currentPath) {
     if (!workspaceId) return;
     if (isTrashPath(parentPath)) {
       setError("回收站不能新建文件夹");
       return;
     }
-    const name = window.prompt("新建文件夹名称");
-    if (!name?.trim()) return;
-    try {
-      const response = await createWorkspaceFolder(apiOptions, workspaceId, { parent_path: parentPath, name });
-      if (response.agent_run) setLatestAgentRun(response.agent_run);
-      await refresh();
-    } catch (createError: unknown) {
-      setError(createError instanceof Error ? createError.message : "新建文件夹失败");
-    }
+    openTextPrompt({
+      title: "新建文件夹",
+      label: parentPath ? `位置：${parentPath}` : "位置：根目录",
+      initialValue: "",
+      confirmLabel: "新建",
+      onConfirm: async (name) => {
+        const response = await createWorkspaceFolder(apiOptions, workspaceId, { parent_path: parentPath, name });
+        if (response.agent_run) setLatestAgentRun(response.agent_run);
+        await refresh();
+      },
+    });
   }
 
-  async function handleRename(item: WorkspaceFileItemResponse) {
+  function handleRename(item: WorkspaceFileItemResponse) {
     if (!workspaceId) return;
     if (!canModifyWorkspaceItem(item)) {
       setError("只有上传人或管理员可以修改该文件");
       return;
     }
-    const name = window.prompt("重命名", item.name);
-    if (!name?.trim() || name.trim() === item.name) return;
-    try {
-      const response = await renameWorkspacePath(apiOptions, workspaceId, { path: item.path, new_name: name.trim() });
-      if (response.agent_run) setLatestAgentRun(response.agent_run);
-      await refresh();
-    } catch (renameError: unknown) {
-      setError(renameError instanceof Error ? renameError.message : "重命名失败");
-    }
+    openTextPrompt({
+      title: "重命名",
+      label: item.path,
+      initialValue: item.name,
+      confirmLabel: "保存",
+      onConfirm: async (name) => {
+        if (name === item.name) return;
+        const response = await renameWorkspacePath(apiOptions, workspaceId, { path: item.path, new_name: name });
+        if (response.agent_run) setLatestAgentRun(response.agent_run);
+        await refresh();
+      },
+    });
   }
 
   async function executeMove(item: WorkspaceFileItemResponse, targetDirectory: string) {
@@ -1056,14 +1171,14 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
     });
   }
 
-  async function handleRefreshKnowledge() {
+  async function runKnowledgeIngest(path: string, recursive: boolean) {
     if (!workspaceId) return;
     const storeLabel = knowledgeStoreLabel(workspaceKind);
     setRefreshingKnowledge(true);
     setError(null);
     setNotice(null);
     try {
-      const queued = await enqueueWorkspaceKnowledgeIngest(apiOptions, workspaceId);
+      const queued = await enqueueWorkspaceKnowledgeIngest(apiOptions, workspaceId, { path, recursive });
       setLatestAgentRun(queued.agent_run ?? null);
       setNotice(`${storeLabel}录入已进入后台队列：任务 #${queued.id}。`);
       let job = queued;
@@ -1096,6 +1211,28 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
     } finally {
       setRefreshingKnowledge(false);
     }
+  }
+
+  function handleRefreshKnowledge(path = currentPath, recursive = true, item?: WorkspaceFileItemResponse) {
+    if (!workspaceId) return;
+    const targetType = item?.type === "file" ? "file" : "directory";
+    const pendingCount = item ? countPendingIngestFiles([item]) : pendingIngestCount;
+    const pathLabel = path ? `「${path}」` : "当前文件夹";
+    if (recursive || targetType === "directory") {
+      setPendingConfirmation({
+        title: targetType === "file" ? "录入此文件" : "递归录入当前文件夹",
+        detail: [
+          `路径：${pathLabel}`,
+          targetType === "file" ? "范围：仅此文件" : `范围：递归包含子文件夹，当前可处理文件约 ${pendingCount} 个`,
+          "可能调用高成本模型、转写或视觉提炼能力；不支持的文件会标记为待能力补齐。",
+        ].join("；"),
+        confirmLabel: targetType === "file" ? "录入此文件" : "确认录入",
+        tone: "warning",
+        onConfirm: () => runKnowledgeIngest(path, targetType === "file" ? false : recursive),
+      });
+      return;
+    }
+    void runKnowledgeIngest(path, false);
   }
 
   async function handleClearTrash() {
@@ -1413,11 +1550,45 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
     event.preventDefault();
     event.stopPropagation();
     const menuWidth = 176;
-    const menuHeight = item.type === "directory" ? 280 : 250;
+    const menuHeight = item.type === "directory" ? 230 : 260;
     const x = Math.min(event.clientX, window.innerWidth - menuWidth - 8);
     const y = Math.min(event.clientY, window.innerHeight - menuHeight - 8);
     setActionMenuOpen(false);
-    setContextMenu({ item, x: Math.max(8, x), y: Math.max(8, y) });
+    setContextMenu({
+      item,
+      kind: "item",
+      targetDirectory: item.type === "directory" ? item.path : currentPath,
+      x: Math.max(8, x),
+      y: Math.max(8, y),
+    });
+  }
+
+  function openBlankContextMenu(event: MouseEvent<HTMLElement | HTMLDivElement>) {
+    if (viewMode !== "files") return;
+    const target = event.target as HTMLElement;
+    if (
+      target.closest(".workspace-file-row")
+      || target.closest(".workspace-file-context-menu")
+      || target.closest(".agent-file-panel-header")
+      || target.closest(".workspace-file-breadcrumb")
+      || target.closest(".workspace-confirm-card")
+      || target.closest(".agent-file-panel-note")
+      || target.closest("button,input,textarea,select,a")
+    ) {
+      return;
+    }
+    event.preventDefault();
+    const menuWidth = 176;
+    const menuHeight = 116;
+    const x = Math.min(event.clientX, window.innerWidth - menuWidth - 8);
+    const y = Math.min(event.clientY, window.innerHeight - menuHeight - 8);
+    setActionMenuOpen(false);
+    setContextMenu({
+      kind: "blank",
+      targetDirectory: currentPath,
+      x: Math.max(8, x),
+      y: Math.max(8, y),
+    });
   }
 
   function runContextAction(action: () => void) {
@@ -1666,6 +1837,7 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
         }
       }}
       onDrop={handleDrop}
+      onContextMenu={openBlankContextMenu}
       ref={panelRef}
     >
       <header className="agent-file-panel-header">
@@ -1687,7 +1859,7 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
                     <button disabled={loading} onClick={() => { setActionMenuOpen(false); void refresh(); }} type="button"><RefreshIcon />刷新目录</button>
                     <button disabled={!canPasteInto(currentPath)} onClick={() => { setActionMenuOpen(false); void handlePaste(currentPath); }} type="button"><CopyIcon />粘贴到当前文件夹</button>
                     {canShowKnowledgeIngest ? (
-                      <button disabled={refreshingKnowledge || pendingIngestCount === 0} onClick={() => { setActionMenuOpen(false); void handleRefreshKnowledge(); }} type="button"><RefreshIcon />{refreshingKnowledge ? "正在录入..." : `一键录入${pendingIngestCount > 0 ? ` (${pendingIngestCount})` : ""}`}</button>
+                      <button disabled={refreshingKnowledge || pendingIngestCount === 0} onClick={() => { setActionMenuOpen(false); handleRefreshKnowledge(currentPath, true); }} type="button"><RefreshIcon />{refreshingKnowledge ? "正在录入..." : `录入当前文件夹${pendingIngestCount > 0 ? ` (${pendingIngestCount})` : ""}`}</button>
                     ) : null}
                     {canShowKnowledgeGraph ? (
                       <button disabled={knowledgeGraphLoading} onClick={() => { setActionMenuOpen(false); void handleOpenKnowledgeGraph(); }} type="button"><BrainIcon />{knowledgeGraphLoading ? "正在加载..." : knowledgeGraphLabel}</button>
@@ -1830,7 +2002,6 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
           </div>
         </div>
       ) : null}
-      {latestAgentRun ? renderWorkspaceAgentRun(latestAgentRun) : null}
       {loading ? <p className="agent-file-panel-note">正在读取目录...</p> : null}
       {!loading && !error && visibleItems.length === 0 ? (
         <div className="agent-file-empty">
@@ -1906,26 +2077,93 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
           onClick={(event) => event.stopPropagation()}
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
-          <button onClick={() => runContextAction(() => activateFileItem(contextMenu.item))} type="button">{isTrashWorkspaceItem(contextMenu.item) ? <TrashIcon /> : contextMenu.item.type === "directory" ? <WorkspaceIcon /> : <NoteIcon />}{isTrashWorkspaceItem(contextMenu.item) ? "打开回收站" : contextMenu.item.type === "directory" ? "打开" : "预览"}</button>
-          <button disabled={!canModifyWorkspaceItem(contextMenu.item)} onClick={() => runContextAction(() => handleCut(contextMenu.item))} type="button"><MoveIcon />剪切</button>
-          <button disabled={!canCopyWorkspaceItem(contextMenu.item)} onClick={() => runContextAction(() => handleCopy(contextMenu.item))} type="button"><CopyIcon />复制</button>
-          {contextMenu.item.type === "directory" ? (
-            <button disabled={!canPasteInto(contextMenu.item.path)} onClick={() => runContextAction(() => void handlePaste(contextMenu.item.path))} type="button"><CopyIcon />粘贴到此处</button>
+          {contextMenu.kind === "blank" ? (
+            <>
+              <button disabled={loading} onClick={() => runContextAction(() => void refresh())} type="button"><RefreshIcon />刷新</button>
+              <button disabled={!canPasteInto(contextMenu.targetDirectory)} onClick={() => runContextAction(() => void handlePaste(contextMenu.targetDirectory))} type="button"><CopyIcon />粘贴到此处</button>
+              <button disabled={isTrashPath(contextMenu.targetDirectory)} onClick={() => runContextAction(() => handleCreateFolder(contextMenu.targetDirectory))} type="button"><WorkspaceIcon />新建文件夹</button>
+            </>
+          ) : contextMenu.item?.type === "directory" ? (
+            <>
+              <button onClick={() => runContextAction(() => activateFileItem(contextMenu.item!))} type="button">{isTrashWorkspaceItem(contextMenu.item) ? <TrashIcon /> : <WorkspaceIcon />}{isTrashWorkspaceItem(contextMenu.item) ? "打开回收站" : "打开"}</button>
+              <button disabled={isTrashWorkspaceItem(contextMenu.item) || !canModifyWorkspaceItem(contextMenu.item)} onClick={() => runContextAction(() => handleCut(contextMenu.item!))} type="button"><MoveIcon />剪切</button>
+              <button disabled={isTrashWorkspaceItem(contextMenu.item) || !canCopyWorkspaceItem(contextMenu.item)} onClick={() => runContextAction(() => handleCopy(contextMenu.item!))} type="button"><CopyIcon />复制</button>
+              <button disabled={!canPasteInto(contextMenu.item.path)} onClick={() => runContextAction(() => void handlePaste(contextMenu.item!.path))} type="button"><CopyIcon />粘贴到此处</button>
+              {canShowKnowledgeIngest ? (
+                <button
+                  disabled={refreshingKnowledge || countPendingIngestFiles([contextMenu.item]) === 0 || isTrashWorkspaceItem(contextMenu.item)}
+                  onClick={() => runContextAction(() => handleRefreshKnowledge(contextMenu.item!.path, true, contextMenu.item))}
+                  type="button"
+                >
+                  <RefreshIcon />录入此文件夹
+                </button>
+              ) : null}
+              <button disabled={isTrashWorkspaceItem(contextMenu.item) || !canModifyWorkspaceItem(contextMenu.item)} onClick={() => runContextAction(() => handleRename(contextMenu.item!))} type="button"><EditIcon />重命名</button>
+              <button disabled={isTrashWorkspaceItem(contextMenu.item) || !canModifyWorkspaceItem(contextMenu.item)} onClick={() => runContextAction(() => void handleDelete(contextMenu.item!))} type="button"><TrashIcon />删除</button>
+            </>
+          ) : contextMenu.item ? (
+            <>
+              <button onClick={() => runContextAction(() => activateFileItem(contextMenu.item!))} type="button"><NoteIcon />预览</button>
+              <button disabled={!canModifyWorkspaceItem(contextMenu.item)} onClick={() => runContextAction(() => handleCut(contextMenu.item!))} type="button"><MoveIcon />剪切</button>
+              <button disabled={!canCopyWorkspaceItem(contextMenu.item)} onClick={() => runContextAction(() => handleCopy(contextMenu.item!))} type="button"><CopyIcon />复制</button>
+              {canShowKnowledgeIngest ? (
+                <button
+                  disabled={refreshingKnowledge || countPendingIngestFiles([contextMenu.item]) === 0 || isTrashWorkspaceItem(contextMenu.item)}
+                  onClick={() => runContextAction(() => handleRefreshKnowledge(contextMenu.item!.path, false, contextMenu.item))}
+                  type="button"
+                >
+                  <RefreshIcon />录入此文件
+                </button>
+              ) : null}
+              <button disabled={!canModifyWorkspaceItem(contextMenu.item)} onClick={() => runContextAction(() => handleRename(contextMenu.item!))} type="button"><EditIcon />重命名</button>
+              <button disabled={!canModifyWorkspaceItem(contextMenu.item)} onClick={() => runContextAction(() => void handleDelete(contextMenu.item!))} type="button"><TrashIcon />删除</button>
+              <button onClick={() => runContextAction(() => void onReferenceFile?.(contextMenu.item!))} type="button"><NoteIcon />引用文件</button>
+              <button onClick={() => runContextAction(() => void openFilePreview(contextMenu.item!))} type="button"><NoteIcon />详细信息</button>
+            </>
           ) : null}
-          <button disabled={!canModifyWorkspaceItem(contextMenu.item)} onClick={() => runContextAction(() => void handleRename(contextMenu.item))} type="button"><EditIcon />重命名</button>
-          <button disabled={!canModifyWorkspaceItem(contextMenu.item)} onClick={() => runContextAction(() => void handleDelete(contextMenu.item))} type="button"><TrashIcon />删除</button>
-          <button disabled={loading} onClick={() => runContextAction(() => void refresh())} type="button"><RefreshIcon />刷新</button>
-          <button disabled={isTrashWorkspaceItem(contextMenu.item)} onClick={() => runContextAction(() => void handleCreateFolder(contextMenu.item.type === "directory" ? contextMenu.item.path : currentPath))} type="button"><WorkspaceIcon />新建文件夹</button>
-          {contextMenu.item.type !== "directory" ? (
-            <button onClick={() => runContextAction(() => void onReferenceFile?.(contextMenu.item))} type="button"><NoteIcon />引用文件</button>
-          ) : null}
-          {contextMenu.item.type !== "directory" ? (
-            <button onClick={() => runContextAction(() => void openFilePreview(contextMenu.item))} type="button"><NoteIcon />详细信息</button>
-          ) : null}
+        </div>
+      ) : null}
+      {textPrompt ? (
+        <div className="workspace-text-prompt-overlay" onClick={() => !textPromptBusy && setTextPrompt(null)}>
+          <form
+            className="workspace-text-prompt"
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleTextPromptSubmit();
+            }}
+          >
+            <header>
+              <strong>{textPrompt.title}</strong>
+              <button disabled={textPromptBusy} onClick={() => setTextPrompt(null)} type="button">×</button>
+            </header>
+            <label>
+              <span>{textPrompt.label}</span>
+              <input
+                autoFocus
+                disabled={textPromptBusy}
+                onChange={(event) => setTextPromptValue(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setTextPrompt(null);
+                }}
+                value={textPromptValue}
+              />
+            </label>
+            <div>
+              <button disabled={textPromptBusy} onClick={() => setTextPrompt(null)} type="button">取消</button>
+              <button disabled={textPromptBusy || !textPromptValue.trim()} type="submit">{textPrompt.confirmLabel}</button>
+            </div>
+          </form>
         </div>
       ) : null}
       {dragOver ? <div className="workspace-drop-hint">松开后上传到当前文件夹</div> : null}
     </section>
+    {latestAgentRun ? renderWorkspaceAgentRun(latestAgentRun, {
+      expanded: agentRunToastExpanded,
+      leaving: agentRunToastLeaving,
+      onDismiss: () => setLatestAgentRun(null),
+      onToggleDetails: () => setAgentRunToastExpanded((value) => !value),
+    }) : null}
     {filePreview ? (
       <aside className={`workspace-file-preview-sidecar is-${filePreview.kind} ${previewResizing ? "is-resizing" : ""}`} aria-label="文件预览">
         <div
