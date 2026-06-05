@@ -299,6 +299,22 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
         </aside>
       );
     }
+    if (utilityPanel === "customer-intelligence") {
+      if (!activeWorkspace || activeWorkspace.workspace_kind !== "customer") {
+        return null;
+      }
+      return (
+        <WorkspaceFilePanel
+          apiOptions={apiOptions}
+          workspaceId={activeWorkspaceId}
+          workspaceName={activeWorkspace?.name}
+          workspaceKind={activeWorkspace?.workspace_kind}
+          canIngestKnowledge={Boolean(activeWorkspace.can_rename)}
+          standaloneCustomerIntelligence
+          onCustomerIntelligenceClose={() => setUtilityPanel(null)}
+        />
+      );
+    }
     if (utilityPanel === "prompt") {
       return (
         <aside
@@ -741,7 +757,7 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
             />
           </div>
         ) : (
-          <div className={`chat-workbench ${sideBySideOpen ? "is-split" : ""} ${utilityPanel ? "has-files-pane" : ""}`}>
+          <div className={`chat-workbench ${sideBySideOpen ? "is-split" : ""} ${utilityPanel && utilityPanel !== "customer-intelligence" ? "has-files-pane" : ""}`}>
             {renderConversationPane("left")}
             {sideBySideOpen ? renderConversationPane("right") : null}
             {renderUtilityPanel()}

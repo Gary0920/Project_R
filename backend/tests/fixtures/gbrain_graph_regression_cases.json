@@ -1,7 +1,7 @@
 [
   {
     "id": "customer_5points_relationship_graph",
-    "source_id": "customer-reference",
+    "source_id": "customer-crm",
     "focus": "5Points",
     "expected_node_titles": ["5Points", "Barry-Deane Bourhill", "Portside Duet"],
     "expected_edges": [
@@ -11,7 +11,7 @@
   },
   {
     "id": "customer_18_mary_event_graph",
-    "source_id": "customer-reference",
+    "source_id": "customer-crm",
     "focus": "18 Mary Avenue",
     "expected_node_titles": ["18 Mary Avenue", "Aura Facade", "Bakulo", "Klein"],
     "expected_edges": [
@@ -22,7 +22,7 @@
   },
   {
     "id": "customer_aaron_morris_unresolved_entities",
-    "source_id": "customer-reference",
+    "source_id": "customer-crm",
     "focus": "Aaron Morris",
     "expected_node_titles": ["Aaron Morris", "Binah", "VELA"],
     "expected_edges": [

@@ -7,7 +7,13 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from core.gbrain import CUSTOMER_INTELLIGENCE_SOURCE_ID, load_gbrain_settings, resolve_gbrain_source_paths
+from core.gbrain import (
+    CRM_CUSTOMER_SOURCE_ID,
+    CUSTOMER_INTELLIGENCE_SOURCE_ID,
+    CUSTOMER_REFERENCE_SOURCE_ID,
+    load_gbrain_settings,
+    resolve_gbrain_source_paths,
+)
 from core.gbrain_customer_sources import CUSTOMER_REFERENCE_DERIVED
 from core.gbrain_ingest import _relative_posix, _split_frontmatter, _write_markdown
 
@@ -320,7 +326,10 @@ def build_entity_merge_candidate_preview(
 
 
 def _default_derived_path(source_id: str) -> Path:
-    if source_id == CUSTOMER_INTELLIGENCE_SOURCE_ID:
+    if source_id == CRM_CUSTOMER_SOURCE_ID or source_id == CUSTOMER_INTELLIGENCE_SOURCE_ID:
+        crm_workspace = type("CustomerWorkspace", (), {"slug": "CRM", "name": "CRM", "storage_path": ""})()
+        return resolve_gbrain_source_paths("customer", workspace=crm_workspace).gbrain_ready
+    if source_id == CUSTOMER_REFERENCE_SOURCE_ID:
         return CUSTOMER_REFERENCE_DERIVED
     settings = load_gbrain_settings()
     if source_id == settings.company_source_id:
@@ -340,10 +349,11 @@ def _load_graph_pages(root: Path, source_id: str) -> list[GraphPage]:
         except OSError:
             continue
         frontmatter, body = _split_frontmatter(text)
+        frontmatter = _graph_metadata(frontmatter, body)
         rel = _relative_posix(path, root)
         title = str(frontmatter.get("title") or frontmatter.get("name") or path.stem).strip() or path.stem
         entity_type = str(frontmatter.get("content_kind") or frontmatter.get("type") or "page").strip() or "page"
-        source_file = str(frontmatter.get("project_r_source_file") or "").strip()
+        source_file = str(frontmatter.get("project_r_source_file") or frontmatter.get("source_file") or "").strip()
         pages.append(
             GraphPage(
                 id=rel,
@@ -944,7 +954,82 @@ def _resolve_ref(
         if candidate in by_source_file:
             return by_source_file[candidate]
     title = Path(ref).stem or ref
-    return by_title.get(_normalize_ref(title))
+    exact = by_title.get(_normalize_ref(title))
+    if exact:
+        return exact
+    ref_tokens = _name_tokens(title)
+    if ref_tokens:
+        for page in by_title.values():
+            title_tokens = _name_tokens(page.title)
+            if ref_tokens and ref_tokens.issubset(title_tokens):
+                return page
+    ref_key = _entity_key(title)
+    if len(ref_key) >= 4:
+        for page in by_title.values():
+            title_key = _entity_key(page.title)
+            if ref_key in title_key or title_key in ref_key:
+                return page
+    return None
+
+
+def _graph_metadata(frontmatter: dict[str, Any], body: str) -> dict[str, Any]:
+    metadata = dict(frontmatter)
+    for key, raw_value in _source_metadata_fields(body).items():
+        if key in metadata:
+            continue
+        if key in LINK_FIELDS or key in {"tags"}:
+            metadata[key] = _split_metadata_values(raw_value)
+        elif key in SINGLE_LINK_FIELDS:
+            metadata[key] = raw_value.strip()
+        elif key in {"type", "name"} and raw_value.strip():
+            metadata.setdefault(key, raw_value.strip())
+    return metadata
+
+
+def _source_metadata_fields(body: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    in_section = False
+    current_key = ""
+    current_lines: list[str] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped == "## Source Metadata":
+            in_section = True
+            continue
+        if in_section and stripped.startswith("## ") and stripped != "## Source Metadata":
+            break
+        if not in_section:
+            continue
+        match = re.match(r"- \*\*([A-Za-z0-9_-]+):\*\*\s*(.*)$", stripped)
+        if match:
+            if current_key:
+                fields[current_key] = "\n".join(current_lines).strip()
+            current_key = match.group(1).strip()
+            current_lines = [match.group(2).strip()]
+        elif current_key and stripped:
+            current_lines.append(stripped)
+    if current_key:
+        fields[current_key] = "\n".join(current_lines).strip()
+    return fields
+
+
+def _split_metadata_values(value: str) -> list[str]:
+    cleaned = value.replace("、", ",").replace("；", ",").replace(";", ",")
+    parts: list[str] = []
+    for line in cleaned.splitlines():
+        line = re.sub(r"^\s*-\s*", "", line).strip()
+        if not line:
+            continue
+        parts.extend(part.strip() for part in line.split(","))
+    return [part for part in parts if part]
+
+
+def _name_tokens(value: str) -> set[str]:
+    return {
+        token.lower()
+        for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9'-]{1,}|[\u4e00-\u9fff]{2,}", value)
+        if len(token.strip("' -")) >= 2
+    }
 
 
 def _placeholder_page(source_id: str, raw_ref: Any) -> GraphPage | None:

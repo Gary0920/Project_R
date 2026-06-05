@@ -13,12 +13,12 @@ from core.gbrain import (
     GBrainAdapter,
     GBrainSettings,
     customer_source_id_for_workspace,
+    customer_source_paths_for_workspace,
     load_gbrain_settings,
     project_source_id_for_workspace,
     project_source_paths_for_workspace,
     resolve_gbrain_source_paths,
 )
-from core.gbrain_customer_sources import CUSTOMER_REFERENCE_DERIVED
 from core.gbrain_ingest import _split_frontmatter, approve_pending_review_markdown
 from models.workspace import Workspace, WorkspaceFile
 
@@ -612,7 +612,7 @@ class KnowledgeSources:
         return self._enrich_workspace_source_locations(workspace, sources, project_source_paths_for_workspace(workspace)["derived"])
 
     def _enrich_customer_source_locations(self, workspace: Workspace, sources: list[dict]) -> list[dict]:
-        return self._enrich_workspace_source_locations(workspace, sources, CUSTOMER_REFERENCE_DERIVED)
+        return self._enrich_workspace_source_locations(workspace, sources, customer_source_paths_for_workspace(workspace)["derived"])
 
     def _enrich_workspace_source_locations(self, workspace: Workspace, sources: list[dict], derived_root: Path) -> list[dict]:
         if not sources:

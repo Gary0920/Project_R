@@ -28,13 +28,12 @@ DEFAULT_COMPANY_SOURCE_NAME = "Project_R Company Wiki"
 PROJECT_SOURCE_ID_MAX_LENGTH = 32
 PROJECT_SOURCE_ID_PREFIX = "project"
 CUSTOMER_SOURCE_ID_PREFIX = "customer"
-CUSTOMER_INTELLIGENCE_SOURCE_ID = "customer-reference"
 CRM_CUSTOMER_SOURCE_ID = "customer-crm"
+CUSTOMER_INTELLIGENCE_SOURCE_ID = CRM_CUSTOMER_SOURCE_ID
 CRM_CUSTOMER_SLUG = "CRM"
-# Backward-compatible source id alias. The persisted GBrain source is still
-# registered as "customer-reference"; product language should say customer
-# intelligence / customer profile instead of customer reference.
-CUSTOMER_REFERENCE_SOURCE_ID = CUSTOMER_INTELLIGENCE_SOURCE_ID
+# Legacy MVP source id. Keep it as an explicit cleanup target; product paths
+# and customer workspace queries use CUSTOMER_INTELLIGENCE_SOURCE_ID.
+CUSTOMER_REFERENCE_SOURCE_ID = "customer-reference"
 EMBEDDING_PROVIDER_ENV = {
     "openai": "OPENAI_API_KEY",
     "zeroentropyai": "ZEROENTROPY_API_KEY",

@@ -85,7 +85,7 @@ import { AppWorkspaceChrome } from "../components/chat/AppWorkspaceChrome";
 import { ChatConversationPane } from "../components/chat/ChatConversationPane";
 import { PROJECT_R_BUILTIN_PROMPT } from "../constants/prompts";
 type SplitPaneKey = "left" | "right";
-type UtilityPanel = "workspace" | "prompt" | "skills" | "source";
+type UtilityPanel = "workspace" | "customer-intelligence" | "prompt" | "skills" | "source";
 type RenameScope = "header" | "sidebar";
 type SettingsAdminTab = "overview" | "users" | "reviews" | "gbrain" | "templates" | "updates" | "audit";
 type ClientUpdateStep = "available" | "downloading" | "installing" | "ready" | "failed";

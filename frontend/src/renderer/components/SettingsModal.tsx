@@ -94,7 +94,7 @@ import {
   XmarkIcon,
 } from "./LineIcons";
 
-const CUSTOMER_INTELLIGENCE_SOURCE_ID = "customer-reference";
+const CUSTOMER_INTELLIGENCE_SOURCE_ID = "customer-crm";
 
 type ConnectionState = "idle" | "checking" | "ok" | "error";
 type SettingsSection =

@@ -25,7 +25,7 @@ class GBrainThinkRegressionTests(unittest.TestCase):
         self.assertIn("customer_18_mary_think", ids)
         self.assertIn("customer_aaron_morris_think", ids)
         self.assertIn("company-wiki", source_ids)
-        self.assertIn("customer-reference", source_ids)
+        self.assertIn("customer-crm", source_ids)
 
     def test_validate_think_case_accepts_scoped_citation_answer(self):
         case = {
@@ -87,7 +87,7 @@ class GBrainThinkRegressionTests(unittest.TestCase):
 
     def test_validate_think_case_rejects_customer_cross_talk(self):
         case = {
-            "source_id": "customer-reference",
+            "source_id": "customer-crm",
             "expected_model_contains": "deepseek",
             "expected_answer_terms_any": ["Aaron Morris"],
             "expected_citation_contains": "aaron-morris",
@@ -98,11 +98,11 @@ class GBrainThinkRegressionTests(unittest.TestCase):
         }
         response = {
             "status": "ok",
-            "source_id": "customer-reference",
+            "source_id": "customer-crm",
             "source_scope": {
                 "verified": True,
                 "scope_is_token_bound": True,
-                "allowed_sources": ["customer-reference"],
+                "allowed_sources": ["customer-crm"],
             },
             "result": {
                 "answer": "Aaron Morris is related to Binah, but 5Points is also mentioned.",

@@ -203,26 +203,30 @@ Phase 19 Mac mini 迁移暂缓，不作为近期阻塞项。
 
 ## 7. 当前主线 C：客户情报重跑
 
-目标：清理早期 `customer-reference` 生成物，保留原始资料，用 GBrain 原生客户情报能力重新跑客户画像链路。
+目标：退役早期 `customer-reference` 实现痕迹，保留 CRM 原始资料，以正式 `customer-crm` 受限客户情报 source 继续重跑客户画像链路。
 
 当前客户资料入口：`backend/workspace_data/customer/CRM/raw/`。该目录是 CRM 客户信息源文件入口，不是项目目录、不是品牌层级，也不是某个单客户 workspace 的子目录；CRM 是服务全公司营销需求的客户情报工作区。资料进入 GBrain 前必须先完成 Obsidian 导出清洗和客户情报来源记录预处理，目标路径为 `_preprocessed/customer/crm/gbrain-ready/`。
 
 任务：
 
-- [ ] 清理前列出 `customer-reference` source、OAuth client、derived/manifests/graph/regression 产物。
-- [ ] 保留 `workspace_data/customer/` 原始 Markdown 资料和客户工作区。
-- [ ] 删除旧 GBrain source/client/generated artifacts。
+- [x] 清理前列出 `customer-reference` source、OAuth client、derived/manifests/graph/regression 产物。
+- [x] 保留 `workspace_data/customer/` 原始 Markdown 资料和客户工作区。
+- [x] 本机确认旧 `customer-reference` GBrain source/client/generated artifacts 已不存在；其他环境如仍存在，必须先跑 inventory 再清理。
 - [x] 清洗 `workspace_data/customer/CRM/raw/` 的 Obsidian 导出源文件，生成客户情报 GBrain-ready Markdown。
 - [x] 将客户资料按新 `_preprocessed/customer/crm/gbrain-ready/` 架构预处理。
-- [ ] 调用 GBrain 原生 schema / Entity Enrichment / graph / timeline 能力。
-- [ ] 跑 5Points、18 Mary Avenue、Aaron Morris 防串库回归。
-- [ ] 在 CRM UI 中展示画像概览、图谱、时间线和 GBrain 状态。
+- [x] 将正式客户情报主 source、Think 回归和管理员图谱默认 source 切到 `customer-crm`。
+- [x] 跑 CRM gbrain-ready 图谱 / Timeline / 实体候选回归，覆盖 5Points、18 Mary Avenue、Aaron Morris。
+- [ ] 调用 GBrain 原生 schema / Entity Enrichment / native graph / native timeline 能力，并验证 token-bound customer scope。
+- [x] 跑 5Points、18 Mary Avenue、Aaron Morris 防串库回归。
+- [ ] 在 CRM UI 中验收画像概览、图谱、时间线和 GBrain 状态；现有工作区文件面板图谱/Timeline 壳已可读取 `customer-crm`，仍需 CRM 入口手工验收和状态区收口。
 
 完成标志：
 
 - `customer-reference` 不再作为产品术语出现在 UI。
 - 客户 `/query` 不回落到 `company-wiki`。
 - 普通客户成员不能触发 Entity Enrichment 或实体合并。
+
+实现状态：2026-06-05 已新增只读 inventory 脚本 `backend/scripts/gbrain_customer_reference_inventory.py`。本机盘点显示旧 `customer-reference` GBrain source 未注册、source-scoped OAuth client manifest 中无旧 client、`workspace_data/customer/reference` legacy root 不存在；保留 `workspace_data/customer/CRM/raw/` 424 个 Markdown 和 `_preprocessed/customer/crm/gbrain-ready/` 424 个 Markdown。正式客户情报主 source 已切到 `customer-crm`，`backend/scripts/gbrain_customer_reference_regression.py` 已改为查询 CRM gbrain-ready source，5Points、18 Mary Avenue、Aaron Morris 三条防串库 query 回归通过。`backend/core/gbrain_graph.py` 已兼容 CRM gbrain-ready 正文 `Source Metadata` 中的 `linked_people` / `linked_projects` / `linked_companies` / `source_events`，不修改源 Markdown 即可生成客户图谱、Timeline events 和实体候选；`backend/scripts/gbrain_graph_regression.py` 三条客户图谱回归通过。GBrain 原生 Entity Enrichment / native graph / native timeline 真实调用和 CRM UI 手工验收仍未完成。
 
 ## 8. 当前主线 D：项目质量与文件预览
 

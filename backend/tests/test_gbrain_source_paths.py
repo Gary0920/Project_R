@@ -103,6 +103,27 @@ class GBrainSourcePathResolverTests(unittest.TestCase):
         self.assertEqual(paths.manifests, (preprocessed_root / "customer" / "9-lucerna" / "manifests").resolve())
         self.assertEqual(paths.legacy_derived, (raw_root / "derived").resolve())
 
+    def test_resolves_crm_customer_preprocessed_paths_to_single_customer_intelligence_source(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            preprocessed_root = root / "_preprocessed"
+            workspace = SimpleNamespace(
+                id=9,
+                slug="CRM",
+                name="CRM",
+                storage_path="",
+            )
+
+            with patch.dict(os.environ, {"GBRAIN_PREPROCESSED_ROOT": str(preprocessed_root)}):
+                paths = resolve_gbrain_source_paths("customer", workspace=workspace)
+
+        self.assertEqual(paths.source_scope, "customer")
+        self.assertEqual(paths.source_id, "customer-crm")
+        self.assertEqual(paths.raw, (Path(__file__).resolve().parents[1] / "workspace_data" / "customer" / "CRM").resolve())
+        self.assertEqual(paths.gbrain_ready, (preprocessed_root / "customer" / "crm" / "gbrain-ready").resolve())
+        self.assertEqual(paths.runs, (preprocessed_root / "customer" / "crm" / "runs").resolve())
+        self.assertEqual(paths.manifests, (preprocessed_root / "customer" / "crm" / "manifests").resolve())
+
 
 if __name__ == "__main__":
     unittest.main()

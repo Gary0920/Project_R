@@ -31,7 +31,7 @@ def _matches_expected(case: dict, source: dict) -> tuple[bool, str]:
     expected_file = str(case["expected_top_file_contains"]).lower()
     expected_title = str(case["expected_top_title_contains"]).lower()
     expected_terms = [str(term).lower() for term in case["expected_top_content_terms"]]
-    if expected_file not in file_value:
+    if _normalize_match_text(expected_file) not in _normalize_match_text(file_value):
         return False, f"top file {source.get('file')!r} does not contain {case['expected_top_file_contains']!r}"
     if expected_title not in title_value:
         return False, f"top title {source.get('source_title')!r} does not contain {case['expected_top_title_contains']!r}"
@@ -40,20 +40,25 @@ def _matches_expected(case: dict, source: dict) -> tuple[bool, str]:
     return True, ""
 
 
+def _normalize_match_text(value: str) -> str:
+    return "".join(char for char in value.lower() if char.isalnum())
+
+
 def main() -> int:
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
     _load_dotenv(BACKEND_DIR / ".env")
     sys.path.insert(0, str(BACKEND_DIR))
 
-    from core.gbrain import CUSTOMER_INTELLIGENCE_SOURCE_ID, GBrainAdapter
-    from core.gbrain_customer_sources import search_customer_reference_sources
+    from core.gbrain import CRM_CUSTOMER_SOURCE_ID, GBrainAdapter
+    from core.gbrain_customer_sources import search_customer_intelligence_sources
 
     adapter = GBrainAdapter()
+    source_path = BACKEND_DIR / "workspace_data" / "_preprocessed" / "customer" / "crm" / "gbrain-ready"
     status = adapter.source_status(
         {
-            "source_id": CUSTOMER_INTELLIGENCE_SOURCE_ID,
+            "source_id": CRM_CUSTOMER_SOURCE_ID,
             "name": "Project_R Customer Intelligence",
-            "path": str((BACKEND_DIR / "workspace_data" / "customer" / "reference" / "derived").resolve()),
+            "path": str(source_path.resolve()),
             "federated": False,
         }
     )
@@ -64,7 +69,7 @@ def main() -> int:
     cases = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
     failed_cases: list[str] = []
     for case in cases:
-        sources = search_customer_reference_sources(case["query"], limit=5)
+        sources = search_customer_intelligence_sources(case["query"], limit=5)
         if not sources:
             failed_cases.append(f"{case['id']}: no sources returned")
             continue

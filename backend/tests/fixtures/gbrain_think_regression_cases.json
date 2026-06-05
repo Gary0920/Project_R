@@ -18,7 +18,7 @@
     "id": "customer_five_points_think",
     "description": "Unified customer source think should answer about 5Points without mixing unrelated customers.",
     "query": "5Points 的关键决策人是谁，和 Synova 有什么关系？",
-    "source_id": "customer-reference",
+    "source_id": "customer-crm",
     "expected_model_contains": "deepseek",
     "expected_answer_terms_any": [
       "5Points",
@@ -42,7 +42,7 @@
     "id": "customer_18_mary_think",
     "description": "Unified customer source think should answer about 18 Mary Avenue without mixing unrelated customer records.",
     "query": "18 Mary Avenue 项目为什么是价格竞争力和长期稳定性的案例？",
-    "source_id": "customer-reference",
+    "source_id": "customer-crm",
     "expected_model_contains": "deepseek",
     "expected_answer_terms_any": [
       "18 Mary Avenue",
@@ -66,7 +66,7 @@
     "id": "customer_aaron_morris_think",
     "description": "Unified customer source think should answer about Aaron Morris without mixing unrelated customer records.",
     "query": "Aaron Morris 是谁，关联哪个公司和项目？",
-    "source_id": "customer-reference",
+    "source_id": "customer-crm",
     "expected_model_contains": "deepseek",
     "expected_answer_terms_any": [
       "Aaron Morris",

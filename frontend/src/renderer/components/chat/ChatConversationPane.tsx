@@ -1,7 +1,7 @@
 import { type DragEvent, type MouseEvent } from "react";
 
 import type { ChatSessionResponse } from "../../api/types";
-import { ChatIcon, AgentIcon, EditIcon, PaperclipIcon, PinIcon, SplitIcon, TrashIcon, WorkspaceIcon } from "../LineIcons";
+import { BrainIcon, ChatIcon, AgentIcon, EditIcon, PaperclipIcon, PinIcon, SplitIcon, TrashIcon, WorkspaceIcon } from "../LineIcons";
 import { ChatComposer } from "./ChatComposer";
 import { ChatMessageList } from "./ChatMessageList";
 
@@ -143,6 +143,16 @@ export function ChatConversationPane({ controller }: ChatConversationPaneProps) 
                 type="button"
               >
                 <WorkspaceIcon />
+              </button>
+            ) : null}
+            {activeWorkspace?.workspace_kind === "customer" ? (
+              <button
+                className={`icon-button ${utilityPanel === "customer-intelligence" ? "is-active" : ""}`}
+                onClick={() => setUtilityPanel((value: string | null) => value === "customer-intelligence" ? null : "customer-intelligence")}
+                title={utilityPanel === "customer-intelligence" ? "关闭客户画像" : "客户画像"}
+                type="button"
+              >
+                <BrainIcon />
               </button>
             ) : null}
             {paneSession ? (

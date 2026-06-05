@@ -38,6 +38,7 @@ import {
   NoteIcon,
   PlusIcon,
   RefreshIcon,
+  SearchIcon,
   TrashIcon,
   WorkspaceIcon,
   XmarkIcon,
@@ -52,6 +53,8 @@ export type WorkspaceFilePanelProps = {
   defaultPath?: string;
   onReferenceFile?: (item: WorkspaceFileItemResponse) => void | Promise<void>;
   onPreviewOpen?: () => void;
+  standaloneCustomerIntelligence?: boolean;
+  onCustomerIntelligenceClose?: () => void;
 };
 
 type WorkspaceConfirmation = {
@@ -536,6 +539,33 @@ function graphEntityTypeColor(entityType: string): string {
   return palette.page;
 }
 
+function crmEntityLabel(entityType: string | null | undefined) {
+  const key = (entityType ?? "").toLowerCase();
+  if (key.includes("person") || key.includes("client") || key.includes("contact")) return "联系人";
+  if (key.includes("company")) return "公司";
+  if (key.includes("project")) return "项目";
+  if (key.includes("event") || key.includes("meeting")) return "沟通记录";
+  if (key.includes("unresolved")) return "待确认";
+  return "资料";
+}
+
+function crmRelationLabel(relationType: string | null | undefined) {
+  const key = (relationType ?? "").toLowerCase();
+  if (key.includes("person") || key.includes("people")) return "关联联系人";
+  if (key.includes("company")) return "关联公司";
+  if (key.includes("project")) return "关联项目";
+  if (key.includes("event")) return "相关事件";
+  if (key.includes("affiliated")) return "所属公司";
+  return "关联";
+}
+
+function crmShortSource(value: string | null | undefined) {
+  const text = (value ?? "").replace(/\\/g, "/").trim();
+  if (!text) return "";
+  const filename = text.split("/").pop() || text;
+  return filename.replace(/\.(md|markdown|txt|eml)$/i, "");
+}
+
 function graphCanvasPointSized(
   index: number,
   total: number,
@@ -690,7 +720,18 @@ function renderWorkspaceAgentRun(
   );
 }
 
-export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, workspaceKind = "project", canIngestKnowledge = false, defaultPath = "", onReferenceFile, onPreviewOpen }: WorkspaceFilePanelProps) {
+export function WorkspaceFilePanel({
+  apiOptions,
+  workspaceId,
+  workspaceName,
+  workspaceKind = "project",
+  canIngestKnowledge = false,
+  defaultPath = "",
+  onReferenceFile,
+  onPreviewOpen,
+  standaloneCustomerIntelligence = false,
+  onCustomerIntelligenceClose,
+}: WorkspaceFilePanelProps) {
   const [items, setItems] = useState<WorkspaceFileItemResponse[]>([]);
   const [currentPath, setCurrentPath] = useState(defaultPath);
   const [history, setHistory] = useState<string[]>([defaultPath || ""]);
@@ -804,8 +845,9 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
   }
 
   useEffect(() => {
+    if (standaloneCustomerIntelligence) return;
     void refresh();
-  }, [apiOptions, workspaceId, viewMode]);
+  }, [apiOptions, workspaceId, viewMode, standaloneCustomerIntelligence]);
 
   useEffect(() => {
     if (!latestAgentRun) {
@@ -857,7 +899,12 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
     return () => observer.disconnect();
   }, []);
 
-  const hasSidecar = Boolean(filePreview || knowledgeGraphOpen);
+  const hasSidecar = Boolean(!standaloneCustomerIntelligence && (filePreview || (knowledgeGraphOpen && workspaceKind !== "customer")));
+
+  useEffect(() => {
+    if (!standaloneCustomerIntelligence || workspaceKind !== "customer" || !workspaceId) return;
+    void handleOpenKnowledgeGraph();
+  }, [standaloneCustomerIntelligence, workspaceKind, workspaceId]);
 
   useEffect(() => {
     if (!hasSidecar) return;
@@ -1448,6 +1495,7 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
   function closeKnowledgeGraph() {
     setKnowledgeGraphOpen(false);
     setKnowledgeGraphCanvasOpen(false);
+    onCustomerIntelligenceClose?.();
   }
 
   function resetKnowledgeGraphCanvasView() {
@@ -1808,13 +1856,79 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
     { key: "timeline", title: "Timeline", items: nativeResultItems(nativeGraphContext.timeline, "timeline") },
     { key: "backlinks", title: "Backlinks", items: nativeResultItems(nativeGraphContext.backlinks, "backlinks") },
   ] : [];
+  const crmRecentEvents = timelineEvents.slice(0, 12);
+  const crmPersonCount = filteredGraphNodes.filter((node) => crmEntityLabel(node.entity_type) === "联系人").length;
+  const crmCompanyCount = filteredGraphNodes.filter((node) => crmEntityLabel(node.entity_type) === "公司").length;
+  const crmProjectCount = filteredGraphNodes.filter((node) => crmEntityLabel(node.entity_type) === "项目").length;
+  const crmDatedEventCount = filteredGraphEvents.filter((event) => Boolean(event.date)).length;
+  const crmCardRole = (card: { entity_type: string }) => crmEntityLabel(card.entity_type);
+  const crmSortedProfileCards = filteredProfileCards
+    .slice()
+    .sort((left, right) => (
+      (right.event_count - left.event_count)
+      || (right.relation_count - left.relation_count)
+      || left.title.localeCompare(right.title)
+    ));
+  const crmMostActiveContact = crmSortedProfileCards.find((card) => crmCardRole(card) === "联系人" && card.event_count > 0)
+    ?? crmSortedProfileCards.find((card) => crmCardRole(card) === "联系人")
+    ?? null;
+  const crmRelationshipHub = crmSortedProfileCards
+    .slice()
+    .sort((left, right) => (right.relation_count - left.relation_count) || (right.event_count - left.event_count))
+    .find((card) => card.relation_count > 0)
+    ?? null;
+  const crmLatestEvent = crmRecentEvents[0] ?? null;
+  const crmVisibleProfileCards = [
+    ...crmSortedProfileCards.filter((card) => crmCardRole(card) === "联系人").slice(0, 5),
+    ...crmSortedProfileCards.filter((card) => crmCardRole(card) === "公司").slice(0, 4),
+    ...crmSortedProfileCards.filter((card) => crmCardRole(card) === "项目").slice(0, 4),
+    ...crmSortedProfileCards.filter((card) => !["联系人", "公司", "项目"].includes(crmCardRole(card))).slice(0, 3),
+  ].filter((card, index, list) => list.findIndex((item) => item.id === card.id) === index).slice(0, 14);
+  const crmCardReason = (card: { relation_count: number; event_count: number }) => {
+    if (card.event_count > 0) return `${card.event_count} 次互动，适合先查看沟通脉络`;
+    if (card.relation_count >= 12) return `${card.relation_count} 条关系，是关系网中的枢纽`;
+    if (card.relation_count > 0) return `${card.relation_count} 条关系，可查看上下游关联`;
+    return "已识别对象，等待更多互动记录";
+  };
+  const crmSelectedRelations = selectedGraphNode
+    ? (knowledgeGraph?.edges ?? [])
+      .filter((edge) => edge.from === selectedGraphNode.id || edge.to === selectedGraphNode.id)
+      .slice(0, 12)
+    : [];
+  const crmSelectedEvents = selectedGraphNode
+    ? (knowledgeGraph?.events ?? []).filter((event) => event.entity_id === selectedGraphNode.id).slice(0, 8)
+    : [];
+  const crmCanvasNodes = selectedGraphNode
+    ? [
+      selectedGraphNode,
+      ...sortedGraphNodes.filter((node) => node.id !== selectedGraphNode.id && selectedNeighborIds.has(node.id)),
+      ...sortedGraphNodes.filter((node) => node.id !== selectedGraphNode.id && !selectedNeighborIds.has(node.id)),
+    ].slice(0, 28)
+    : sortedGraphNodes.slice(0, 28);
+  const crmCanvasNodeIds = new Set(crmCanvasNodes.map((node) => node.id));
+  const crmCanvasEdges = filteredGraphEdges.filter((edge) => crmCanvasNodeIds.has(edge.from) && crmCanvasNodeIds.has(edge.to)).slice(0, 72);
+  const crmCanvasPositions = graphForceLayout(
+    crmCanvasNodes.map((node) => ({
+      id: node.id,
+      degree: graphDegreeById.get(node.id) ?? 0,
+      isFocus: Boolean(selectedGraphNode && node.id === selectedGraphNode.id),
+      isNeighbor: selectedNeighborIds.has(node.id),
+      entityType: node.entity_type ?? "page",
+    })),
+    crmCanvasEdges,
+    720,
+    420,
+    155,
+  );
 
   return (
     <div
-      className={`workspace-file-panel-layout ${hasSidecar ? "has-preview" : ""}`}
+      className={`workspace-file-panel-layout ${standaloneCustomerIntelligence ? "is-crm-standalone" : ""} ${hasSidecar ? "has-preview" : ""}`}
       ref={layoutRef}
-      style={hasSidecar ? { gridTemplateColumns: `minmax(300px, 1fr) ${previewWidth}px` } : undefined}
+      style={hasSidecar && !standaloneCustomerIntelligence ? { gridTemplateColumns: `minmax(300px, 1fr) ${previewWidth}px` } : undefined}
     >
+    {!standaloneCustomerIntelligence ? (
+    <>
     <section
       className={`agent-file-panel ${dragOver ? "is-drag-over" : ""} ${compactActions ? "is-compact-actions" : ""}`}
       onDragLeave={() => {
@@ -2210,7 +2324,304 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
         </section>
       </aside>
     ) : null}
-    {knowledgeGraphOpen && !filePreview ? (
+    </>
+    ) : null}
+    {knowledgeGraphOpen && isCustomerWorkspace ? (
+      <div className="crm-intelligence-overlay" role="dialog" aria-modal="true" aria-label="CRM 客户情报">
+        <section className="crm-intelligence-shell">
+          <header className="crm-intelligence-header">
+            <div>
+              <span>CRM 客户情报</span>
+              <strong>{workspaceName || "客户工作区"}</strong>
+              <small>客户画像、关系网和近期互动来自受限客户情报数据。</small>
+            </div>
+            <div className="crm-intelligence-header-actions">
+              <button disabled={knowledgeGraphLoading} onClick={() => void handleOpenKnowledgeGraph()} type="button"><RefreshIcon />刷新</button>
+              <button disabled={crmCanvasNodes.length === 0} onClick={() => { resetKnowledgeGraphCanvasView(); setKnowledgeGraphCanvasOpen(true); }} type="button"><MaximizeIcon />大画布</button>
+              <button aria-label="关闭 CRM 客户情报" onClick={closeKnowledgeGraph} type="button"><XmarkIcon /></button>
+            </div>
+          </header>
+          <div className="crm-intelligence-toolbar">
+            <label>
+              <SearchIcon />
+              <input
+                onChange={(event) => setGraphSearchTerm(event.target.value)}
+                placeholder="搜索客户、联系人、项目或事件"
+                type="search"
+                value={graphSearchTerm}
+              />
+            </label>
+            <div>
+              {[
+                { value: "all", label: "全部" },
+                { value: "customer_person_source_record", label: "联系人" },
+                { value: "customer_company_source_record", label: "公司" },
+                { value: "customer_project_source_record", label: "项目" },
+              ].map((item) => (
+                <button
+                  aria-pressed={graphEntityFilter === item.value}
+                  className={graphEntityFilter === item.value ? "is-active" : ""}
+                  key={item.value}
+                  onClick={() => setGraphEntityFilter(item.value)}
+                  type="button"
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {knowledgeGraphLoading ? <p className="crm-intelligence-message">正在读取客户情报...</p> : null}
+          {knowledgeGraphError ? <p className="crm-intelligence-message is-error">{knowledgeGraphError}</p> : null}
+          {!knowledgeGraphLoading && knowledgeGraph ? (
+            <div className="crm-intelligence-body">
+              <aside className="crm-intelligence-roster">
+                <section className="crm-intelligence-brief" aria-label="客户情报摘要">
+                  <div className="crm-intelligence-list-head">
+                    <strong>这批资料能快速看到</strong>
+                    <small>按互动和关系自动提取</small>
+                  </div>
+                  <div className="crm-intelligence-brief-list">
+                    {crmMostActiveContact ? (
+                      <button onClick={() => setSelectedGraphNodeId(crmMostActiveContact.id)} type="button">
+                        <span>最活跃联系人</span>
+                        <strong title={crmMostActiveContact.title}>{crmMostActiveContact.title}</strong>
+                        <small>{crmMostActiveContact.event_count} 次互动 · {crmMostActiveContact.relation_count} 条关系</small>
+                      </button>
+                    ) : null}
+                    {crmRelationshipHub ? (
+                      <button onClick={() => setSelectedGraphNodeId(crmRelationshipHub.id)} type="button">
+                        <span>关系中心</span>
+                        <strong title={crmRelationshipHub.title}>{crmRelationshipHub.title}</strong>
+                        <small>{crmEntityLabel(crmRelationshipHub.entity_type)} · 连接 {crmRelationshipHub.relation_count} 条关系</small>
+                      </button>
+                    ) : null}
+                    {crmLatestEvent ? (
+                      <button
+                        onClick={() => {
+                          setSelectedGraphNodeId(crmLatestEvent.entity_id);
+                          setSelectedGraphEventId(crmLatestEvent.id);
+                        }}
+                        type="button"
+                      >
+                        <span>最近互动</span>
+                        <strong title={crmLatestEvent.title}>{crmShortSource(crmLatestEvent.title)}</strong>
+                        <small>{crmLatestEvent.date || "未标日期"} · {nodeTitleById.get(crmLatestEvent.entity_id) || "客户对象"}</small>
+                      </button>
+                    ) : null}
+                    {!crmMostActiveContact && !crmRelationshipHub && !crmLatestEvent ? (
+                      <p>当前筛选下还没有足够的关系或互动记录。</p>
+                    ) : null}
+                  </div>
+                </section>
+                <div className="crm-intelligence-scope" aria-label="资料范围">
+                  <span><strong>{crmPersonCount}</strong><small>联系人</small></span>
+                  <span><strong>{crmCompanyCount}</strong><small>公司</small></span>
+                  <span><strong>{crmProjectCount}</strong><small>项目</small></span>
+                  <span><strong>{crmDatedEventCount}/{filteredGraphEvents.length}</strong><small>有日期互动</small></span>
+                </div>
+                <div className="crm-intelligence-list-head">
+                  <strong>可追踪对象</strong>
+                  <small>{crmVisibleProfileCards.length} / {filteredProfileCards.length}</small>
+                </div>
+                <div className="crm-intelligence-roster-list">
+                  {crmVisibleProfileCards.map((card) => (
+                    <button
+                      className={selectedGraphNodeId === card.id ? "is-selected" : ""}
+                      key={card.id}
+                      onClick={() => setSelectedGraphNodeId(card.id)}
+                      type="button"
+                    >
+                      <span>{crmEntityLabel(card.entity_type)}</span>
+                      <strong title={card.title}>{card.title}</strong>
+                      <small>{crmCardReason(card)}</small>
+                    </button>
+                  ))}
+                  {crmVisibleProfileCards.length === 0 ? <p>没有匹配的客户对象。</p> : null}
+                </div>
+              </aside>
+              <main className="crm-intelligence-main">
+                <section className="crm-intelligence-map-card">
+                  <div className="crm-intelligence-section-title">
+                    <div>
+                      <strong>关系网</strong>
+                      <small>点击节点查看业务关系，默认只显示当前筛选下的关键对象。</small>
+                    </div>
+                    <span>{crmCanvasNodes.length} 节点 · {crmCanvasEdges.length} 关系</span>
+                  </div>
+                  <div className="crm-intelligence-map">
+                    {crmCanvasNodes.length > 0 ? (
+                      <svg viewBox="0 0 720 420" preserveAspectRatio="xMidYMid meet">
+                        <defs>
+                          <marker id="crm-intelligence-arrow" markerHeight="6" markerWidth="7" orient="auto" refX="6" refY="3">
+                            <path d="M0,0 L7,3 L0,6 Z" />
+                          </marker>
+                        </defs>
+                        {crmCanvasEdges.map((edge) => {
+                          const from = crmCanvasPositions.get(edge.from);
+                          const to = crmCanvasPositions.get(edge.to);
+                          if (!from || !to) return null;
+                          const isActive = Boolean(selectedGraphNode && (edge.from === selectedGraphNode.id || edge.to === selectedGraphNode.id));
+                          return (
+                            <g className={isActive ? "is-active" : ""} key={edge.id}>
+                              <line markerEnd="url(#crm-intelligence-arrow)" x1={from.x} x2={to.x} y1={from.y} y2={to.y} />
+                              <title>{`${nodeTitleById.get(edge.from) || edge.from} · ${crmRelationLabel(edge.relation_type)} · ${nodeTitleById.get(edge.to) || edge.to}`}</title>
+                            </g>
+                          );
+                        })}
+                        {crmCanvasNodes.map((node) => {
+                          const point = crmCanvasPositions.get(node.id);
+                          if (!point) return null;
+                          const isSelected = selectedGraphNodeId === node.id;
+                          const isNeighbor = selectedNeighborIds.has(node.id);
+                          return (
+                            <g
+                              className={`${isSelected ? "is-selected" : ""} ${isNeighbor ? "is-neighbor" : ""}`}
+                              key={node.id}
+                              onClick={() => setSelectedGraphNodeId(node.id)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  setSelectedGraphNodeId(node.id);
+                                }
+                              }}
+                              role="button"
+                              tabIndex={0}
+                              transform={`translate(${point.x} ${point.y})`}
+                            >
+                              <circle fill={graphEntityTypeColor(node.entity_type)} r={isSelected ? 25 : 20} />
+                              <text textAnchor="middle" y="4">{graphCanvasLabel(node.title)}</text>
+                              <title>{`${node.title} · ${crmEntityLabel(node.entity_type)}`}</title>
+                            </g>
+                          );
+                        })}
+                      </svg>
+                    ) : (
+                      <p>没有可展示的关系网。</p>
+                    )}
+                  </div>
+                </section>
+                <section className="crm-intelligence-timeline-card">
+                  <div className="crm-intelligence-section-title">
+                    <div>
+                      <strong>近期互动</strong>
+                      <small>事件可点击，右侧会显示对应详情和来源。</small>
+                    </div>
+                    <div className="crm-intelligence-timeline-tabs">
+                      {[
+                        { key: "all", label: "全部" },
+                        { key: "dated", label: "有日期" },
+                        { key: "selected", label: "当前对象" },
+                      ].map((item) => (
+                        <button
+                          aria-pressed={graphTimelineFilter === item.key}
+                          className={graphTimelineFilter === item.key ? "is-active" : ""}
+                          disabled={item.key === "selected" && !selectedGraphNode}
+                          key={item.key}
+                          onClick={() => setGraphTimelineFilter(item.key as typeof graphTimelineFilter)}
+                          type="button"
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="crm-intelligence-timeline">
+                    {crmRecentEvents.map((event) => (
+                      <button
+                        className={selectedGraphEventId === event.id ? "is-selected" : ""}
+                        key={event.id}
+                        onClick={() => {
+                          setSelectedGraphNodeId(event.entity_id);
+                          setSelectedGraphEventId(event.id);
+                        }}
+                        type="button"
+                      >
+                        <span>{event.date || "未标日期"}</span>
+                        <strong title={event.title}>{crmShortSource(event.title)}</strong>
+                        <small>{nodeTitleById.get(event.entity_id) || "客户对象"} · {crmShortSource(event.source_file)}</small>
+                      </button>
+                    ))}
+                    {crmRecentEvents.length === 0 ? <p>没有匹配的互动记录。</p> : null}
+                  </div>
+                </section>
+              </main>
+              <aside className="crm-intelligence-detail">
+                {selectedGraphNode ? (
+                  <>
+                    <div className="crm-intelligence-detail-head">
+                      <span>{crmEntityLabel(selectedGraphNode.entity_type)}</span>
+                      <strong title={selectedGraphNode.title}>{selectedGraphNode.title}</strong>
+                      <small>{crmShortSource(selectedGraphNode.source_file || selectedGraphNode.file)}</small>
+                    </div>
+                    <div className="crm-intelligence-actions">
+                      <button disabled={!selectedGraphNodeSourcePath} onClick={() => void openGraphSourcePreview(selectedGraphNodeSourcePath)} type="button">查看来源</button>
+                      {canShowEntityMergeReview ? (
+                        <button disabled={entityMergeLoading} onClick={() => void handleLoadEntityMergeCandidates()} type="button">检查待确认实体</button>
+                      ) : null}
+                    </div>
+                    <section>
+                      <h3>业务关系</h3>
+                      {crmSelectedRelations.map((edge) => {
+                        const otherNodeId = edge.from === selectedGraphNode.id ? edge.to : edge.from;
+                        return (
+                          <button key={edge.id} onClick={() => setSelectedGraphNodeId(otherNodeId)} type="button">
+                            <span>{crmRelationLabel(edge.relation_type)}</span>
+                            <strong title={nodeTitleById.get(otherNodeId) || otherNodeId}>{nodeTitleById.get(otherNodeId) || otherNodeId}</strong>
+                          </button>
+                        );
+                      })}
+                      {crmSelectedRelations.length === 0 ? <p>暂无已识别关系。</p> : null}
+                    </section>
+                    <section>
+                      <h3>相关互动</h3>
+                      {crmSelectedEvents.map((event) => (
+                        <button
+                          className={selectedGraphEventId === event.id ? "is-selected" : ""}
+                          key={event.id}
+                          onClick={() => setSelectedGraphEventId(event.id)}
+                          type="button"
+                        >
+                          <span>{event.date || "未标日期"}</span>
+                          <strong title={event.title}>{crmShortSource(event.title)}</strong>
+                        </button>
+                      ))}
+                      {crmSelectedEvents.length === 0 ? <p>暂无互动记录。</p> : null}
+                    </section>
+                    {selectedGraphEvent ? (
+                      <section className="crm-intelligence-event-focus">
+                        <h3>事件详情</h3>
+                        <strong title={selectedGraphEvent.title}>{crmShortSource(selectedGraphEvent.title)}</strong>
+                        <span>{selectedGraphEvent.date || "未标日期"}</span>
+                        <small>{crmShortSource(selectedGraphEvent.source_file)}</small>
+                        <button disabled={!selectedGraphEventSourcePath} onClick={() => void openGraphSourcePreview(selectedGraphEventSourcePath)} type="button">打开事件来源</button>
+                      </section>
+                    ) : null}
+                    {canShowEntityMergeReview ? (
+                      <details className="crm-intelligence-admin">
+                        <summary>管理员处理</summary>
+                        {entityMergeMessage ? <p>{entityMergeMessage}</p> : null}
+                        {visibleEntityCandidates.map((candidate) => (
+                          <div key={candidate.id}>
+                            <strong>{candidate.title}</strong>
+                            <span>{crmEntityLabel(candidate.entity_type)} · {Math.round((candidate.confidence ?? 0) * 100)}%</span>
+                            <button disabled={entityMergeLoading} onClick={() => void handlePreviewEntityMergeCandidate(candidate)} type="button">预览</button>
+                            <button disabled={entityMergeLoading} onClick={() => void handleApplyEntityMergeCandidate(candidate, "dismiss")} type="button">忽略</button>
+                          </div>
+                        ))}
+                        {visibleEntityCandidates.length === 0 ? <button disabled={entityMergeLoading} onClick={() => void handleLoadEntityMergeCandidates()} type="button">加载待确认实体</button> : null}
+                      </details>
+                    ) : null}
+                  </>
+                ) : (
+                  <p>请选择一个客户、联系人或项目。</p>
+                )}
+              </aside>
+            </div>
+          ) : null}
+        </section>
+      </div>
+    ) : null}
+    {knowledgeGraphOpen && !filePreview && !isCustomerWorkspace && !standaloneCustomerIntelligence ? (
       <aside className={`workspace-file-preview-sidecar is-knowledge ${previewResizing ? "is-resizing" : ""}`} aria-label={knowledgeGraphLabel}>
         <div
           aria-label="调整图谱面板宽度"
@@ -2679,7 +3090,7 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
                     return (
                       <g className={`workspace-knowledge-map-edge ${isActive ? "is-active" : ""}`} key={edge.id}>
                         <line markerEnd="url(#workspace-graph-large-arrow)" x1={from.x} x2={to.x} y1={from.y} y2={to.y} />
-                        <title>{`${nodeTitleById.get(edge.from) || edge.from} -> ${edge.relation_type} -> ${nodeTitleById.get(edge.to) || edge.to}`}</title>
+                        <title>{`${nodeTitleById.get(edge.from) || edge.from} -> ${isCustomerWorkspace ? crmRelationLabel(edge.relation_type) : edge.relation_type} -> ${nodeTitleById.get(edge.to) || edge.to}`}</title>
                       </g>
                     );
                   })}
@@ -2707,8 +3118,8 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
                       >
                         <circle r={isSelected ? radius + 4 : radius} />
                         <text textAnchor="middle" y="-2">{graphCanvasLargeLabel(node.title)}</text>
-                        <text className="workspace-knowledge-map-node-type" textAnchor="middle" y="13">{node.entity_type || "entity"}</text>
-                        <title>{`${node.title} · ${node.entity_type || "entity"} · ${degree} 条关系`}</title>
+                        <text className="workspace-knowledge-map-node-type" textAnchor="middle" y="13">{isCustomerWorkspace ? crmEntityLabel(node.entity_type) : node.entity_type || "entity"}</text>
+                        <title>{`${node.title} · ${isCustomerWorkspace ? crmEntityLabel(node.entity_type) : node.entity_type || "entity"} · ${degree} 条关系`}</title>
                       </g>
                     );
                   })}
@@ -2725,7 +3136,7 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
                   <section>
                     <small>当前节点</small>
                     <strong>{selectedGraphNode.title}</strong>
-                    <span>{[selectedGraphNode.entity_type, selectedGraphNode.source_file || selectedGraphNode.file].filter(Boolean).join(" · ") || "未标来源"}</span>
+                    <span>{[isCustomerWorkspace ? crmEntityLabel(selectedGraphNode.entity_type) : selectedGraphNode.entity_type, selectedGraphNode.source_file || selectedGraphNode.file].filter(Boolean).join(" · ") || "未标来源"}</span>
                     <button disabled={!selectedGraphNodeSourcePath} onClick={() => void openGraphSourcePreview(selectedGraphNodeSourcePath)} type="button">
                       <span>Source preview</span>
                       <strong>{selectedGraphNodeSourcePath || "无可预览来源"}</strong>
@@ -2737,7 +3148,7 @@ export function WorkspaceFilePanel({ apiOptions, workspaceId, workspaceName, wor
                       const otherNodeId = edge.from === selectedGraphNode.id ? edge.to : edge.from;
                       return (
                         <button key={edge.id} onClick={() => setSelectedGraphNodeId(otherNodeId)} type="button">
-                          <span>{edge.relation_type}</span>
+                          <span>{isCustomerWorkspace ? crmRelationLabel(edge.relation_type) : edge.relation_type}</span>
                           <strong>{nodeTitleById.get(otherNodeId) || otherNodeId}</strong>
                         </button>
                       );
