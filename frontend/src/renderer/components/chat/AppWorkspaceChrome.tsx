@@ -1,4 +1,4 @@
-import type { MouseEvent } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 
 import type { NotificationView } from "../../api/notifications";
 import { APP_NAME } from "../../constants/app";
@@ -14,6 +14,7 @@ import { renderMessageContent } from "./ChatMessageList";
 import {
   AgentIcon,
   BellIcon,
+  BrainIcon,
   ChatIcon,
   LogoutIcon,
   MoreIcon,
@@ -42,6 +43,7 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     auxiliaryPanelResizing,
     auxiliaryPanelWidth,
     availableUpdate,
+    clientVersion,
     companyPrompts,
     contextMenu,
     currentUser,
@@ -166,6 +168,14 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     commitRename,
   } = controller;
   const setMode = setActiveMode;
+  const [notificationScope, setNotificationScope] = useState<"all" | "workspace">("all");
+  const isCustomerWorkspace = activeWorkspace?.workspace_kind === "customer";
+
+  useEffect(() => {
+    if (!isCustomerWorkspace && (utilityPanel === "crm" || utilityPanel === "customer-intelligence")) {
+      setUtilityPanel(null);
+    }
+  }, [isCustomerWorkspace, setUtilityPanel, utilityPanel]);
 
   function renderUtilityResizeHandle(onMouseDown: (event: MouseEvent<HTMLDivElement>) => void, label: string) {
     return (
@@ -266,7 +276,92 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     );
   }
 
+  function renderCrmWorkbenchPanel() {
+    return (
+      <aside
+        className={`utility-side-pane auxiliary-side-pane crm-workbench-pane ${auxiliaryPanelResizing ? "is-resizing" : ""}`}
+        aria-label="CRM 工作台"
+        ref={auxiliaryPanelRef}
+        style={{ flexBasis: auxiliaryPanelWidth, maxWidth: auxiliaryPanelMaxWidth(), width: auxiliaryPanelWidth }}
+      >
+        {renderUtilityResizeHandle(handleAuxiliaryPanelResizeStart, "调整 CRM 面板宽度")}
+        <header className="utility-side-header">
+          <div>
+            <h2>CRM</h2>
+            <p>客户情报入口</p>
+          </div>
+          <button className="prompt-panel-close" onClick={() => setUtilityPanel(null)} type="button">×</button>
+        </header>
+        <div className="crm-workbench-body">
+          <section className="crm-workbench-hero">
+            <span className="crm-workbench-icon"><BrainIcon /></span>
+            <div>
+              <h3>CRM 总览</h3>
+              <p>CRM 是客户情报大区。先在这里进入总览，再通过搜索或选择具体客户、联系人、公司与项目查看画像详情。</p>
+            </div>
+          </section>
+          <div className="crm-workbench-flow" aria-label="CRM 使用路径">
+            <span><strong>1</strong><small>进入客户情报</small></span>
+            <span><strong>2</strong><small>搜索或选择对象</small></span>
+            <span><strong>3</strong><small>查看画像、关系和互动</small></span>
+          </div>
+          <div className="crm-workbench-actions">
+            <button
+              className="business-tool-button"
+              disabled={!activeWorkspace || activeWorkspace.workspace_kind !== "customer"}
+              onClick={() => setUtilityPanel("customer-intelligence")}
+              type="button"
+            >
+              <BrainIcon />
+              <span>客户情报</span>
+            </button>
+            <button
+              className="business-tool-button"
+              disabled={!activeWorkspace || activeWorkspace.workspace_kind !== "customer"}
+              onClick={() => setUtilityPanel("workspace")}
+              type="button"
+            >
+              <WorkspaceIcon />
+              <span>CRM 文件管理</span>
+            </button>
+          </div>
+          <div className="crm-workbench-sections">
+            <section>
+              <span><SearchIcon /></span>
+              <div>
+                <strong>客户检索</strong>
+                <p>在客户情报中搜索客户、联系人、公司、项目或近期事件。</p>
+              </div>
+            </section>
+            <section>
+              <span><BrainIcon /></span>
+              <div>
+                <strong>画像详情</strong>
+                <p>选中具体对象后查看业务摘要、关系网、时间线和来源证据。</p>
+              </div>
+            </section>
+            <section>
+              <span><WorkspaceIcon /></span>
+              <div>
+                <strong>资料文件</strong>
+                <p>上传、录入、回收站和文件治理仍在 CRM 文件管理中处理。</p>
+              </div>
+            </section>
+          </div>
+          <p className="crm-workbench-note">
+            {activeWorkspace?.workspace_kind === "customer"
+              ? "当前处于 CRM 工作区。客户情报负责画像、关系和互动；CRM 文件管理只负责源文件和录入治理。"
+              : "切换到 CRM 工作区后，可使用客户情报能力。"}
+          </p>
+        </div>
+      </aside>
+    );
+  }
+
   function renderUtilityPanel() {
+    if (utilityPanel === "crm") {
+      return renderCrmWorkbenchPanel();
+    }
     if (utilityPanel === "workspace") {
       if (!activeWorkspace || activeWorkspace.workspace_kind === "user") {
         return null;
@@ -274,14 +369,14 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
       return (
         <aside
           className={`utility-side-pane workspace-files-side-pane ${workspacePanelResizing ? "is-resizing" : ""}`}
-          aria-label={activeWorkspace.workspace_kind === "customer" ? "客户资料常驻面板" : "项目文件常驻面板"}
+          aria-label={activeWorkspace.workspace_kind === "customer" ? "CRM 文件管理面板" : "项目文件常驻面板"}
           ref={workspacePanelRef}
           style={{ flexBasis: workspacePanelWidth, maxWidth: workspacePanelMaxWidth(), width: workspacePanelWidth }}
         >
-          {renderUtilityResizeHandle(handleWorkspacePanelResizeStart, activeWorkspace.workspace_kind === "customer" ? "调整客户资料面板宽度" : "调整项目文件面板宽度")}
+          {renderUtilityResizeHandle(handleWorkspacePanelResizeStart, activeWorkspace.workspace_kind === "customer" ? "调整 CRM 文件管理面板宽度" : "调整项目文件面板宽度")}
           <header className="utility-side-header">
             <div>
-              <h2>{activeWorkspace.workspace_kind === "customer" ? "客户资料" : "项目文件"}</h2>
+              <h2>{activeWorkspace.workspace_kind === "customer" ? "CRM 文件管理" : "项目文件"}</h2>
               <p>当前工作区常驻视图</p>
             </div>
             <button className="prompt-panel-close" onClick={() => setUtilityPanel(null)} type="button">×</button>
@@ -352,13 +447,21 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
       { id: "unread", label: "未读", badge: unreadNotificationCount },
       { id: "pending", label: "待处理", badge: pendingNotificationCount },
     ];
+    const visibleNotifications = notificationScope === "workspace" && activeWorkspaceId
+      ? (notifications as any[]).filter((notification: any) => {
+          const payload = notification.action_payload ?? {};
+          return Number(payload.workspace_id) === Number(activeWorkspaceId);
+        })
+      : notifications;
+    const visibleUnreadCount = visibleNotifications.filter((notification: any) => !notification.is_read).length;
+    const visiblePendingCount = visibleNotifications.filter((notification: any) => notification.action_status === "pending").length;
 
     return (
       <div className="notification-popover" ref={notificationPanelRef} role="dialog" aria-label="通知中心">
         <header className="notification-popover-header">
           <div>
             <h2>通知中心</h2>
-            <p>{unreadNotificationCount > 0 ? `${unreadNotificationCount} 条未读` : "暂无未读通知"}</p>
+            <p>{notificationScope === "workspace" && activeWorkspace ? activeWorkspace.name : "全部工作区与系统通知"}</p>
           </div>
           <button
             className="notification-mark-read"
@@ -369,6 +472,21 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
             全部已读
           </button>
         </header>
+
+        <div className="notification-summary" aria-label="通知概览">
+          <span>
+            <strong>{visibleUnreadCount}</strong>
+            <small>当前未读</small>
+          </span>
+          <span>
+            <strong>{visiblePendingCount}</strong>
+            <small>待处理</small>
+          </span>
+          <span>
+            <strong>{visibleNotifications.length}</strong>
+            <small>当前列表</small>
+          </span>
+        </div>
 
         <div className="notification-tabs" role="tablist" aria-label="通知分类">
           {tabs.map((tab) => (
@@ -386,6 +504,24 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
           ))}
         </div>
 
+        <div className="notification-scope-tabs" aria-label="通知范围">
+          <button
+            className={notificationScope === "all" ? "is-active" : ""}
+            onClick={() => setNotificationScope("all")}
+            type="button"
+          >
+            全部通知
+          </button>
+          <button
+            className={notificationScope === "workspace" ? "is-active" : ""}
+            disabled={!activeWorkspaceId}
+            onClick={() => setNotificationScope("workspace")}
+            type="button"
+          >
+            当前工作区
+          </button>
+        </div>
+
         {availableUpdate ? (
           <button
             className="notification-update-entry"
@@ -398,7 +534,7 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
           >
             <span>
               <strong>新版本可用</strong>
-              <small>Project_R v{availableUpdate.version}</small>
+              <small>Project_R v{availableUpdate.version} · {updateStep === "ready" ? "已下载完成" : "点击查看发布说明"}</small>
             </span>
             <span>{updateStep === "ready" ? "已就绪" : "查看"}</span>
           </button>
@@ -406,9 +542,9 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
 
         <div className="notification-list">
           {notificationsLoading ? <div className="notification-empty">正在读取通知...</div> : null}
-          {!notificationsLoading && notifications.length === 0 ? <div className="notification-empty">暂无通知</div> : null}
+          {!notificationsLoading && visibleNotifications.length === 0 ? <div className="notification-empty">暂无通知</div> : null}
           {!notificationsLoading
-            ? (notifications as any[]).map((notification: any) => {
+            ? (visibleNotifications as any[]).map((notification: any) => {
                 const isPending = notification.action_status === "pending";
                 const canDismiss = isPending && notification.severity !== "critical";
                 return (
@@ -429,10 +565,12 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
                       tabIndex={0}
                     >
                       <div className="notification-item-meta">
-                        <span className={`notification-category is-${notification.category}`}>
-                          {notificationCategoryLabel(notification.category)}
-                        </span>
-                        {isPending ? <span className="notification-status">待处理</span> : null}
+                        <div>
+                          <span className={`notification-category is-${notification.category}`}>
+                            {notificationCategoryLabel(notification.category)}
+                          </span>
+                          {isPending ? <span className="notification-status">待处理</span> : null}
+                        </div>
                         <time>{formatNotificationTime(notification.created_at)}</time>
                       </div>
                       <h3>{notification.title}</h3>
@@ -515,9 +653,15 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
           </header>
 
           {updateStep === "available" || updateStep === "ready" ? (
-            <div className="update-release-notes">
-              {renderMessageContent(availableUpdate.release_notes || "本次更新未填写更新日志。")}
-            </div>
+            <>
+              <div className="update-version-meta">
+                <span>本机版本 v{clientVersion || "未知"}</span>
+                <span>发布版本 v{availableUpdate.version}</span>
+              </div>
+              <div className="update-release-notes">
+                {renderMessageContent(availableUpdate.release_notes || "本次更新未填写更新日志。")}
+              </div>
+            </>
           ) : null}
 
           {updateStep === "downloading" || updateStep === "installing" ? (
@@ -678,7 +822,36 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
             <span className="sidebar-user-name">{currentUser?.nickname ?? "未登录"}</span>
             <span className="sidebar-user-role">{currentUser?.role === "admin" ? "管理员" : "员工"}</span>
           </div>
-          <div className="sidebar-user-actions">
+        </div>
+        <div
+          aria-orientation="vertical"
+          className="sidebar-resize-handle"
+          onMouseDown={handleSidebarResizeStart}
+          role="separator"
+        />
+      </aside>
+
+      {notificationPanelOpen ? renderNotificationPanel() : null}
+
+      <section className="chat-main">
+        <header className="workbench-topbar">
+          <div className="workbench-context">
+            <span className="workbench-context-label">当前工作区</span>
+            <strong>{activeWorkspace?.name ?? "未选择工作区"}</strong>
+          </div>
+          <nav className="workbench-business-nav" aria-label="业务导航">
+            {isCustomerWorkspace ? (
+              <button
+                className={`business-tool-button ${utilityPanel === "crm" || utilityPanel === "customer-intelligence" ? "is-active" : ""}`}
+                onClick={() => setUtilityPanel((value: string | null) => value === "crm" ? null : "crm")}
+                type="button"
+              >
+                <BrainIcon />
+                <span>CRM</span>
+              </button>
+            ) : null}
+          </nav>
+          <div className="workbench-system-tools" aria-label="系统工具">
             <button
               aria-expanded={notificationPanelOpen}
               className={`icon-button notification-button ${unreadNotificationCount > 0 ? "has-unread" : ""}`}
@@ -695,20 +868,7 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
             <button className="icon-button" onClick={() => { setSettingsInitialAdminTab(null); setShowSettings(true); }} title="设置" type="button"><SettingsIcon /></button>
             <button className="icon-button" onClick={handleLogout} title="登出" type="button"><LogoutIcon /></button>
           </div>
-        </div>
-        <div
-          aria-label="调整功能栏宽度"
-          aria-orientation="vertical"
-          className="sidebar-resize-handle"
-          onMouseDown={handleSidebarResizeStart}
-          role="separator"
-          title="拖动调整功能栏宽度"
-        />
-      </aside>
-
-      {notificationPanelOpen ? renderNotificationPanel() : null}
-
-      <section className="chat-main">
+        </header>
         <TabBar
           tabs={tabs}
           activeTabId={activeTabId}

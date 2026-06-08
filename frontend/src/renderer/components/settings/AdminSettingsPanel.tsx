@@ -696,7 +696,7 @@ export function AdminSettingsPanel({ controller }: AdminSettingsPanelProps) {
                 ) : null}
 
                 {adminTab === "gbrain" ? (
-                  <div className="settings-section">
+                  <div className="settings-section admin-gbrain-panel">
                     <div className="settings-section-header">
                       <div>
                         <h3>GBrain 维护</h3>
@@ -765,7 +765,7 @@ export function AdminSettingsPanel({ controller }: AdminSettingsPanelProps) {
                             </div>
                           </div>
 
-                          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+                          <div className="admin-gbrain-actions">
                             <button className="ghost-button" disabled={adminLoading} onClick={() => void handleRefreshGBrainMaintenance()} type="button">
                               刷新状态
                             </button>
@@ -786,8 +786,8 @@ export function AdminSettingsPanel({ controller }: AdminSettingsPanelProps) {
                             </button>
                           </div>
 
-                          <div className="admin-maintenance-form" style={{ gridTemplateColumns: "92px 92px 92px minmax(120px, 1fr) minmax(150px, 1.2fr) auto auto auto auto auto" }}>
-                            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "hsl(var(--muted-foreground))" }}>
+                          <div className="admin-maintenance-form admin-maintenance-form-dream">
+                            <label className="admin-maintenance-toggle">
                               <input
                                 checked={gbrainDreamDraft.enabled}
                                 onChange={(event) => setGBrainDreamDraft((prev) => ({ ...prev, enabled: event.target.checked }))}
@@ -863,8 +863,8 @@ export function AdminSettingsPanel({ controller }: AdminSettingsPanelProps) {
                             </p>
                           </div>
 
-                          <div className="admin-maintenance-form" style={{ gridTemplateColumns: "92px 92px minmax(120px, 1fr) 76px 88px 96px 96px auto auto auto" }}>
-                            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "hsl(var(--muted-foreground))" }}>
+                          <div className="admin-maintenance-form admin-maintenance-form-contradiction">
+                            <label className="admin-maintenance-toggle">
                               <input
                                 checked={gbrainContradictionDraft.enabled}
                                 onChange={(event) => setGBrainContradictionDraft((prev) => ({ ...prev, enabled: event.target.checked }))}
@@ -935,7 +935,7 @@ export function AdminSettingsPanel({ controller }: AdminSettingsPanelProps) {
                             </div>
                           </div>
 
-                          <div className="admin-maintenance-form" style={{ gridTemplateColumns: "minmax(150px, 1fr) minmax(150px, 1fr) minmax(120px, 0.8fr) auto auto" }}>
+                          <div className="admin-maintenance-form admin-maintenance-form-graph">
                             <input
                               placeholder="source id"
                               value={gbrainGraphDraft.sourceId}
@@ -1133,7 +1133,7 @@ export function AdminSettingsPanel({ controller }: AdminSettingsPanelProps) {
                             </>
                           ) : null}
 
-                          <div className="admin-maintenance-form">
+                          <div className="admin-maintenance-form admin-maintenance-form-citation">
                             <input
                               placeholder="页面 slug"
                               value={citationFixerDraft.pageSlug}

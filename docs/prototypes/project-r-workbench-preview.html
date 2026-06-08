@@ -1,0 +1,1905 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project_R 工作台 UI 重设计原型</title>
+<style>
+/* ================================================================
+   Project_R Workbench UI Redesign Prototype
+   两个风格变体 x 浅色/深色双主题
+   ================================================================ */
+
+/* ---------- 基础变量体系 ---------- */
+:root {
+  --font-sans: "Segoe UI", "Microsoft YaHei UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", Consolas, monospace;
+
+  /* 变体 A 默认（浅色） */
+  --bg-app: #f3f4f6;
+  --bg-surface: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-inset: #f9fafb;
+  --bg-hover: #f3f4f6;
+  --bg-active: #ecfdf5;
+  --border-color: #e5e7eb;
+  --border-strong: #d1d5db;
+  --text-primary: #111827;
+  --text-secondary: #4b5563;
+  --text-tertiary: #9ca3af;
+  --accent: #10b981;
+  --accent-soft: #d1fae5;
+  --accent-text: #065f46;
+  --danger: #ef4444;
+  --warning: #f59e0b;
+  --info: #3b82f6;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.06);
+  --shadow-lg: 0 12px 32px rgba(0,0,0,0.10);
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --topbar-h: 44px;
+  --sidebar-w: 260px;
+  --rightpane-w: 320px;
+  --transition: 0.2s ease;
+}
+
+/* 深色主题 */
+[data-theme="dark"] {
+  --bg-app: #0f1115;
+  --bg-surface: #181a20;
+  --bg-elevated: #1f232c;
+  --bg-inset: #13151a;
+  --bg-hover: #22262e;
+  --bg-active: #132a1f;
+  --border-color: #2a2f3a;
+  --border-strong: #3a4050;
+  --text-primary: #f3f4f6;
+  --text-secondary: #9ca3af;
+  --text-tertiary: #6b7280;
+  --accent: #34d399;
+  --accent-soft: #1a3a2a;
+  --accent-text: #6ee7b7;
+  --danger: #f87171;
+  --warning: #fbbf24;
+  --info: #60a5fa;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.25);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.35);
+  --shadow-lg: 0 12px 32px rgba(0,0,0,0.45);
+}
+
+/* 变体 B 覆盖（浅色） */
+[data-variant="b"] {
+  --bg-app: #eef0f3;
+  --bg-surface: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-inset: #f5f6f8;
+  --bg-hover: #eef0f3;
+  --bg-active: #e0e7ff;
+  --border-color: #d1d5db;
+  --border-strong: #9ca3af;
+  --text-primary: #1f2937;
+  --text-secondary: #4b5563;
+  --text-tertiary: #9ca3af;
+  --accent: #4f46e5;
+  --accent-soft: #e0e7ff;
+  --accent-text: #3730a3;
+}
+
+[data-variant="b"][data-theme="dark"] {
+  --bg-app: #0b0d12;
+  --bg-surface: #151821;
+  --bg-elevated: #1c1f2a;
+  --bg-inset: #11131a;
+  --bg-hover: #22263a;
+  --bg-active: #1e1b4b;
+  --border-color: #2d3142;
+  --border-strong: #3f4558;
+  --text-primary: #e5e7eb;
+  --text-secondary: #9ca3af;
+  --text-tertiary: #6b7280;
+  --accent: #818cf8;
+  --accent-soft: #312e81;
+  --accent-text: #a5b4fc;
+}
+
+/* ---------- Reset & Base ---------- */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--bg-app);
+  transition: background var(--transition), color var(--transition);
+  overflow: hidden;
+}
+button { font: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+input, textarea { font: inherit; color: inherit; }
+ul, ol { margin: 0; padding: 0; list-style: none; }
+
+/* ---------- Layout Shell ---------- */
+.app-shell {
+  display: grid;
+  grid-template-rows: var(--topbar-h) 1fr;
+  grid-template-columns: var(--sidebar-w) 1fr;
+  grid-template-areas:
+    "topbar topbar"
+    "sidebar main";
+  height: 100vh;
+  width: 100vw;
+  gap: 0;
+}
+
+/* ---------- Top Bar ---------- */
+.topbar {
+  grid-area: topbar;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-color);
+  z-index: 50;
+}
+.topbar-left, .topbar-center, .topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.3px;
+}
+.brand-mark {
+  width: 26px; height: 26px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: #fff;
+  display: grid; place-items: center;
+  font-size: 14px; font-weight: 800;
+}
+.topbar-search {
+  position: relative;
+}
+.topbar-search input {
+  width: 280px;
+  height: 30px;
+  padding: 0 12px 0 30px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+  font-size: 12px;
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.topbar-search input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.topbar-search svg {
+  position: absolute;
+  left: 9px; top: 50%;
+  transform: translateY(-50%);
+  width: 14px; height: 14px;
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+/* ---------- Sidebar ---------- */
+.sidebar {
+  grid-area: sidebar;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-color);
+  overflow: hidden;
+}
+.sidebar-header {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+.workspace-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-inset);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.workspace-select:hover { background: var(--bg-hover); }
+.workspace-select svg { width: 16px; height: 16px; color: var(--text-tertiary); }
+.mode-switch {
+  display: flex;
+  gap: 2px;
+  margin-top: 10px;
+  padding: 3px;
+  background: var(--bg-inset);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+}
+.mode-btn {
+  flex: 1;
+  height: 28px;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  border-radius: var(--radius-sm);
+  font-size: 12px; font-weight: 600;
+  color: var(--text-secondary);
+  transition: all var(--transition);
+}
+.mode-btn.is-active {
+  background: var(--bg-active);
+  color: var(--accent-text);
+  box-shadow: var(--shadow-sm);
+}
+.new-chat-btn {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%;
+  height: 32px;
+  margin-top: 10px;
+  border-radius: var(--radius-md);
+  background: var(--text-primary);
+  color: var(--bg-surface);
+  font-size: 12px; font-weight: 600;
+  transition: opacity var(--transition);
+}
+.new-chat-btn:hover { opacity: 0.85; }
+
+.sidebar-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 10px;
+}
+.sidebar-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-tertiary);
+  padding: 10px 6px 6px;
+}
+.session-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  transition: background var(--transition);
+  position: relative;
+}
+.session-item:hover { background: var(--bg-hover); }
+.session-item.is-active {
+  background: var(--bg-active);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.session-item svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--text-tertiary); }
+.session-item.is-active svg { color: var(--accent); }
+.session-title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.session-time { font-size: 11px; color: var(--text-tertiary); flex-shrink: 0; }
+.session-pin { font-size: 10px; color: var(--accent); margin-right: 3px; }
+
+.sidebar-footer {
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.user-avatar {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  display: grid; place-items: center;
+  font-size: 11px; font-weight: 700;
+  flex-shrink: 0;
+}
+.user-info { flex: 1; min-width: 0; }
+.user-name { font-size: 12px; font-weight: 600; display: block; }
+.user-role { font-size: 11px; color: var(--text-tertiary); }
+.icon-btn {
+  width: 28px; height: 28px;
+  border-radius: var(--radius-sm);
+  display: grid; place-items: center;
+  color: var(--text-secondary);
+  transition: background var(--transition), color var(--transition);
+  position: relative;
+}
+.icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.icon-btn svg { width: 16px; height: 16px; }
+.icon-btn .badge {
+  position: absolute;
+  top: -2px; right: -2px;
+  min-width: 14px; height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 9px; font-weight: 700;
+  display: grid; place-items: center;
+}
+
+/* ---------- Main Area ---------- */
+.main-area {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Tab bar */
+.tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 12px 0;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-color);
+  overflow-x: auto;
+}
+.tab-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  transition: all var(--transition);
+}
+.tab-item:hover { background: var(--bg-hover); }
+.tab-item.is-active {
+  color: var(--accent-text);
+  background: var(--bg-active);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+.tab-item svg { width: 13px; height: 13px; }
+.tab-add { padding: 6px 8px; color: var(--text-tertiary); }
+.tab-add:hover { color: var(--text-primary); background: var(--bg-hover); border-radius: var(--radius-sm); }
+
+/* Workbench */
+.workbench {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  overflow: hidden;
+}
+.chat-col {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-surface);
+}
+.chat-title { display: flex; align-items: center; gap: 10px; }
+.chat-title h1 { font-size: 14px; font-weight: 700; margin: 0; }
+.workspace-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+.chat-actions { display: flex; gap: 6px; }
+.chat-actions button {
+  height: 28px; padding: 0 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  font-size: 12px; font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  transition: all var(--transition);
+}
+.chat-actions button:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* Message list */
+.message-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.message-bubble {
+  max-width: 85%;
+  padding: 12px 14px;
+  border-radius: var(--radius-lg);
+  font-size: 13.5px;
+  line-height: 1.6;
+  animation: fadeIn 0.25s ease;
+}
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+.message-bubble.user {
+  align-self: flex-end;
+  background: var(--bg-active);
+  color: var(--accent-text);
+  border: 1px solid var(--accent-soft);
+}
+.message-bubble.assistant {
+  align-self: flex-start;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+}
+.message-meta { font-size: 11px; color: var(--text-tertiary); margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+.message-meta svg { width: 12px; height: 12px; }
+.msg-source-pill {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--bg-inset);
+  color: var(--info);
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  margin-right: 4px;
+}
+.msg-source-pill:hover { background: var(--bg-hover); }
+
+/* Composer */
+.composer {
+  padding: 10px 16px 14px;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-color);
+}
+.composer-input-wrap {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--bg-inset);
+  padding: 10px 12px;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.composer-input-wrap:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.composer textarea {
+  width: 100%;
+  min-height: 40px;
+  max-height: 160px;
+  background: transparent;
+  border: none;
+  resize: none;
+  outline: none;
+  font-size: 13.5px;
+  line-height: 1.5;
+  padding: 0;
+}
+.composer-attachment-row {
+  display: flex; gap: 8px;
+  margin-bottom: 8px;
+  overflow-x: auto;
+}
+.attachment-chip {
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-active);
+  color: var(--accent-text);
+  border: 1px solid var(--accent-soft);
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.attachment-chip svg { width: 12px; height: 12px; }
+.attachment-chip .close { color: var(--text-tertiary); cursor: pointer; }
+.attachment-chip .close:hover { color: var(--danger); }
+.composer-toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 8px;
+}
+.composer-tools { display: flex; gap: 6px; }
+.composer-tool {
+  height: 28px; padding: 0 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  display: flex; align-items: center; gap: 5px;
+  transition: all var(--transition);
+}
+.composer-tool:hover { background: var(--bg-hover); }
+.composer-tool.is-active {
+  background: var(--bg-active);
+  color: var(--accent-text);
+  border-color: var(--accent-soft);
+}
+.composer-tool svg { width: 13px; height: 13px; }
+.composer-send {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: var(--text-primary);
+  color: var(--bg-surface);
+  display: grid; place-items: center;
+  transition: opacity var(--transition);
+}
+.composer-send:hover { opacity: 0.85; }
+.composer-send svg { width: 15px; height: 15px; }
+
+/* ---------- Right Panel ---------- */
+.right-panel {
+  width: var(--rightpane-w);
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.right-panel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-surface);
+}
+.right-panel-header h2 { font-size: 13px; font-weight: 700; margin: 0; }
+.right-panel-header p { font-size: 11px; color: var(--text-tertiary); margin: 2px 0 0; }
+.right-panel-header .close-btn {
+  width: 24px; height: 24px;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  display: grid; place-items: center;
+}
+.right-panel-header .close-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.right-panel-body { flex: 1; overflow-y: auto; padding: 10px 14px; }
+
+/* File list in right panel */
+.file-list-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.file-list-item:hover { background: var(--bg-hover); }
+.file-list-item svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--text-tertiary); }
+.file-list-item .file-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-list-item .file-meta { font-size: 10px; color: var(--text-tertiary); flex-shrink: 0; }
+.ingest-status {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.ingest-status.synced { background: var(--accent); }
+.ingest-status.pending { background: var(--warning); }
+.ingest-status.failed { background: var(--danger); }
+
+/* ---------- Notification Center (NEW DESIGN) ---------- */
+.notification-center {
+  position: absolute;
+  top: calc(var(--topbar-h) + 6px);
+  right: 16px;
+  width: 400px;
+  max-height: 70vh;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: notifSlide 0.2s ease;
+}
+@keyframes notifSlide {
+  from { opacity: 0; transform: translateY(-8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.notification-center-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+.notification-center-header h2 { font-size: 14px; font-weight: 700; margin: 0; }
+.notification-center-header p { font-size: 11px; color: var(--text-tertiary); margin: 3px 0 0; }
+.notification-center-header .actions { display: flex; gap: 6px; }
+.notification-center-header .actions button {
+  font-size: 11px; font-weight: 600;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  transition: all var(--transition);
+}
+.notification-center-header .actions button:hover { background: var(--bg-hover); }
+
+.notification-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.notification-tab {
+  flex: 1;
+  padding: 7px 0;
+  text-align: center;
+  font-size: 12px; font-weight: 600;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  border-bottom: 2px solid transparent;
+  transition: all var(--transition);
+  position: relative;
+}
+.notification-tab:hover { background: var(--bg-hover); }
+.notification-tab.is-active {
+  color: var(--accent-text);
+  background: var(--bg-active);
+  border-bottom-color: var(--accent);
+}
+.notification-tab .tab-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px; font-weight: 700;
+  margin-left: 4px;
+}
+
+.notification-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+}
+.notification-item {
+  padding: 12px;
+  border-radius: var(--radius-md);
+  margin-bottom: 4px;
+  cursor: pointer;
+  transition: background var(--transition);
+  border-left: 3px solid transparent;
+}
+.notification-item:hover { background: var(--bg-hover); }
+.notification-item.is-unread {
+  background: var(--bg-inset);
+  border-left-color: var(--accent);
+}
+.notification-item.is-unread:hover { background: var(--bg-hover); }
+.notification-item.is-critical { border-left-color: var(--danger); }
+.notification-item.is-warning { border-left-color: var(--warning); }
+.notification-item.is-info { border-left-color: var(--info); }
+
+.notification-item-meta {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 6px;
+}
+.notification-category {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.notification-category.is-system { background: var(--bg-hover); color: var(--text-secondary); }
+.notification-category.is-knowledge { background: var(--accent-soft); color: var(--accent-text); }
+.notification-category.is-agent { background: #dbeafe; color: #1e40af; }
+[data-theme="dark"] .notification-category.is-agent { background: #1e3a5f; color: #93c5fd; }
+.notification-category.is-audit { background: #fef3c7; color: #92400e; }
+[data-theme="dark"] .notification-category.is-audit { background: #3f3820; color: #fbbf24; }
+.notification-severity {
+  font-size: 10px; font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.notification-severity.is-pending { background: var(--warning); color: #fff; }
+.notification-severity.is-resolved { background: var(--accent-soft); color: var(--accent-text); }
+.notification-time { font-size: 11px; color: var(--text-tertiary); margin-left: auto; }
+.notification-item h4 { font-size: 13px; font-weight: 600; margin: 0 0 4px; }
+.notification-item p { font-size: 12px; color: var(--text-secondary); margin: 0; line-height: 1.5; }
+.notification-item-actions {
+  display: flex; gap: 6px;
+  margin-top: 10px;
+}
+.notification-item-actions button {
+  font-size: 11px; font-weight: 600;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  transition: all var(--transition);
+}
+.notification-item-actions button.primary {
+  background: var(--text-primary);
+  color: var(--bg-surface);
+  border-color: var(--text-primary);
+}
+.notification-item-actions button:hover { opacity: 0.85; }
+
+/* ---------- Customer Intelligence Panel (NEW DESIGN) ---------- */
+.ci-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.ci-toolbar {
+  display: flex; gap: 2px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-surface);
+}
+.ci-tab {
+  flex: 1;
+  padding: 6px 0;
+  text-align: center;
+  font-size: 12px; font-weight: 600;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+.ci-tab:hover { background: var(--bg-hover); }
+.ci-tab.is-active {
+  background: var(--bg-active);
+  color: var(--accent-text);
+}
+.ci-body { flex: 1; overflow-y: auto; padding: 12px; }
+.ci-summary {
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-color);
+  margin-bottom: 14px;
+}
+.ci-summary h3 { font-size: 13px; font-weight: 700; margin: 0 0 8px; display: flex; align-items: center; gap: 6px; }
+.ci-summary h3 svg { width: 14px; height: 14px; color: var(--accent); }
+.ci-summary p { font-size: 12px; color: var(--text-secondary); margin: 0; line-height: 1.6; }
+.ci-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.ci-stat {
+  padding: 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  text-align: center;
+}
+.ci-stat .value { font-size: 18px; font-weight: 800; color: var(--accent); }
+.ci-stat .label { font-size: 11px; color: var(--text-tertiary); margin-top: 2px; }
+
+.ci-section-title {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+  color: var(--text-tertiary);
+  margin: 14px 0 8px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.ci-entity-list { display: flex; flex-direction: column; gap: 6px; }
+.ci-entity-card {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.ci-entity-card:hover { border-color: var(--accent); box-shadow: var(--shadow-sm); }
+.ci-entity-avatar {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  display: grid; place-items: center;
+  font-size: 12px; font-weight: 700;
+  flex-shrink: 0;
+}
+.ci-entity-info { flex: 1; min-width: 0; }
+.ci-entity-info .name { font-size: 12.5px; font-weight: 600; display: block; }
+.ci-entity-info .meta { font-size: 11px; color: var(--text-tertiary); }
+.ci-entity-tags { display: flex; gap: 4px; flex-shrink: 0; }
+.ci-tag {
+  font-size: 10px; font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+.ci-tag.is-hot { background: #fef3c7; color: #92400e; border-color: #f59e0b; }
+[data-theme="dark"] .ci-tag.is-hot { background: #3f3820; color: #fbbf24; border-color: #78350f; }
+
+.ci-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  position: relative;
+  padding-left: 16px;
+}
+.ci-timeline::before {
+  content: "";
+  position: absolute;
+  left: 5px; top: 6px; bottom: 6px;
+  width: 2px;
+  background: var(--border-color);
+  border-radius: 1px;
+}
+.ci-timeline-item {
+  position: relative;
+  padding: 8px 0 8px 14px;
+  cursor: pointer;
+  transition: background var(--transition);
+  border-radius: var(--radius-sm);
+}
+.ci-timeline-item:hover { background: var(--bg-hover); }
+.ci-timeline-item::before {
+  content: "";
+  position: absolute;
+  left: -11.5px; top: 13px;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-surface);
+}
+.ci-timeline-item .time { font-size: 10px; color: var(--text-tertiary); }
+.ci-timeline-item .title { font-size: 12px; font-weight: 600; margin: 2px 0; }
+.ci-timeline-item .desc { font-size: 11.5px; color: var(--text-secondary); }
+
+/* Admin-only section in CI */
+.ci-admin-bar {
+  margin-top: 14px;
+  padding: 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+  border: 1px dashed var(--border-strong);
+}
+.ci-admin-bar .label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+  color: var(--text-tertiary);
+  margin-bottom: 8px;
+  display: flex; align-items: center; gap: 4px;
+}
+.ci-admin-bar .label svg { width: 12px; height: 12px; }
+.ci-admin-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.ci-admin-actions button {
+  font-size: 11px; font-weight: 600;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  transition: all var(--transition);
+}
+.ci-admin-actions button:hover { background: var(--bg-hover); color: var(--text-primary); }
+.ci-admin-actions button.is-danger { color: var(--danger); border-color: var(--danger); }
+.ci-admin-actions button.is-danger:hover { background: rgba(239,68,68,0.08); }
+
+/* ---------- GBrain Admin Panel Preview ---------- */
+.gbrain-card {
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  margin-bottom: 10px;
+}
+.gbrain-card h4 { font-size: 12.5px; font-weight: 700; margin: 0 0 8px; display: flex; align-items: center; gap: 6px; }
+.gbrain-card h4 .status-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.gbrain-card h4 .status-dot.is-warn { background: var(--warning); }
+.gbrain-card p { font-size: 11.5px; color: var(--text-secondary); margin: 0 0 8px; }
+.gbrain-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.gbrain-metric { font-size: 11px; color: var(--text-secondary); display: flex; justify-content: space-between; }
+.gbrain-metric span:last-child { font-weight: 600; color: var(--text-primary); }
+
+/* ---------- Settings / Admin Modal Preview ---------- */
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.35);
+  z-index: 200;
+  display: grid; place-items: center;
+  animation: fadeIn 0.2s ease;
+}
+.modal {
+  width: 720px;
+  max-width: 92vw;
+  max-height: 86vh;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: modalPop 0.2s ease;
+}
+@keyframes modalPop { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: scale(1); } }
+.modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-color);
+}
+.modal-header h2 { font-size: 15px; font-weight: 700; margin: 0; }
+.modal-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+.modal-sidebar {
+  width: 170px;
+  border-right: 1px solid var(--border-color);
+  padding: 8px;
+  overflow-y: auto;
+}
+.modal-sidebar-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.modal-sidebar-item:hover { background: var(--bg-hover); }
+.modal-sidebar-item.is-active {
+  background: var(--bg-active);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.modal-sidebar-item svg { width: 14px; height: 14px; }
+.modal-content {
+  flex: 1;
+  padding: 18px 20px;
+  overflow-y: auto;
+}
+.modal-content h3 { font-size: 14px; font-weight: 700; margin: 0 0 14px; }
+.modal-content section { margin-bottom: 20px; }
+.modal-content .field {
+  display: flex; flex-direction: column; gap: 5px;
+  margin-bottom: 14px;
+}
+.modal-content .field label { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.modal-content .field input, .modal-content .field select, .modal-content .field textarea {
+  padding: 7px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-inset);
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.modal-content .field input:focus, .modal-content .field select:focus, .modal-content .field textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.modal-footer {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border-color);
+}
+.btn {
+  height: 32px; padding: 0 14px;
+  border-radius: var(--radius-md);
+  font-size: 12.5px; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 5px;
+  transition: all var(--transition);
+}
+.btn-primary { background: var(--text-primary); color: var(--bg-surface); }
+.btn-primary:hover { opacity: 0.85; }
+.btn-secondary { background: var(--bg-inset); color: var(--text-secondary); border: 1px solid var(--border-color); }
+.btn-secondary:hover { background: var(--bg-hover); }
+
+/* ---------- Global Controls (theme / variant toggles) ---------- */
+.global-controls {
+  position: fixed;
+  bottom: 16px; left: 16px;
+  z-index: 300;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.control-pill {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-md);
+  font-size: 12px; font-weight: 600;
+  color: var(--text-secondary);
+}
+.control-pill .toggle {
+  display: flex; gap: 2px;
+  padding: 2px;
+  background: var(--bg-inset);
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+}
+.control-pill .toggle button {
+  padding: 3px 10px;
+  border-radius: 10px;
+  font-size: 11px; font-weight: 600;
+  color: var(--text-secondary);
+  transition: all var(--transition);
+}
+.control-pill .toggle button.is-active {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+/* ---------- Utility classes ---------- */
+.hidden { display: none !important; }
+.flex { display: flex; }
+.gap-2 { gap: 8px; }
+.gap-3 { gap: 12px; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.text-sm { font-size: 12px; }
+.text-xs { font-size: 11px; }
+.text-tertiary { color: var(--text-tertiary); }
+.mt-2 { margin-top: 8px; }
+.mt-3 { margin-top: 12px; }
+.mb-2 { margin-bottom: 8px; }
+.w-full { width: 100%; }
+
+/* Scrollbar styling */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+
+/* ---------- Variant B layout tweaks ---------- */
+[data-variant="b"] .app-shell {
+  grid-template-columns: 220px 1fr;
+}
+[data-variant="b"] .sidebar { background: var(--bg-inset); }
+[data-variant="b"] .topbar { background: var(--bg-inset); }
+[data-variant="b"] .tab-bar { background: var(--bg-inset); }
+[data-variant="b"] .chat-header { background: var(--bg-inset); }
+[data-variant="b"] .composer { background: var(--bg-inset); }
+[data-variant="b"] .right-panel-header { background: var(--bg-inset); }
+[data-variant="b"] .ci-toolbar { background: var(--bg-inset); }
+</style>
+</head>
+<body>
+
+<!-- SVG Sprite -->
+<svg style="display:none">
+<symbol id="icon-search" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M21 21l-4.35-4.35M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16z"/></symbol>
+<symbol id="icon-bell" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0"/></symbol>
+<symbol id="icon-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+<symbol id="icon-logout" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
+<symbol id="icon-folder" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></symbol>
+<symbol id="icon-file" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" points="14 2 14 8 20 8"/></symbol>
+<symbol id="icon-message" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+<symbol id="icon-plus" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 5v14M5 12h14"/></symbol>
+<symbol id="icon-close" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M18 6L6 18M6 6l12 12"/></symbol>
+<symbol id="icon-send" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></symbol>
+<symbol id="icon-paperclip" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
+<symbol id="icon-brain" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2v-2.26A6.98 6.98 0 0 1 5 9a7 7 0 0 1 7-7zM9 21h6"/></symbol>
+<symbol id="icon-agent" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></symbol>
+<symbol id="icon-lightbulb" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M9 18h6M10 22h4M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-2.26A6.98 6.98 0 0 0 19 9a7 7 0 0 0-7-7z"/></symbol>
+<symbol id="icon-shield" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+<symbol id="icon-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" points="12 6 12 12 16 14"/></symbol>
+<symbol id="icon-user" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+<symbol id="icon-users" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+<symbol id="icon-chart" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M18 20V10M12 20V4M6 20v-6"/></symbol>
+<symbol id="icon-edit" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></symbol>
+<symbol id="icon-chevron-down" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 9l6 6 6-6"/></symbol>
+<symbol id="icon-pin" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></symbol>
+<symbol id="icon-split" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="18" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"/><line x1="12" y1="3" x2="12" y2="21" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+<symbol id="icon-more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="19" cy="12" r="1" fill="currentColor"/><circle cx="5" cy="12" r="1" fill="currentColor"/></symbol>
+<symbol id="icon-sparkles" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 3L14.5 8.5L20 11L14.5 13.5L12 19L9.5 13.5L4 11L9.5 8.5L12 3Z"/></symbol>
+<symbol id="icon-check" viewBox="0 0 24 24"><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" points="20 6 9 17 4 12"/></symbol>
+<symbol id="icon-refresh" viewBox="0 0 24 24"><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" points="23 4 23 10 17 10"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M20.49 15a9 9 0 1 1 2.12-9.36L23 10"/></symbol>
+<symbol id="icon-upload" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+<symbol id="icon-archive" viewBox="0 0 24 24"><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="10" y1="12" x2="14" y2="12" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+<symbol id="icon-zap" viewBox="0 0 24 24"><polygon fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></symbol>
+<symbol id="icon-trash" viewBox="0 0 24 24"><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" points="3 6 5 6 21 6"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+</svg>
+
+<!-- ==================== APP SHELL ==================== -->
+<div class="app-shell">
+
+  <!-- TOP BAR -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="topbar-brand">
+        <span class="brand-mark">R</span>
+        <span>Project_R</span>
+      </div>
+      <div class="topbar-search">
+        <svg><use href="#icon-search"/></svg>
+        <input type="text" placeholder="搜索对话、文件、客户或知识... (Ctrl+K)" />
+      </div>
+    </div>
+    <div class="topbar-center">
+      <span style="font-size:11px;color:var(--text-tertiary)">当前工作区：</span>
+      <span style="font-size:12px;font-weight:600">CRM 客户情报中心</span>
+    </div>
+    <div class="topbar-right">
+      <button class="icon-btn" title="快速笔记" onclick="toggleScratchPad()">
+        <svg><use href="#icon-edit"/></svg>
+      </button>
+      <button class="icon-btn" id="notifBtn" title="通知中心" onclick="toggleNotificationCenter()">
+        <svg><use href="#icon-bell"/></svg>
+        <span class="badge">3</span>
+      </button>
+      <button class="icon-btn" title="设置" onclick="openSettings()">
+        <svg><use href="#icon-settings"/></svg>
+      </button>
+      <div class="user-avatar" style="margin-left:4px">GY</div>
+    </div>
+  </header>
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="workspace-select">
+        <svg><use href="#icon-folder"/></svg>
+        <span>CRM 客户情报中心</span>
+        <svg style="margin-left:auto"><use href="#icon-chevron-down"/></svg>
+      </div>
+      <div class="mode-switch">
+        <button class="mode-btn is-active" onclick="setMode('agent')">
+          <svg><use href="#icon-agent"/></svg>
+          <span>Agent</span>
+        </button>
+        <button class="mode-btn" onclick="setMode('chat')">
+          <svg><use href="#icon-message"/></svg>
+          <span>Chat</span>
+        </button>
+      </div>
+      <button class="new-chat-btn">
+        <svg><use href="#icon-plus"/></svg>
+        <span>新建对话</span>
+      </button>
+    </div>
+    <div class="sidebar-body">
+      <div class="sidebar-section-title">置顶</div>
+      <div class="session-item is-active">
+        <svg><use href="#icon-pin"/></svg>
+        <span class="session-title"><span class="session-pin">置顶</span>客户画像分析与录入策略</span>
+        <span class="session-time">2m</span>
+      </div>
+      <div class="session-item">
+        <svg><use href="#icon-pin"/></svg>
+        <span class="session-title"><span class="session-pin">置顶</span>VMU 项目合同审阅</span>
+        <span class="session-time">1h</span>
+      </div>
+      <div class="sidebar-section-title">今天</div>
+      <div class="session-item">
+        <svg><use href="#icon-message"/></svg>
+        <span class="session-title">华力物流报价评估</span>
+        <span class="session-time">3h</span>
+      </div>
+      <div class="session-item">
+        <svg><use href="#icon-agent"/></svg>
+        <span class="session-title">会议纪要结构化提取</span>
+        <span class="session-time">5h</span>
+      </div>
+      <div class="sidebar-section-title">本周</div>
+      <div class="session-item">
+        <svg><use href="#icon-message"/></svg>
+        <span class="session-title">0515 项目沟通会要点</span>
+        <span class="session-time">2d</span>
+      </div>
+      <div class="session-item">
+        <svg><use href="#icon-message"/></svg>
+        <span class="session-title">书面化原则查询</span>
+        <span class="session-time">3d</span>
+      </div>
+      <div class="sidebar-section-title">更早</div>
+      <div class="session-item">
+        <svg><use href="#icon-archive"/></svg>
+        <span class="session-title">AS 1288 标准解读</span>
+        <span class="session-time">1w</span>
+      </div>
+    </div>
+    <div class="sidebar-footer">
+      <div class="user-avatar">GY</div>
+      <div class="user-info">
+        <span class="user-name">Gary</span>
+        <span class="user-role">系统管理员</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAIN AREA -->
+  <main class="main-area">
+    <!-- Tabs -->
+    <nav class="tab-bar">
+      <div class="tab-item is-active">
+        <svg><use href="#icon-agent"/></svg>
+        <span>客户画像分析</span>
+        <svg><use href="#icon-close"/></svg>
+      </div>
+      <div class="tab-item">
+        <svg><use href="#icon-message"/></svg>
+        <span>VMU 合同审阅</span>
+        <svg><use href="#icon-close"/></svg>
+      </div>
+      <div class="tab-item">
+        <svg><use href="#icon-message"/></svg>
+        <span>快速笔记</span>
+        <svg><use href="#icon-close"/></svg>
+      </div>
+      <button class="tab-add" title="新建标签页"><svg><use href="#icon-plus"/></svg></button>
+    </nav>
+
+    <!-- Workbench -->
+    <div class="workbench">
+      <!-- Chat Column -->
+      <div class="chat-col">
+        <header class="chat-header">
+          <div class="chat-title">
+            <h1>客户画像分析与录入策略</h1>
+            <span class="workspace-chip">CRM 客户情报中心</span>
+            <span class="workspace-chip" style="background:var(--bg-active);color:var(--accent-text);border-color:var(--accent-soft)">Agent 模式</span>
+          </div>
+          <div class="chat-actions">
+            <button onclick="toggleSplitPane()">
+              <svg width="13" height="13"><use href="#icon-split"/></svg>
+              双对话
+            </button>
+            <button onclick="toggleRightPanel('files')">
+              <svg width="13" height="13"><use href="#icon-folder"/></svg>
+              客户资料
+            </button>
+            <button onclick="toggleRightPanel('intelligence')">
+              <svg width="13" height="13"><use href="#icon-chart"/></svg>
+              客户情报
+            </button>
+          </div>
+        </header>
+
+        <div class="message-list" id="messageList">
+          <!-- User message -->
+          <div class="message-bubble user">
+            <div class="message-meta">
+              <svg><use href="#icon-user"/></svg>
+              <span>Gary</span>
+              <span>14:32</span>
+            </div>
+            帮我分析华力物流这个客户的近期互动情况，并建议下一步录入策略。
+          </div>
+          <!-- Agent thinking card -->
+          <div class="message-bubble assistant" style="border-left:3px solid var(--accent)">
+            <div class="message-meta">
+              <svg><use href="#icon-agent"/></svg>
+              <span>Agent 正在分析</span>
+              <span>14:32</span>
+            </div>
+            <div style="font-weight:600;margin-bottom:6px">任务理解</div>
+            <p style="margin:0 0 10px;color:var(--text-secondary)">您希望分析华力物流（客户ID: HL-2024-089）的近期互动记录，并基于现有资料给出知识库录入建议。</p>
+            <div style="font-weight:600;margin-bottom:6px">执行计划</div>
+            <ol style="margin:0 0 10px;padding-left:18px;color:var(--text-secondary)">
+              <li>检索 CRM 中该客户的全部往来邮件、会议记录和联系人资料</li>
+              <li>汇总关键决策人、项目阶段和最近沟通热点</li>
+              <li>检查未录入 GBrain 的源文件，评估提炼优先级</li>
+              <li>生成录入建议清单</li>
+            </ol>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-primary" style="height:28px;padding:0 12px;font-size:12px">确认执行</button>
+              <button class="btn btn-secondary" style="height:28px;padding:0 12px;font-size:12px">修改计划</button>
+            </div>
+          </div>
+          <!-- Agent result -->
+          <div class="message-bubble assistant">
+            <div class="message-meta">
+              <svg><use href="#icon-check"/></svg>
+              <span>Agent 已完成</span>
+              <span>14:33</span>
+            </div>
+            <div style="font-weight:600;margin-bottom:8px">华力物流客户画像摘要</div>
+            <p style="margin:0 0 10px">该客户目前处于 <strong>报价评估阶段</strong>，关键决策人为采购总监张敏。过去30天内有3封邮件往来和1次会议记录，主要关注交付周期和售后条款。</p>
+            <div style="background:var(--bg-inset);border-radius:var(--radius-md);padding:10px;margin-bottom:10px;border:1px solid var(--border-color)">
+              <div style="font-size:12px;font-weight:600;margin-bottom:6px">待录入资料（3项）</div>
+              <div class="file-list-item" style="padding:4px 0">
+                <svg><use href="#icon-file"/></svg>
+                <span class="file-name">20240603_报价单_v2.pdf</span>
+                <span class="file-meta">待审核</span>
+              </div>
+              <div class="file-list-item" style="padding:4px 0">
+                <svg><use href="#icon-file"/></svg>
+                <span class="file-name">0528_技术交流会纪要.docx</span>
+                <span class="file-meta">未处理</span>
+              </div>
+              <div class="file-list-item" style="padding:4px 0">
+                <svg><use href="#icon-file"/></svg>
+                <span class="file-name">0601_客户回访录音.mp3</span>
+                <span class="file-meta">转写中</span>
+              </div>
+            </div>
+            <div style="font-size:11px;color:var(--text-tertiary)">
+              引用来源：
+              <span class="msg-source-pill">[1] 客户档案/华力物流</span>
+              <span class="msg-source-pill">[2] 沟通记录/2024-Q2</span>
+              <span class="msg-source-pill">[3] 联系人/张敏</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Composer -->
+        <div class="composer">
+          <div class="composer-attachment-row">
+            <div class="attachment-chip">
+              <svg><use href="#icon-file"/></svg>
+              20240603_报价单_v2.pdf
+              <span class="close"><svg width="10" height="10"><use href="#icon-close"/></svg></span>
+            </div>
+          </div>
+          <div class="composer-input-wrap">
+            <textarea placeholder="输入任务目标或问题... 使用 / 调用 Skills 或内置命令"></textarea>
+          </div>
+          <div class="composer-toolbar">
+            <div class="composer-tools">
+              <button class="composer-tool">
+                <svg><use href="#icon-paperclip"/></svg>
+                <span>附件</span>
+              </button>
+              <button class="composer-tool is-active">
+                <svg><use href="#icon-brain"/></svg>
+                <span>深度思考</span>
+              </button>
+              <button class="composer-tool">
+                <svg><use href="#icon-search"/></svg>
+                <span>联网搜索</span>
+              </button>
+              <button class="composer-tool" onclick="toggleRightPanel('prompts')">
+                <svg><use href="#icon-lightbulb"/></svg>
+                <span>提示词</span>
+              </button>
+              <button class="composer-tool" onclick="toggleRightPanel('skills')">
+                <svg><use href="#icon-sparkles"/></svg>
+                <span>Skills</span>
+              </button>
+              <button class="composer-tool">
+                <svg><use href="#icon-brain"/></svg>
+                <span>DeepSeek-V3</span>
+              </button>
+            </div>
+            <button class="composer-send">
+              <svg><use href="#icon-send"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT PANEL: Customer Intelligence (DEFAULT VISIBLE) -->
+      <aside class="right-panel" id="rightPanel">
+        <div class="right-panel-header">
+          <div>
+            <h2>客户情报</h2>
+            <p>CRM 受限业务情报 · 仅管理员可写操作</p>
+          </div>
+          <button class="close-btn" onclick="toggleRightPanel(null)">
+            <svg><use href="#icon-close"/></svg>
+          </button>
+        </div>
+        <div class="right-panel-body" id="rightPanelBody">
+          <!-- CI content injected by JS -->
+        </div>
+      </aside>
+    </div>
+  </main>
+</div>
+
+<!-- ==================== NOTIFICATION CENTER ==================== -->
+<div class="notification-center hidden" id="notificationCenter">
+  <div class="notification-center-header">
+    <div>
+      <h2>通知中心</h2>
+      <p>3 条未读通知</p>
+    </div>
+    <div class="actions">
+      <button onclick="markAllRead()">全部已读</button>
+      <button onclick="toggleNotificationCenter()">关闭</button>
+    </div>
+  </div>
+  <div class="notification-tabs">
+    <button class="notification-tab is-active" onclick="switchNotifTab('all', this)">全部</button>
+    <button class="notification-tab" onclick="switchNotifTab('unread', this)">
+      未读 <span class="tab-badge">3</span>
+    </button>
+    <button class="notification-tab" onclick="switchNotifTab('pending', this)">
+      待处理 <span class="tab-badge">1</span>
+    </button>
+  </div>
+  <div class="notification-list">
+    <div class="notification-item is-unread is-critical">
+      <div class="notification-item-meta">
+        <span class="notification-category is-knowledge">知识审核</span>
+        <span class="notification-severity is-pending">待处理</span>
+        <span class="notification-time">5 分钟前</span>
+      </div>
+      <h4>GBrain Think 质量审核提交</h4>
+      <p>用户对「书面化原则是什么」回答提交了低分反馈，指出引用来源 [2] 的上下文不够精确。建议触发 citation-fixer。</p>
+      <div class="notification-item-actions">
+        <button class="primary" onclick="openSettings('reviews')">去审核</button>
+        <button>忽略</button>
+      </div>
+    </div>
+    <div class="notification-item is-unread is-warning">
+      <div class="notification-item-meta">
+        <span class="notification-category is-system">系统</span>
+        <span class="notification-time">32 分钟前</span>
+      </div>
+      <h4>PDF 结构化提炼完成</h4>
+      <p>「AS 1288 标准解读.pdf」已完成 MiMo V2.5 视觉辅助提炼，生成 4 页关键页摘要，当前状态：pending_review，等待管理员审核后入库。</p>
+    </div>
+    <div class="notification-item is-unread is-info">
+      <div class="notification-item-meta">
+        <span class="notification-category is-agent">Agent</span>
+        <span class="notification-time">1 小时前</span>
+      </div>
+      <h4>Agent 任务已完成</h4>
+      <p>「VMU 项目合同审阅」Agent 任务已完成，生成了 3 处条款风险标记和 1 份修改建议文档，等待您的 review。</p>
+    </div>
+    <div class="notification-item">
+      <div class="notification-item-meta">
+        <span class="notification-category is-audit">审计</span>
+        <span class="notification-severity is-resolved">已处理</span>
+        <span class="notification-time">3 小时前</span>
+      </div>
+      <h4>客户情报录入完成</h4>
+      <p>华力物流 3 份新邮件已完成 EML 提炼并同步至 GBrain source，Entity Enrichment 已自动发现 1 个新联系人实体。</p>
+    </div>
+    <div class="notification-item">
+      <div class="notification-item-meta">
+        <span class="notification-category is-system">系统</span>
+        <span class="notification-time">昨天</span>
+      </div>
+      <h4>GBrain 维护任务完成</h4>
+      <p>例行 sync + embed + lint 白名单任务已完成，知识库状态正常。最后回归测试：Query 5/5 通过，Think 4/5 通过。</p>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SETTINGS / ADMIN MODAL ==================== -->
+<div class="modal-backdrop hidden" id="settingsBackdrop" onclick="closeSettings(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2>设置</h2>
+      <button class="close-btn" onclick="closeSettings()"><svg width="16" height="16"><use href="#icon-close"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <nav class="modal-sidebar">
+        <div class="modal-sidebar-item is-active" onclick="switchSettingsTab('general', this)">
+          <svg><use href="#icon-settings"/></svg>
+          <span>常规</span>
+        </div>
+        <div class="modal-sidebar-item" onclick="switchSettingsTab('server', this)">
+          <svg><use href="#icon-brain"/></svg>
+          <span>服务器</span>
+        </div>
+        <div class="modal-sidebar-item" onclick="switchSettingsTab('prompts', this)">
+          <svg><use href="#icon-lightbulb"/></svg>
+          <span>提示词</span>
+        </div>
+        <div class="modal-sidebar-item" onclick="switchSettingsTab('agent', this)">
+          <svg><use href="#icon-agent"/></svg>
+          <span>Agent</span>
+        </div>
+        <div class="modal-sidebar-item" onclick="switchSettingsTab('admin', this)">
+          <svg><use href="#icon-shield"/></svg>
+          <span>管理员后台</span>
+        </div>
+      </nav>
+      <div class="modal-content" id="settingsContent">
+        <!-- General -->
+        <div id="tab-general">
+          <h3>常规设置</h3>
+          <section>
+            <div class="field">
+              <label>显示昵称</label>
+              <input type="text" value="Gary" />
+            </div>
+            <div class="field">
+              <label>默认模式</label>
+              <select><option>Agent</option><option>Chat</option></select>
+            </div>
+            <div class="field">
+              <label>主题</label>
+              <select id="themeSelect" onchange="setTheme(this.value)">
+                <option value="light">浅色</option>
+                <option value="dark">深色</option>
+                <option value="system">跟随系统</option>
+              </select>
+            </div>
+          </section>
+        </div>
+        <!-- Admin - GBrain -->
+        <div id="tab-admin" class="hidden">
+          <h3>GBrain 管理</h3>
+          <section>
+            <div class="gbrain-card">
+              <h4><span class="status-dot"></span> GBrain 服务状态</h4>
+              <p>Ollama embedding (mxbai-embed-large) · 本地 PGLite · 运行正常</p>
+              <div class="gbrain-metrics">
+                <div class="gbrain-metric"><span>Pages</span><span>281</span></div>
+                <div class="gbrain-metric"><span>Chunks</span><span>1,892</span></div>
+                <div class="gbrain-metric"><span>Unembedded</span><span>0</span></div>
+                <div class="gbrain-metric"><span>Source</span><span>company-wiki</span></div>
+              </div>
+            </div>
+            <div class="gbrain-card">
+              <h4><span class="status-dot is-warn"></span> 项目 Sources</h4>
+              <p>已注册 2 个项目 source，1 个待首次同步。</p>
+              <div class="gbrain-metrics">
+                <div class="gbrain-metric"><span>project-bfi-12</span><span>synced</span></div>
+                <div class="gbrain-metric"><span>project-vmu-8</span><span>pending</span></div>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-primary">启动 GBrain</button>
+              <button class="btn btn-secondary">重启服务</button>
+              <button class="btn btn-secondary">运行回归</button>
+              <button class="btn btn-secondary">导入 Raw</button>
+              <button class="btn btn-secondary" style="color:var(--warning);border-color:var(--warning)">PDF 提炼</button>
+            </div>
+          </section>
+          <h3 style="margin-top:20px">知识审核队列</h3>
+          <section>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div class="file-list-item" style="background:var(--bg-inset);padding:8px;border-radius:var(--radius-sm)">
+                <svg><use href="#icon-file"/></svg>
+                <span class="file-name">gbrain_answer_correction: 书面化原则查询</span>
+                <span class="file-meta">待审核</span>
+              </div>
+              <div class="file-list-item" style="background:var(--bg-inset);padding:8px;border-radius:var(--radius-sm)">
+                <svg><use href="#icon-file"/></svg>
+                <span class="file-name">citation-fixer job #172 完成</span>
+                <span class="file-meta">已处理</span>
+              </div>
+            </div>
+          </section>
+        </div>
+        <!-- Other tabs placeholder -->
+        <div id="tab-server" class="hidden">
+          <h3>服务器设置</h3>
+          <p style="color:var(--text-tertiary)">待真实数据确认</p>
+        </div>
+        <div id="tab-prompts" class="hidden">
+          <h3>提示词管理</h3>
+          <p style="color:var(--text-tertiary)">待真实数据确认</p>
+        </div>
+        <div id="tab-agent" class="hidden">
+          <h3>Agent 行为边界</h3>
+          <p style="color:var(--text-tertiary)">待真实数据确认</p>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeSettings()">取消</button>
+      <button class="btn btn-primary">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== GLOBAL CONTROLS ==================== -->
+<div class="global-controls">
+  <div class="control-pill">
+    <span>主题</span>
+    <div class="toggle">
+      <button class="is-active" onclick="setTheme('light')">浅</button>
+      <button onclick="setTheme('dark')">深</button>
+    </div>
+  </div>
+  <div class="control-pill">
+    <span>风格</span>
+    <div class="toggle">
+      <button class="is-active" onclick="setVariant('a')">A</button>
+      <button onclick="setVariant('b')">B</button>
+    </div>
+  </div>
+  <div class="control-pill">
+    <span>面板</span>
+    <div class="toggle">
+      <button class="is-active" onclick="toggleRightPanel('intelligence')">情报</button>
+      <button onclick="toggleRightPanel('files')">资料</button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== JAVASCRIPT ==================== -->
+<script>
+(function() {
+  // ---------- State ----------
+  let currentTheme = 'light';
+  let currentVariant = 'a';
+  let notifOpen = false;
+  let rightPanelType = 'intelligence';
+
+  // ---------- Theme / Variant ----------
+  window.setTheme = function(theme) {
+    currentTheme = theme;
+    document.documentElement.setAttribute('data-theme', theme);
+    document.querySelectorAll('.global-controls .control-pill:first-child .toggle button').forEach((btn, i) => {
+      btn.classList.toggle('is-active', (i === 0 && theme === 'light') || (i === 1 && theme === 'dark'));
+    });
+    const select = document.getElementById('themeSelect');
+    if (select) select.value = theme;
+  };
+
+  window.setVariant = function(v) {
+    currentVariant = v;
+    document.documentElement.setAttribute('data-variant', v);
+    document.querySelectorAll('.global-controls .control-pill:nth-child(2) .toggle button').forEach((btn, i) => {
+      btn.classList.toggle('is-active', (i === 0 && v === 'a') || (i === 1 && v === 'b'));
+    });
+  };
+
+  // ---------- Mode ----------
+  window.setMode = function(mode) {
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+      btn.classList.toggle('is-active', btn.textContent.toLowerCase().includes(mode));
+    });
+  };
+
+  // ---------- Notification Center ----------
+  window.toggleNotificationCenter = function() {
+    notifOpen = !notifOpen;
+    const el = document.getElementById('notificationCenter');
+    el.classList.toggle('hidden', !notifOpen);
+    const btn = document.getElementById('notifBtn');
+    if (notifOpen) btn.style.background = 'var(--bg-active)';
+    else btn.style.background = '';
+  };
+
+  window.switchNotifTab = function(view, btn) {
+    btn.parentElement.querySelectorAll('.notification-tab').forEach(t => t.classList.remove('is-active'));
+    btn.classList.add('is-active');
+  };
+
+  window.markAllRead = function() {
+    document.querySelectorAll('.notification-item.is-unread').forEach(el => {
+      el.classList.remove('is-unread');
+    });
+    const badge = document.querySelector('#notifBtn .badge');
+    if (badge) badge.style.display = 'none';
+    document.querySelector('.notification-center-header p').textContent = '暂无未读通知';
+  };
+
+  // ---------- Settings Modal ----------
+  window.openSettings = function(tab) {
+    document.getElementById('settingsBackdrop').classList.remove('hidden');
+    if (tab) switchSettingsTab(tab);
+  };
+
+  window.closeSettings = function(e) {
+    if (e && e.target !== e.currentTarget) return;
+    document.getElementById('settingsBackdrop').classList.add('hidden');
+  };
+
+  window.switchSettingsTab = function(tab, btn) {
+    document.querySelectorAll('.modal-sidebar-item').forEach(i => i.classList.remove('is-active'));
+    if (btn) btn.classList.add('is-active');
+    else {
+      const map = { general: 0, server: 1, prompts: 2, agent: 3, admin: 4 };
+      const idx = map[tab] ?? 0;
+      document.querySelectorAll('.modal-sidebar-item')[idx]?.classList.add('is-active');
+    }
+    document.querySelectorAll('.modal-content > div').forEach(div => div.classList.add('hidden'));
+    const target = document.getElementById('tab-' + tab);
+    if (target) target.classList.remove('hidden');
+  };
+
+  // ---------- Right Panel ----------
+  const ciHTML = `
+    <div class="ci-panel">
+      <div class="ci-toolbar">
+        <button class="ci-tab is-active" onclick="switchCITab('overview', this)">画像概览</button>
+        <button class="ci-tab" onclick="switchCITab('graph', this)">关系图谱</button>
+        <button class="ci-tab" onclick="switchCITab('timeline', this)">时间线</button>
+        <button class="ci-tab" onclick="switchCITab('source', this)">GBrain 状态</button>
+      </div>
+      <div class="ci-body">
+        <div class="ci-summary">
+          <h3><svg><use href="#icon-users"/></svg>华力物流 客户摘要</h3>
+          <p>该客户为长三角地区中型物流企业，与本公司合作 3 年。当前处于报价评估阶段，关键决策人为采购总监张敏。资料覆盖范围：邮件 12 封、会议 4 次、联系人 6 人、项目 2 个。</p>
+        </div>
+        <div class="ci-stats">
+          <div class="ci-stat"><div class="value">6</div><div class="label">联系人</div></div>
+          <div class="ci-stat"><div class="value">2</div><div class="label">活跃项目</div></div>
+          <div class="ci-stat"><div class="value">12</div><div class="label">邮件往来</div></div>
+          <div class="ci-stat"><div class="value">4</div><div class="label">会议记录</div></div>
+        </div>
+        <div class="ci-section-title">重点联系人</div>
+        <div class="ci-entity-list">
+          <div class="ci-entity-card">
+            <div class="ci-entity-avatar">张</div>
+            <div class="ci-entity-info">
+              <span class="name">张敏</span>
+              <span class="meta">采购总监 · 关键决策人</span>
+            </div>
+            <div class="ci-entity-tags"><span class="ci-tag is-hot">最活跃</span></div>
+          </div>
+          <div class="ci-entity-card">
+            <div class="ci-entity-avatar">李</div>
+            <div class="ci-entity-info">
+              <span class="name">李强</span>
+              <span class="meta">技术经理 · 项目对接人</span>
+            </div>
+            <div class="ci-entity-tags"><span class="ci-tag">技术</span></div>
+          </div>
+          <div class="ci-entity-card">
+            <div class="ci-entity-avatar">王</div>
+            <div class="ci-entity-info">
+              <span class="name">王芳</span>
+              <span class="meta">财务主管 · 合同审核</span>
+            </div>
+            <div class="ci-entity-tags"><span class="ci-tag">财务</span></div>
+          </div>
+        </div>
+        <div class="ci-section-title">近期互动时间线</div>
+        <div class="ci-timeline">
+          <div class="ci-timeline-item">
+            <div class="time">2024-06-03 16:20</div>
+            <div class="title">报价单 v2 提交</div>
+            <div class="desc">张敏邮件回复，要求调整售后条款中的响应时间。</div>
+          </div>
+          <div class="ci-timeline-item">
+            <div class="time">2024-05-28 14:00</div>
+            <div class="title">技术交流会</div>
+            <div class="desc">李强带队来访，重点讨论 VMU 交付标准和验收流程。</div>
+          </div>
+          <div class="ci-timeline-item">
+            <div class="time">2024-05-15 10:00</div>
+            <div class="title">项目沟通会</div>
+            <div class="desc">双方确认第一阶段里程碑，王芳提出付款节点调整。</div>
+          </div>
+        </div>
+        <div class="ci-admin-bar">
+          <div class="label"><svg><use href="#icon-shield"/></svg> 管理员高级操作</div>
+          <div class="ci-admin-actions">
+            <button>实体合并审核</button>
+            <button>关系图谱维护</button>
+            <button>Source 同步</button>
+            <button class="is-danger">清空缓存</button>
+          </div>
+          <p style="font-size:11px;color:var(--text-tertiary);margin:8px 0 0">Entity Enrichment、Graph Merge 和 Citation Fixer 为 GBrain 原生能力，Project_R 仅做转发和审计。</p>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const filesHTML = `
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <div class="file-list-item"><svg><use href="#icon-folder"/></svg><span class="file-name">01-客户档案</span></div>
+      <div class="file-list-item"><svg><use href="#icon-folder"/></svg><span class="file-name">02-联系人与关系</span></div>
+      <div class="file-list-item"><svg><use href="#icon-folder"/></svg><span class="file-name">03-沟通记录</span></div>
+      <div class="file-list-item"><svg><use href="#icon-folder"/></svg><span class="file-name">04-原始资料</span></div>
+      <div style="border-top:1px solid var(--border-color);margin:6px 0"></div>
+      <div class="file-list-item">
+        <svg><use href="#icon-file"/></svg>
+        <span class="file-name">20240603_报价单_v2.pdf</span>
+        <span class="ingest-status pending" title="pending_review"></span>
+      </div>
+      <div class="file-list-item">
+        <svg><use href="#icon-file"/></svg>
+        <span class="file-name">0528_技术交流会纪要.docx</span>
+        <span class="ingest-status synced" title="synced"></span>
+      </div>
+      <div class="file-list-item">
+        <svg><use href="#icon-file"/></svg>
+        <span class="file-name">0601_客户回访录音.mp3</span>
+        <span class="ingest-status pending" title="transcribing"></span>
+      </div>
+      <div style="border-top:1px solid var(--border-color);margin:6px 0"></div>
+      <button class="btn btn-secondary w-full" style="height:32px;font-size:12px">
+        <svg width="13" height="13"><use href="#icon-upload"/></svg>
+        上传文件
+      </button>
+      <button class="btn btn-secondary w-full" style="height:32px;font-size:12px;margin-top:4px">
+        <svg width="13" height="13"><use href="#icon-zap"/></svg>
+        录入当前文件夹
+      </button>
+    </div>
+  `;
+
+  const skillsHTML = `
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <div class="sidebar-section-title">Skills</div>
+      <div class="session-item" style="font-weight:600"><span style="width:18px;text-align:center">/</span> query</div>
+      <div class="session-item"><span style="width:18px;text-align:center">/</span> summarize</div>
+      <div class="session-item"><span style="width:18px;text-align:center">/</span> extract_meeting</div>
+      <div class="session-item"><span style="width:18px;text-align:center">/</span> compare_versions</div>
+      <div class="sidebar-section-title">提示词</div>
+      <div class="session-item"><svg width="12" height="12"><use href="#icon-lightbulb"/></svg> 合同审阅助手</div>
+      <div class="session-item"><svg width="12" height="12"><use href="#icon-lightbulb"/></svg> 会议纪要格式化</div>
+      <div class="session-item"><svg width="12" height="12"><use href="#icon-lightbulb"/></svg> 客户画像分析</div>
+    </div>
+  `;
+
+  const promptsHTML = `
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <div class="sidebar-section-title">企业提示词</div>
+      <div class="session-item"><svg width="12" height="12"><use href="#icon-lightbulb"/></svg> 合同审阅助手</div>
+      <div class="session-item"><svg width="12" height="12"><use href="#icon-lightbulb"/></svg> 会议纪要格式化</div>
+      <div class="session-item"><svg width="12" height="12"><use href="#icon-lightbulb"/></svg> 客户画像分析</div>
+      <div class="sidebar-section-title">个人提示词</div>
+      <div class="session-item"><svg width="12" height="12"><use href="#icon-lightbulb"/></svg> 我的写作风格</div>
+      <button class="new-chat-btn" style="margin-top:8px"><svg><use href="#icon-plus"/></svg><span>新建提示词</span></button>
+    </div>
+  `;
+
+  window.toggleRightPanel = function(type) {
+    const panel = document.getElementById('rightPanel');
+    const body = document.getElementById('rightPanelBody');
+    const headerTitle = panel.querySelector('h2');
+    const headerSubtitle = panel.querySelector('p');
+
+    if (!type || (rightPanelType === type && type !== null)) {
+      panel.style.display = 'none';
+      rightPanelType = null;
+      document.querySelector('.workbench').style.gridTemplateColumns = '1fr';
+      return;
+    }
+
+    panel.style.display = 'flex';
+    rightPanelType = type;
+    document.querySelector('.workbench').style.gridTemplateColumns = '1fr auto';
+
+    if (type === 'intelligence') {
+      headerTitle.textContent = '客户情报';
+      headerSubtitle.textContent = 'CRM 受限业务情报 · 仅管理员可写操作';
+      body.innerHTML = ciHTML;
+    } else if (type === 'files') {
+      headerTitle.textContent = '客户资料';
+      headerSubtitle.textContent = '当前工作区常驻视图';
+      body.innerHTML = filesHTML;
+    } else if (type === 'skills') {
+      headerTitle.textContent = 'Skills';
+      headerSubtitle.textContent = '选择后应用于本次发送';
+      body.innerHTML = skillsHTML;
+    } else if (type === 'prompts') {
+      headerTitle.textContent = '提示词';
+      headerSubtitle.textContent = '选择后应用于本次发送';
+      body.innerHTML = promptsHTML;
+    }
+  };
+
+  window.switchCITab = function(tab, btn) {
+    btn.parentElement.querySelectorAll('.ci-tab').forEach(t => t.classList.remove('is-active'));
+    btn.classList.add('is-active');
+    // In real app this would swap CI content; prototype keeps it simple
+  };
+
+  // ---------- Split pane placeholder ----------
+  window.toggleSplitPane = function() {
+    alert('双对话并排：左 / 右分栏（当前为静态原型演示）');
+  };
+  window.toggleScratchPad = function() {
+    alert('快速笔记浮层（当前为静态原型演示）');
+  };
+
+  // ---------- Init ----------
+  setTheme('light');
+  setVariant('a');
+  toggleRightPanel('intelligence');
+})();
+</script>
+</body>
+</html>

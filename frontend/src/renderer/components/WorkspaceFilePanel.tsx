@@ -1484,9 +1484,9 @@ export function WorkspaceFilePanel({
       });
       setSelectedGraphNodeId(slug);
       setNativeGraphContext(result);
-      setNativeGraphMessage(result.status === "ok" ? "GBrain 原生图谱上下文已加载。" : result.error || "GBrain 原生图谱上下文加载失败。");
+      setNativeGraphMessage(result.status === "ok" ? (isCustomerWorkspace ? "客户情报支撑信息已加载。" : "GBrain 原生图谱上下文已加载。") : result.error || (isCustomerWorkspace ? "客户情报支撑信息加载失败。" : "GBrain 原生图谱上下文加载失败。"));
     } catch (nativeError: unknown) {
-      setNativeGraphMessage(nativeError instanceof Error ? nativeError.message : "GBrain 原生图谱上下文加载失败");
+      setNativeGraphMessage(nativeError instanceof Error ? nativeError.message : (isCustomerWorkspace ? "客户情报支撑信息加载失败" : "GBrain 原生图谱上下文加载失败"));
     } finally {
       setNativeGraphLoadingSlug(null);
     }
@@ -1702,12 +1702,12 @@ export function WorkspaceFilePanel({
   const percent = uploadProgress.total > 0 ? Math.round((uploadProgress.current / uploadProgress.total) * 100) : 0;
   const isPersonalWorkspace = workspaceKind === "user";
   const isCustomerWorkspace = workspaceKind === "customer";
-  const panelSubtitle = viewMode === "trash" ? "回收站" : isPersonalWorkspace ? "个人文件" : isCustomerWorkspace ? "客户资料" : "项目资料";
-  const rootTitle = isPersonalWorkspace ? "个人文件根目录" : isCustomerWorkspace ? "客户资料根目录" : "项目资料根目录";
+  const panelSubtitle = viewMode === "trash" ? "回收站" : isPersonalWorkspace ? "个人文件" : isCustomerWorkspace ? "资料文件" : "项目资料";
+  const rootTitle = isPersonalWorkspace ? "个人文件根目录" : isCustomerWorkspace ? "CRM 文件根目录" : "项目资料根目录";
   const canShowKnowledgeIngest = !isPersonalWorkspace && canIngestKnowledge;
   const canShowKnowledgeGraph = workspaceKind === "project" || workspaceKind === "customer";
   const canShowEntityMergeReview = canShowKnowledgeGraph && canIngestKnowledge;
-  const knowledgeGraphLabel = isCustomerWorkspace ? "客户画像" : "事件图谱";
+  const knowledgeGraphLabel = isCustomerWorkspace ? "客户情报" : "事件图谱";
   const nodeTitleById = new Map((knowledgeGraph?.nodes ?? []).map((node) => [node.id, node.title]));
   const graphNodeById = new Map((knowledgeGraph?.nodes ?? []).map((node) => [node.id, node]));
   const graphSearch = graphSearchTerm.trim().toLowerCase();
@@ -1852,9 +1852,9 @@ export function WorkspaceFilePanel({
     backlinks: nativeResultCount(nativeGraphContext.backlinks),
   } : null;
   const nativeContextSections = nativeGraphContext ? [
-    { key: "graph", title: "Graph traversal", items: nativeResultItems(nativeGraphContext.traverse_graph, "graph") },
-    { key: "timeline", title: "Timeline", items: nativeResultItems(nativeGraphContext.timeline, "timeline") },
-    { key: "backlinks", title: "Backlinks", items: nativeResultItems(nativeGraphContext.backlinks, "backlinks") },
+    { key: "graph", title: isCustomerWorkspace ? "关系路径" : "Graph traversal", items: nativeResultItems(nativeGraphContext.traverse_graph, "graph") },
+    { key: "timeline", title: isCustomerWorkspace ? "互动时间线" : "Timeline", items: nativeResultItems(nativeGraphContext.timeline, "timeline") },
+    { key: "backlinks", title: isCustomerWorkspace ? "相关来源" : "Backlinks", items: nativeResultItems(nativeGraphContext.backlinks, "backlinks") },
   ] : [];
   const crmRecentEvents = timelineEvents.slice(0, 12);
   const crmPersonCount = filteredGraphNodes.filter((node) => crmEntityLabel(node.entity_type) === "联系人").length;
@@ -2333,7 +2333,7 @@ export function WorkspaceFilePanel({
             <div>
               <span>CRM 客户情报</span>
               <strong>{workspaceName || "客户工作区"}</strong>
-              <small>客户画像、关系网和近期互动来自受限客户情报数据。</small>
+              <small>客户情报、关系网和近期互动来自受限客户情报数据。</small>
             </div>
             <div className="crm-intelligence-header-actions">
               <button disabled={knowledgeGraphLoading} onClick={() => void handleOpenKnowledgeGraph()} type="button"><RefreshIcon />刷新</button>
@@ -2685,7 +2685,7 @@ export function WorkspaceFilePanel({
                         <div className="workspace-knowledge-card-actions">
                           <button onClick={() => setSelectedGraphNodeId(card.id)} type="button">详情</button>
                           <button disabled={nativeGraphLoadingSlug === card.id} onClick={() => void handleLoadNativeGraphContext(card.id)} type="button">
-                            {nativeGraphLoadingSlug === card.id ? "读取..." : "原生"}
+                            {nativeGraphLoadingSlug === card.id ? "读取..." : isCustomerWorkspace ? "支撑信息" : "原生"}
                           </button>
                         </div>
                       </article>
@@ -2772,7 +2772,7 @@ export function WorkspaceFilePanel({
                     <div className="workspace-knowledge-section-actions">
                       <button disabled={!selectedGraphNodeSourcePath} onClick={() => void openGraphSourcePreview(selectedGraphNodeSourcePath)} type="button">来源</button>
                       <button disabled={nativeGraphLoadingSlug === selectedGraphNode.id} onClick={() => void handleLoadNativeGraphContext(selectedGraphNode.id)} type="button">
-                        {nativeGraphLoadingSlug === selectedGraphNode.id ? "读取..." : "读取原生上下文"}
+                        {nativeGraphLoadingSlug === selectedGraphNode.id ? "读取..." : isCustomerWorkspace ? "读取支撑信息" : "读取原生上下文"}
                       </button>
                     </div>
                   </div>
@@ -2968,7 +2968,7 @@ export function WorkspaceFilePanel({
               ) : null}
               {(nativeGraphContext || nativeGraphMessage) ? (
                 <section className="workspace-knowledge-graph-section">
-                  <h3>GBrain 原生上下文</h3>
+                  <h3>{isCustomerWorkspace ? "客户情报支撑信息" : "GBrain 原生上下文"}</h3>
                   {nativeGraphMessage ? <p className="workspace-knowledge-empty">{nativeGraphMessage}</p> : null}
                   {nativeGraphContext && nativeCounts ? (
                     <div className="workspace-native-context-card">

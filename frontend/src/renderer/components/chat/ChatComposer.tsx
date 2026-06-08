@@ -11,7 +11,6 @@ import {
   SendIcon,
   SettingsIcon,
   StopIcon,
-  WorkspaceIcon,
   XmarkIcon,
 } from "../LineIcons";
 
@@ -102,6 +101,16 @@ export function ChatComposer({ controller }: ChatComposerProps) {
       : hasUnauthorizedLocalAttachments
         ? "请先确认本机选择文件"
         : "发送";
+    const attachmentButtonLabel = isUploadingAttachments
+      ? "附件处理中"
+      : "添加附件";
+    const handleAttachmentButtonClick = () => {
+      if (window.projectR?.privateWorkspace) {
+        void handleChoosePrivateWorkspaceFiles();
+        return;
+      }
+      fileInputRef.current?.click();
+    };
     return (
       <div className="composer-wrap">
         <div className="composer" ref={composerRef}>
@@ -126,41 +135,50 @@ export function ChatComposer({ controller }: ChatComposerProps) {
           ) : null}
           {pendingAttachments.length ? (
             <div className="composer-attachments">
-              {(pendingAttachments as any[]).map((attachment: any) => (
-                <div
-                  className={`composer-attachment-chip is-${attachment.kind} is-${attachment.source_scope} ${attachment.authorization_status === "authorized" ? "is-authorized" : ""}`}
-                  key={pendingAttachmentKey(attachment)}
-                  title={attachment.original_name}
-                >
-                  <span className="composer-attachment-badge">{attachment.input_source === "workspace_reference" ? "引用" : "附件"}</span>
-                  {attachment.previewUrl ? (
-                    <img alt="" className="composer-attachment-thumb" src={attachment.previewUrl} />
-                  ) : (
-                    <span className="composer-attachment-kind">
-                      {attachment.kind === "pdf" ? "PDF" : attachment.kind === "text" ? "TXT" : <PaperclipIcon />}
-                    </span>
-                  )}
-                  <span className="composer-attachment-name">{attachment.original_name}</span>
-                  <small className="composer-attachment-meta">
-                    {attachmentSourceLabel(attachment)} · {pendingAttachmentStatusLabel(attachment)} · {pendingAttachmentSendFormLabel(attachment, mode)} · {pendingAttachmentTargetLabel(mode)} · {formatAttachmentSize(attachment.size)}
-                  </small>
-                  {attachment.preprocess?.summary ? (
-                    <em>{attachment.preprocess.summary}</em>
-                  ) : null}
-                  <button
-                    aria-label={`移除附件：${attachment.original_name}`}
-                    className="composer-attachment-remove"
-                    onClick={() => void handleRemovePendingAttachment(attachment)}
-                    title="移除附件"
-                    type="button"
+              {(pendingAttachments as any[]).map((attachment: any) => {
+                const attachmentMeta = [
+                  attachmentSourceLabel(attachment),
+                  pendingAttachmentStatusLabel(attachment),
+                  pendingAttachmentSendFormLabel(attachment, mode),
+                  pendingAttachmentTargetLabel(mode),
+                  formatAttachmentSize(attachment.size),
+                ].filter(Boolean);
+                return (
+                  <div
+                    className={`composer-attachment-chip is-${attachment.kind} is-${attachment.source_scope} ${attachment.authorization_status === "authorized" ? "is-authorized" : ""}`}
+                    key={pendingAttachmentKey(attachment)}
+                    title={attachment.original_name}
                   >
-                    <XmarkIcon />
-                  </button>
-                </div>
-              ))}
+                    <span className="composer-attachment-badge">{attachment.input_source === "workspace_reference" ? "引用" : "附件"}</span>
+                    {attachment.previewUrl ? (
+                      <img alt={attachment.original_name} className="composer-attachment-thumb" src={attachment.previewUrl} />
+                    ) : (
+                      <span className="composer-attachment-kind">
+                        {attachment.kind === "pdf" ? "PDF" : attachment.kind === "text" ? "TXT" : <PaperclipIcon />}
+                      </span>
+                    )}
+                    <span className="composer-attachment-name">{attachment.original_name}</span>
+                    <small className="composer-attachment-meta">
+                      {attachmentMeta.map((item: string) => <span key={`${pendingAttachmentKey(attachment)}-${item}`}>{item}</span>)}
+                    </small>
+                    {attachment.preprocess?.summary ? (
+                      <em>{attachment.preprocess.summary}</em>
+                    ) : null}
+                    <button
+                      aria-label={`移除附件：${attachment.original_name}`}
+                      className="composer-attachment-remove"
+                      onClick={() => void handleRemovePendingAttachment(attachment)}
+                      title="移除附件"
+                      type="button"
+                    >
+                      <XmarkIcon />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           ) : null}
-          {isUploadingAttachments ? <div className="composer-uploading">附件处理中...</div> : null}
+          {isUploadingAttachments ? <div className="composer-uploading">附件处理中</div> : null}
           {(!selectedPromptIsDefault || selectedSkill || selectedBuiltinCommand) ? (
             <div className="composer-context-row">
               {!selectedPromptIsDefault ? (
@@ -229,7 +247,7 @@ export function ChatComposer({ controller }: ChatComposerProps) {
                     role="option"
                     type="button"
                   >
-                    <span className="skill-candidate-icon">{isCommand ? "/" : "◆"}</span>
+                    <span className="skill-candidate-icon">{isCommand ? "/" : "S"}</span>
                     <span className="skill-candidate-copy">
                       <span className="skill-candidate-title">
                         <strong>{label}</strong>
@@ -270,26 +288,16 @@ export function ChatComposer({ controller }: ChatComposerProps) {
                 ref={fileInputRef}
                 type="file"
               />
-                <button
-                  className="composer-tool-icon"
-                  data-tooltip={isUploadingAttachments ? "附件处理中" : "添加会话临时附件"}
-                  disabled={isUploadingAttachments}
-                  onClick={() => fileInputRef.current?.click()}
-                title="添加会话临时附件"
+              <button
+                className="composer-tool-icon"
+                data-tooltip={attachmentButtonLabel}
+                disabled={isUploadingAttachments}
+                onClick={handleAttachmentButtonClick}
+                title="添加附件"
                 type="button"
-                >
-                  <PaperclipIcon />
-                </button>
-                <button
-                  className="composer-tool-icon"
-                  data-tooltip={isUploadingAttachments ? "附件处理中" : "从本机选择文件"}
-                  disabled={isUploadingAttachments}
-                  onClick={() => void handleChoosePrivateWorkspaceFiles()}
-                  title="从本机选择文件"
-                  type="button"
-                >
-                  <WorkspaceIcon />
-                </button>
+              >
+                <PaperclipIcon />
+              </button>
               <div className="composer-config-group" aria-label="模型配置">
                 <div className="composer-model-select" ref={modelSelectRef}>
                   <button
@@ -341,7 +349,7 @@ export function ChatComposer({ controller }: ChatComposerProps) {
                           );
                         })}
                         {modelsLoading ? (
-                          <div className="model-menu-empty">读取模型配置...</div>
+                          <div className="model-menu-empty">读取模型配置</div>
                         ) : null}
                         {!modelsLoading && modelOptions.length === 0 ? (
                           <div className="model-menu-empty">{modelConfigError || "暂无已配置模型"}</div>

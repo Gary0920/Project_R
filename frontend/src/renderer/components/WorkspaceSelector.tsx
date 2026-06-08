@@ -81,7 +81,7 @@ function sortDirectoryProjects(a: DirectoryWorkspace, b: DirectoryWorkspace) {
 export function WorkspaceSelector({ apiOptions, canCreateProject = false, onWorkspaceChanged }: WorkspaceSelectorProps) {
   const [workspaces, setWorkspaces] = useAtom(workspacesAtom);
   const [activeWorkspaceId, setActiveWorkspaceId] = useAtom(activeWorkspaceIdAtom);
-  const [isOpen, setIsOpen] = useState(true);
+  const [isOpen, setIsOpen] = useState(false);
   const [directoryOpen, setDirectoryOpen] = useState(false);
   const [directoryQuery, setDirectoryQuery] = useState("");
   const [directoryResults, setDirectoryResults] = useState<DirectoryWorkspace[]>([]);
@@ -326,13 +326,12 @@ export function WorkspaceSelector({ apiOptions, canCreateProject = false, onWork
         <button
           className="workspace-section-toggle"
           onClick={() => setIsOpen((current) => !current)}
-          title="工作区"
+          title={activeWorkspace ? `当前工作区：${activeWorkspace.name}` : "未选择工作区"}
           type="button"
         >
           <span className="workspace-section-title">
             <WorkspaceIcon />
-          <span>工作区</span>
-            {activeWorkspace ? <small>{activeWorkspace.name}</small> : null}
+            <span>{activeWorkspace?.name ?? "未选择工作区"}</span>
           </span>
           <ChevronDownIcon className={isOpen ? "workspace-chevron is-open" : "workspace-chevron"} />
         </button>

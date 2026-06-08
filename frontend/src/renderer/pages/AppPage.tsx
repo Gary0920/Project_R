@@ -85,7 +85,7 @@ import { AppWorkspaceChrome } from "../components/chat/AppWorkspaceChrome";
 import { ChatConversationPane } from "../components/chat/ChatConversationPane";
 import { PROJECT_R_BUILTIN_PROMPT } from "../constants/prompts";
 type SplitPaneKey = "left" | "right";
-type UtilityPanel = "workspace" | "customer-intelligence" | "prompt" | "skills" | "source";
+type UtilityPanel = "workspace" | "customer-intelligence" | "prompt" | "skills" | "source" | "crm";
 type RenameScope = "header" | "sidebar";
 type SettingsAdminTab = "overview" | "users" | "reviews" | "gbrain" | "templates" | "updates" | "audit";
 type ClientUpdateStep = "available" | "downloading" | "installing" | "ready" | "failed";
@@ -125,7 +125,7 @@ type ModelOption = {
   isDefault: boolean;
 };
 
-const FALLBACK_CLIENT_VERSION = "0.1.0";
+const FALLBACK_CLIENT_VERSION = import.meta.env.VITE_APP_VERSION || "0.1.0";
 const UPDATE_DOWNLOAD_DRY_RUN = import.meta.env.DEV || import.meta.env.VITE_UPDATE_DRY_RUN === "1";
 
 const SESSION_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
@@ -158,6 +158,38 @@ function formatAttachmentSize(size: number) {
 function makeLocalAttachmentId() {
   const randomPart = Math.random().toString(36).slice(2, 10);
   return `local-${Date.now()}-${randomPart}`;
+}
+
+function clientVersionKey(version: string) {
+  const cleaned = version.trim().replace(/^[vV]/, "");
+  const values = cleaned.split(/[.\-_+]/).map((part) => {
+    const match = part.match(/^(\d+)/);
+    return match ? Number(match[1]) : -1;
+  });
+  while (values.length < 4) values.push(0);
+  return values.slice(0, 4);
+}
+
+function compareClientVersions(left: string, right: string) {
+  const leftKey = clientVersionKey(left);
+  const rightKey = clientVersionKey(right);
+  for (let index = 0; index < Math.max(leftKey.length, rightKey.length); index += 1) {
+    const leftValue = leftKey[index] ?? 0;
+    const rightValue = rightKey[index] ?? 0;
+    if (leftValue !== rightValue) return leftValue > rightValue ? 1 : -1;
+  }
+  return 0;
+}
+
+async function resolveCurrentClientVersion() {
+  try {
+    const version = await window.projectR?.updates?.getCurrentVersion?.();
+    const normalized = version?.trim();
+    if (normalized) return normalized;
+  } catch {
+    // Browser/dev renderer falls back to the build-time package version.
+  }
+  return FALLBACK_CLIENT_VERSION;
 }
 
 function pendingAttachmentKey(attachment: PendingSessionAttachment) {
@@ -1157,14 +1189,23 @@ export function AppPage() {
 
   async function checkForClientUpdate() {
     try {
-      const currentVersion = await (window.projectR?.updates?.getCurrentVersion?.() ?? Promise.resolve(FALLBACK_CLIENT_VERSION));
+      const currentVersion = await resolveCurrentClientVersion();
       const platform = window.projectR?.platform ?? "win32";
-      setClientVersion(currentVersion || FALLBACK_CLIENT_VERSION);
+      setClientVersion(currentVersion);
       const response = await getLatestClientUpdate(
         { baseUrl: serverUrl, token: null, onUnauthorized: undefined },
-        currentVersion || FALLBACK_CLIENT_VERSION,
+        currentVersion,
         platform,
       );
+      if (response.latest && compareClientVersions(currentVersion, response.latest.version) >= 0) {
+        setAvailableUpdate(null);
+        setUpdateDialogOpen(false);
+        setUpdateStep("available");
+        setUpdateProgress(null);
+        setDownloadedUpdatePath("");
+        setUpdateError("");
+        return;
+      }
       if (response.update_available && response.latest) {
         setAvailableUpdate(response.latest);
         setUpdateStep("available");
@@ -2573,7 +2614,7 @@ export function AppPage() {
     try {
       const tooLarge = files.find((file) => file.size > SESSION_ATTACHMENT_MAX_BYTES);
       if (tooLarge) {
-        throw new Error(`${tooLarge.name} 超过 20MB，请改用项目文件上传。`);
+        throw new Error(`${tooLarge.name} 超过 20MB，请改用当前工作区文件管理上传。`);
       }
       if (target?.pane) {
         setActiveSplitPane(target.pane);
@@ -2608,7 +2649,7 @@ export function AppPage() {
         {
           ...attachment,
           relative_path: item.path,
-          source_label: activeWorkspace?.workspace_kind === "customer" ? "客户资料引用" : "项目资料引用",
+          source_label: activeWorkspace?.workspace_kind === "customer" ? "CRM 文件引用" : "项目资料引用",
         },
       ]);
       window.requestAnimationFrame(() => textareaRef.current?.focus());
@@ -2631,7 +2672,7 @@ export function AppPage() {
       if (!payloads.length) return;
       const tooLarge = payloads.find((file) => file.size > SESSION_ATTACHMENT_MAX_BYTES);
       if (tooLarge) {
-        throw new Error(`${tooLarge.fileName} 超过 20MB，请改用项目文件上传。`);
+        throw new Error(`${tooLarge.fileName} 超过 20MB，请改用当前工作区文件管理上传。`);
       }
       const attachments = await Promise.all(payloads.map((payload) => {
         const file = fileFromPrivateWorkspacePayload(payload);
@@ -3014,6 +3055,7 @@ export function AppPage() {
         companyPrompts,
         contextMenu,
         currentUser,
+        clientVersion,
         deleteConfirmSessionId,
         deleteLastMessageTarget,
         deleteMessageTarget,

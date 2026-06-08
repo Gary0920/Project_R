@@ -474,9 +474,6 @@ export function SettingsModal({ isOpen, onClose, initialSection, initialAdminTab
   const [companyPrompts, setCompanyPrompts] = useState<CompanyPromptResponse[]>([]);
   const [userPrompts, setUserPrompts] = useState<UserPromptRecord[]>([]);
   const [promptDraft, setPromptDraft] = useState({ id: "", name: "", content: "" });
-  const [privateWorkspace, setPrivateWorkspace] = useState<PrivateWorkspaceConfig | null>(null);
-  const [privateWorkspaceMessage, setPrivateWorkspaceMessage] = useState("");
-
   // Admin state
   const [adminUsers, setAdminUsers] = useState<AdminUserResponse[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogResponse[]>([]);
@@ -650,24 +647,6 @@ export function SettingsModal({ isOpen, onClose, initialSection, initialAdminTab
     listCompanyPrompts(apiOptions).then(setCompanyPrompts).catch(() => setCompanyPrompts([]));
     window.projectR?.prompts?.listUser().then(setUserPrompts).catch(() => setUserPrompts([]));
   }, [serverUrl, token]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    if (!window.projectR?.privateWorkspace) {
-      setPrivateWorkspace(null);
-      setPrivateWorkspaceMessage("本机文件处理仅在桌面客户端可用。");
-      return;
-    }
-    window.projectR.privateWorkspace.getConfig()
-      .then((config) => {
-        setPrivateWorkspace(config);
-        setPrivateWorkspaceMessage("");
-      })
-      .catch(() => {
-        setPrivateWorkspace(null);
-        setPrivateWorkspaceMessage("本机文件处理状态读取失败。");
-      });
-  }, [isOpen]);
 
   useEffect(() => {
     setProfileDraft({
@@ -859,49 +838,6 @@ export function SettingsModal({ isOpen, onClose, initialSection, initialAdminTab
     const next = await window.projectR?.prompts?.deleteUser(id);
     setUserPrompts(next ?? []);
     if (promptDraft.id === id) setPromptDraft({ id: "", name: "", content: "" });
-  }
-
-  async function handleChoosePrivateWorkspaceRoot() {
-    if (!window.projectR?.privateWorkspace) return;
-    try {
-      const config = await window.projectR.privateWorkspace.chooseRoot();
-      setPrivateWorkspace(config);
-      setPrivateWorkspaceMessage(config.isDefault ? "已使用默认本机文件处理配置。" : "已切换本机文件处理目录。");
-    } catch (error) {
-      setPrivateWorkspaceMessage(error instanceof Error ? error.message : "本机文件目录选择失败。");
-    }
-  }
-
-  async function handleOpenPrivateWorkspaceRoot() {
-    if (!window.projectR?.privateWorkspace) return;
-    try {
-      const config = await window.projectR.privateWorkspace.openRoot();
-      setPrivateWorkspace(config);
-      setPrivateWorkspaceMessage("已打开本机文件处理目录。");
-    } catch (error) {
-      setPrivateWorkspaceMessage(error instanceof Error ? error.message : "本机文件处理目录打开失败。");
-    }
-  }
-
-  async function handleResetPrivateWorkspaceRoot() {
-    if (!window.projectR?.privateWorkspace) return;
-    try {
-      const config = await window.projectR.privateWorkspace.resetRoot();
-      setPrivateWorkspace(config);
-      setPrivateWorkspaceMessage("已恢复默认本机文件处理配置。");
-    } catch (error) {
-      setPrivateWorkspaceMessage(error instanceof Error ? error.message : "恢复默认本机文件处理配置失败。");
-    }
-  }
-
-  async function handleQuickDropPrivateWorkspaceFiles() {
-    if (!window.projectR?.privateWorkspace) return;
-    try {
-      const result = await window.projectR.privateWorkspace.quickDrop();
-      setPrivateWorkspaceMessage(result.added.length ? `已快速添加 ${result.added.length} 个文件到本机文件处理目录。` : "未选择文件。");
-    } catch (error) {
-      setPrivateWorkspaceMessage(error instanceof Error ? error.message : "快速添加本机文件失败。");
-    }
   }
 
   // Admin handlers
@@ -1814,7 +1750,6 @@ export function SettingsModal({ isOpen, onClose, initialSection, initialAdminTab
                 }}
                 pickerPos={pickerPos}
                 preferences={preferences}
-                privateWorkspaceMessage={privateWorkspaceMessage}
                 profileAvatarUrl={profileAvatarUrl}
                 profileDraft={profileDraft}
                 profileLocked={profileLocked}

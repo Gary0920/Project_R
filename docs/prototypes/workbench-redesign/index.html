@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project_R 工作台 UI 重设计原型</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+    background: #f3f4f6;
+    color: #111827;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 40px 20px;
+  }
+  .container { max-width: 960px; width: 100%; }
+  h1 { font-size: 28px; font-weight: 800; margin-bottom: 8px; letter-spacing: -0.5px; }
+  .subtitle { color: #6b7280; font-size: 15px; margin-bottom: 32px; line-height: 1.6; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .card {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    padding: 28px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-decoration: none;
+    color: inherit;
+    display: block;
+  }
+  .card:hover { box-shadow: 0 12px 32px rgba(0,0,0,0.10); transform: translateY(-2px); }
+  .card-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 14px;
+  }
+  .card-a .card-badge { background: #d1fae5; color: #065f46; }
+  .card-b .card-badge { background: #e0e7ff; color: #3730a3; }
+  .card h2 { font-size: 20px; font-weight: 700; margin-bottom: 10px; }
+  .card p { color: #4b5563; font-size: 13.5px; line-height: 1.7; margin-bottom: 16px; }
+  .card-meta { display: flex; flex-wrap: wrap; gap: 8px; }
+  .card-meta span {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    color: #374151;
+  }
+  .footer {
+    margin-top: 32px;
+    padding-top: 20px;
+    border-top: 1px solid #e5e7eb;
+    font-size: 12.5px;
+    color: #6b7280;
+    line-height: 1.8;
+  }
+  .footer a { color: #4f46e5; text-decoration: none; }
+  @media (max-width: 720px) {
+    .cards { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Project_R 工作台 UI 重设计原型</h1>
+  <p class="subtitle">
+    本原型用于确认新的整体风格、布局、通知系统、深浅色主题和客户情报面板设计方向。<br>
+    所有数据均为静态假数据，不接真实 API，可直接用浏览器打开。
+  </p>
+
+  <div class="cards">
+    <a class="card card-a" href="variant-a.html">
+      <div class="card-badge">变体 A · 推荐</div>
+      <h2>经典三栏 · 对话优先</h2>
+      <p>
+        继承 Proma 布局节奏，左侧导航 + 中间对话 + 右侧上下文面板。<br>
+        柔和浅绿强调色，卡片层次分明，适合长时间办公。<br>
+        客户情报收纳于右侧面板，与资料文件并列。
+      </p>
+      <div class="card-meta">
+        <span>绿色强调色</span>
+        <span>260px 侧栏</span>
+        <span>右侧情报面板</span>
+        <span>通知下拉</span>
+      </div>
+    </a>
+
+    <a class="card card-b" href="variant-b.html">
+      <div class="card-badge">变体 B · 探索</div>
+      <h2>高密度 · 情报主舞台</h2>
+      <p>
+        更大胆的信息架构：客户情报从侧边窄条解放到主舞台全宽展示。<br>
+        紧凑侧栏、扁平输入区、右侧滑入通知抽屉。<br>
+        更适合"客户情报是核心业务视图"的定位。
+      </p>
+      <div class="card-meta">
+        <span>靛蓝强调色</span>
+        <span>200px 紧凑侧栏</span>
+        <span>情报全宽覆盖</span>
+        <span>通知侧抽屉</span>
+      </div>
+    </a>
+  </div>
+
+  <div class="footer">
+    <strong>操作提示：</strong> 在每个变体页面左下角有「主题 / 风格 / 面板」切换控件，可实时预览浅色/深色模式。<br>
+    变体页面内所有按钮、Tab、下拉菜单均有交互（纯前端 JS），可点击体验。<br>
+    <a href="README.md" target="_blank">查看完整设计取舍说明与推荐结论 →</a>
+  </div>
+</div>
+</body>
+</html>

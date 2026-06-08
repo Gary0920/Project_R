@@ -37,7 +37,6 @@ export type GeneralSectionProps = {
   onSaveNickname: (nickname: string) => Promise<void>;
   pickerPos: PickerPosition | null;
   preferences: PreferenceState;
-  privateWorkspaceMessage: string;
   profileAvatarUrl: string | null;
   profileDraft: ProfileDraft;
   profileLocked: boolean;
@@ -64,7 +63,6 @@ export function GeneralSection({
   onSaveNickname,
   pickerPos,
   preferences,
-  privateWorkspaceMessage,
   profileAvatarUrl,
   profileDraft,
   profileLocked,
@@ -76,12 +74,14 @@ export function GeneralSection({
   showAvatarPicker,
   updatePreference,
 }: GeneralSectionProps) {
+  const profileLockMessage = "系统内置管理员账号，头像和昵称由系统维护。";
+
   return (
     <>
       <div className="settings-section">
         <div className="settings-section-header">
           <h3>用户档案</h3>
-          <p>设置你的头像和显示名称</p>
+          <p>{profileLocked ? "系统内置管理员账号为只读档案" : "设置你的头像和显示名称"}</p>
         </div>
         <div className="settings-card">
           <div className="settings-card-row" style={{ gap: 16, position: "relative" }}>
@@ -90,7 +90,7 @@ export function GeneralSection({
               className={`profile-avatar ${profileLocked ? "is-locked" : ""}`}
               onClick={() => {
                 if (profileLocked) {
-                  setMessage("系统内置管理员账号不可修改。");
+                  setMessage(profileLockMessage);
                   return;
                 }
                 const rect = avatarRef.current?.getBoundingClientRect();
@@ -109,7 +109,7 @@ export function GeneralSection({
                 }
                 setShowAvatarPicker((prev) => !prev);
               }}
-              title={profileLocked ? "系统内置管理员账号不可修改" : "更换头像"}
+              title={profileLocked ? profileLockMessage : "更换头像"}
               style={{ cursor: profileLocked ? "default" : "pointer", position: "relative", width: 64, height: 64, borderRadius: "20%", overflow: "hidden", flexShrink: 0, display: "grid", placeItems: "center", background: "hsl(var(--muted))", fontSize: 28 }}
             >
               {profileAvatarUrl ? (
@@ -117,15 +117,17 @@ export function GeneralSection({
               ) : (
                 <span>{profileDraft.avatar || "👤"}</span>
               )}
-              <div
-                style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", background: "rgba(0,0,0,0.4)", opacity: 0, transition: "opacity 0.15s", pointerEvents: "none" }}
-                className="profile-avatar-overlay"
-              >
-                <CameraIcon className="profile-avatar-camera" />
-              </div>
+              {!profileLocked ? (
+                <div
+                  style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", background: "rgba(0,0,0,0.4)", opacity: 0, transition: "opacity 0.15s", pointerEvents: "none" }}
+                  className="profile-avatar-overlay"
+                >
+                  <CameraIcon className="profile-avatar-camera" />
+                </div>
+              ) : null}
             </div>
 
-            {showAvatarPicker && pickerPos && (
+            {!profileLocked && showAvatarPicker && pickerPos && (
               <div className="profile-avatar-picker" ref={avatarPickerRef} style={{ top: pickerPos.top, left: pickerPos.left }}>
                 <div className="profile-avatar-picker-grid">
                   {commonEmojis.map((emoji) => (
@@ -174,48 +176,31 @@ export function GeneralSection({
                   style={{ fontSize: 18, fontWeight: 600, color: "hsl(var(--foreground))", background: "transparent", border: "none", borderBottom: "2px solid hsl(var(--foreground))", outline: "none", width: "100%", maxWidth: 240, padding: "2px 0" }}
                 />
               ) : (
-                <button
-                  onClick={() => {
-                    if (profileLocked) {
-                      setMessage("系统内置管理员账号不可修改。");
-                      return;
-                    }
-                    setNameInput(profileDraft.nickname);
-                    setIsEditingName(true);
-                  }}
-                  style={{ fontSize: 18, fontWeight: 600, color: "hsl(var(--foreground))", background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}
-                >
-                  <span>{profileDraft.nickname || currentUser?.nickname || "未设置昵称"}</span>
-                  <EditIcon className="profile-name-edit-icon" />
-                </button>
+                profileLocked ? (
+                  <div className="profile-name-readonly">
+                    <span>{profileDraft.nickname || currentUser?.nickname || "未设置昵称"}</span>
+                    <small>系统维护</small>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setNameInput(profileDraft.nickname);
+                      setIsEditingName(true);
+                    }}
+                    style={{ fontSize: 18, fontWeight: 600, color: "hsl(var(--foreground))", background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}
+                  >
+                    <span>{profileDraft.nickname || currentUser?.nickname || "未设置昵称"}</span>
+                    <EditIcon className="profile-name-edit-icon" />
+                  </button>
+                )
               )}
               <div className="profile-meta-row">
                 <span>账号 {currentUser?.username ?? "-"}</span>
                 <span>最近登录 {formatOptionalDate(currentUser?.last_login_at)}</span>
               </div>
+              {profileLocked ? <p className="profile-lock-note">{profileLockMessage}</p> : null}
             </div>
           </div>
-        </div>
-      </div>
-
-      <div className="settings-section">
-        <div className="settings-section-header">
-          <h3>本机文件</h3>
-          <p>从任意本机路径按次选择文件；不再使用固定私人空间目录作为产品入口</p>
-        </div>
-        <div className="settings-card private-workspace-card">
-          <div className="settings-card-row settings-path-row">
-            <div className="settings-row-info">
-              <strong>本机文件处理</strong>
-              <span>{window.projectR?.privateWorkspace ? "可用：支持本机文件摘录、图片预览和发送前授权" : "仅桌面客户端可用"}</span>
-            </div>
-            <div className="settings-row-control private-workspace-actions">
-              <span className="settings-inline-note">在聊天输入框使用附件按钮选择文件。</span>
-            </div>
-          </div>
-          {privateWorkspaceMessage ? (
-            <p className="private-workspace-message">{privateWorkspaceMessage}</p>
-          ) : null}
         </div>
       </div>
 

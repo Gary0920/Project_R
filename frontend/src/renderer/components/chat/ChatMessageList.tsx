@@ -40,18 +40,10 @@ function formatAttachmentSize(size: number) {
 
 function attachmentSourceLabel(attachment: { source_label?: string; source_scope?: string }) {
   if (attachment.source_label) return attachment.source_label;
-  if (attachment.source_scope === "workspace") return "项目资料";
+  if (attachment.source_scope === "workspace") return "工作区文件";
   if (attachment.source_scope === "local_private") return "本机文件";
   return "会话附件";
 }
-
-const WHIMSICAL_WORDS = [
-  "Discombobulating", "Concocting", "Moonwalking", "Mulling",
-  "Purring", "Doodling", "Pondering", "Exploring", "Discovering",
-  "Brewing", "Unraveling", "Daydreaming", "Juggling",
-  "Tinkering", "Marinating", "Orchestrating", "Harmonizing",
-  "Contemplating", "Synthesizing", "Twiddling",
-];
 
 export type ChatMessageListController = Record<string, any> & {
   apiOptions: ApiClientOptions;
@@ -611,15 +603,54 @@ function agentEventStatusLabel(status: string) {
 
 function renderAgentRunCard(agentRun: AgentRunResponse) {
   const events = agentRun.events ?? [];
+  const completedEvents = events.filter((event) => event.status === "completed").length;
+  const isPlanning = ["queued", "waiting"].includes(agentRun.status);
+  const activeEvent = events.find((event) => event.status === "running" || event.status === "waiting")
+    ?? events.find((event) => event.status === "queued")
+    ?? events[events.length - 1];
+  const failedEvent = events.find((event) => event.status === "failed");
+  const progressPercent = events.length ? Math.round((completedEvents / events.length) * 100) : (agentRun.status === "completed" ? 100 : 0);
+  const planSummary = events.length
+    ? events.slice(0, 4).map((event) => event.title).join(" / ")
+    : "等待后端返回执行步骤。";
   return (
     <div className={`message-agent-run-card is-${agentRun.status}`}>
       <div className="message-agent-run-header">
         <span className="message-agent-run-icon"><AgentIcon /></span>
         <div>
           <strong>{agentRun.title}</strong>
-          <span>{agentRunStatusLabel(agentRun.status)}</span>
+          <span>{isPlanning ? "计划模式" : agentRunStatusLabel(agentRun.status)}{events.length ? ` · 步骤 ${completedEvents}/${events.length}` : ""}</span>
         </div>
       </div>
+      {events.length ? (
+        <div className="message-agent-progress" aria-label={`执行进度 ${progressPercent}%`}>
+          <span style={{ width: `${progressPercent}%` }} />
+        </div>
+      ) : null}
+      <div className="message-agent-plan-grid">
+        <section>
+          <span>任务理解</span>
+          <p>{agentRun.title || "Agent 正在理解本次任务目标。"}</p>
+        </section>
+        <section>
+          <span>执行计划</span>
+          <p>{planSummary}</p>
+        </section>
+      </div>
+      {activeEvent || failedEvent ? (
+        <div className={`message-agent-current-step ${failedEvent ? "is-failed" : ""}`}>
+          <span>{failedEvent ? "失败位置" : "当前步骤"}</span>
+          <strong>{(failedEvent ?? activeEvent)?.title}</strong>
+          {(failedEvent ?? activeEvent)?.detail ? <p>{(failedEvent ?? activeEvent)?.detail}</p> : null}
+        </div>
+      ) : null}
+      {isPlanning ? (
+        <div className="message-agent-plan-actions">
+          <button disabled type="button">确认执行</button>
+          <button disabled type="button">修改计划</button>
+          <small>当前后端尚未接入计划审批；此处只展示计划形态。</small>
+        </div>
+      ) : null}
       {events.length ? (
         <ol className="message-agent-event-list">
           {events.map((event) => (
@@ -716,15 +747,9 @@ function renderContextTraceCard(
                 </button>
               ) : null}
             </span>
-            {gbrainConflicts.map((item, index) => (
-              <small className="is-conflict" key={`gbrain-conflict-${index}`}>冲突：{item}</small>
-            ))}
-            {gbrainGaps.map((item, index) => (
-              <small className="is-gap" key={`gbrain-gap-${index}`}>缺口：{item}</small>
-            ))}
-            {gbrainWarnings.map((item, index) => (
-              <small className="is-warning" key={`gbrain-warning-${index}`}>警告：{item}</small>
-            ))}
+            {gbrainConflicts.length ? <small className="is-conflict">冲突 {gbrainConflicts.length} 条</small> : null}
+            {gbrainGaps.length ? <small className="is-gap">缺口 {gbrainGaps.length} 条</small> : null}
+            {gbrainWarnings.length ? <small className="is-warning">警告 {gbrainWarnings.length} 条</small> : null}
           </div>
         ) : null}
         {(prompt?.selected_prompt_id || prompt?.system_prompt_provided || contextTrace.skill?.skill_name) ? (
@@ -779,23 +804,34 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
     token,
   } = controller;
 
-function getRandomWord(prev?: string): string {
-    const pool = prev ? WHIMSICAL_WORDS.filter((w) => w !== prev) : WHIMSICAL_WORDS;
-    return pool[Math.floor(Math.random() * pool.length)];
+  function getLoadingProcessSteps(isInline = false) {
+    if (mode === "agent") {
+      return isInline
+        ? ["正在整理执行步骤", "正在更新任务状态", "正在生成结果"]
+        : ["正在理解任务目标", "正在整理执行计划", "正在准备步骤状态"];
+    }
+    const latestUserMessage = [...messages].reverse().find((message) => message.role === "user") as any;
+    const latestContent = String(latestUserMessage?.content ?? "").trim();
+    const hasAttachments = Array.isArray(latestUserMessage?.attachments) && latestUserMessage.attachments.length > 0;
+    if (latestContent.startsWith("/query")) {
+      return ["正在识别知识库问题", "正在确认查询范围", "正在生成回答"];
+    }
+    if (hasAttachments) {
+      return ["正在读取本轮附件", "正在整理上下文", "正在生成回答"];
+    }
+    return ["正在理解问题", "正在整理上下文", "正在生成回答"];
   }
 
   function LoadingPlaceholder() {
-    const [word, setWord] = useState(() => getRandomWord());
+    const [stepIndex, setStepIndex] = useState(0);
+    const processSteps = getLoadingProcessSteps();
 
     useEffect(() => {
-      let prev = word;
       const interval = window.setInterval(() => {
-        const next = getRandomWord(prev);
-        prev = next;
-        setWord(next);
+        setStepIndex((value) => (value + 1) % processSteps.length);
       }, 2000);
       return () => window.clearInterval(interval);
-    }, []);
+    }, [processSteps.length]);
 
     return (
       <article className="message-row message-row-assistant message-row-loading">
@@ -814,7 +850,8 @@ function getRandomWord(prev?: string): string {
                 <circle className="pl__ring pl__ring--c" cx="64" cy="64" r="56" fill="none" strokeWidth="16" transform="rotate(90,64,64)" />
                 <circle className="pl__ring pl__ring--d" cx="64" cy="64" r="56" fill="none" strokeWidth="16" transform="rotate(90,64,64)" />
               </svg>
-              <span className="loading-placeholder-text">{word}…</span>
+              <span className="loading-placeholder-text">{mode === "agent" ? "Agent 执行中" : "正在回复"}</span>
+              <small className="loading-process-text">{processSteps[stepIndex]}</small>
             </div>
           </div>
         </div>
@@ -823,17 +860,15 @@ function getRandomWord(prev?: string): string {
   }
 
   function InlineLoadingPlaceholder() {
-    const [word, setWord] = useState(() => getRandomWord());
+    const [stepIndex, setStepIndex] = useState(0);
+    const processSteps = getLoadingProcessSteps(true);
 
     useEffect(() => {
-      let prev = word;
       const interval = window.setInterval(() => {
-        const next = getRandomWord(prev);
-        prev = next;
-        setWord(next);
+        setStepIndex((value) => (value + 1) % processSteps.length);
       }, 2000);
       return () => window.clearInterval(interval);
-    }, []);
+    }, [processSteps.length]);
 
     return (
       <div className="loading-placeholder-inner loading-placeholder-inline">
@@ -843,7 +878,8 @@ function getRandomWord(prev?: string): string {
           <circle className="pl__ring pl__ring--c" cx="64" cy="64" r="56" fill="none" strokeWidth="16" transform="rotate(90,64,64)" />
           <circle className="pl__ring pl__ring--d" cx="64" cy="64" r="56" fill="none" strokeWidth="16" transform="rotate(90,64,64)" />
         </svg>
-        <span className="loading-placeholder-text">{word}...</span>
+        <span className="loading-placeholder-text">{mode === "agent" ? "执行中" : "生成中"}</span>
+        <small className="loading-process-text">{processSteps[stepIndex]}</small>
       </div>
     );
   }
@@ -975,8 +1011,8 @@ function getRandomWord(prev?: string): string {
           )}
           {renderMessageVersionBar(message)}
           {message.sources?.length ? (
-            <div className="message-sources">
-              <span className="message-sources-title">引用来源</span>
+            <div className="message-sources is-compact">
+              <span className="message-sources-title">引用来源：</span>
               {message.sources.map((source, index) => (
                 <button
                   className="message-source-item"
@@ -988,7 +1024,7 @@ function getRandomWord(prev?: string): string {
                   type="button"
                 >
                   <span className="message-source-index">[{index + 1}]</span>
-                  <span className="message-source-path">{source.section_path || source.source_title}</span>
+                  <span className="message-source-path">{source.section_path || source.source_title || source.file}</span>
                   <span className="message-source-file">{source.file}</span>
                 </button>
               ))}

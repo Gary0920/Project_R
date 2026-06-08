@@ -128,31 +128,34 @@ export function ChatConversationPane({ controller }: ChatConversationPaneProps) 
             </button>
             <button
               aria-pressed={sideBySideOpen}
-              className={`icon-button ${sideBySideOpen ? "is-active" : ""}`}
+              className={`business-tool-button chat-header-tool ${sideBySideOpen ? "is-active" : ""}`}
               onClick={handleToggleSideBySide}
               title={sideBySideOpen ? "关闭对话并排" : "左右并排两个对话"}
               type="button"
             >
               <SplitIcon />
+              <span>双对话</span>
             </button>
             {activeWorkspace?.workspace_kind !== "user" ? (
               <button
-                className={`icon-button ${utilityPanel === "workspace" ? "is-active" : ""}`}
+                className={`business-tool-button chat-header-tool ${utilityPanel === "workspace" ? "is-active" : ""}`}
                 onClick={() => setUtilityPanel((value: string | null) => value === "workspace" ? null : "workspace")}
-                title={utilityPanel === "workspace" ? "关闭工作区资料" : "工作区资料"}
+                title={utilityPanel === "workspace" ? "关闭文件管理" : "文件管理"}
                 type="button"
               >
                 <WorkspaceIcon />
+                <span>{activeWorkspace?.workspace_kind === "customer" ? "CRM 文件管理" : "文件管理"}</span>
               </button>
             ) : null}
             {activeWorkspace?.workspace_kind === "customer" ? (
               <button
-                className={`icon-button ${utilityPanel === "customer-intelligence" ? "is-active" : ""}`}
+                className={`business-tool-button chat-header-tool ${utilityPanel === "customer-intelligence" ? "is-active" : ""}`}
                 onClick={() => setUtilityPanel((value: string | null) => value === "customer-intelligence" ? null : "customer-intelligence")}
-                title={utilityPanel === "customer-intelligence" ? "关闭客户画像" : "客户画像"}
+                title={utilityPanel === "customer-intelligence" ? "关闭客户情报" : "客户情报"}
                 type="button"
               >
                 <BrainIcon />
+                <span>客户情报</span>
               </button>
             ) : null}
             {paneSession ? (
