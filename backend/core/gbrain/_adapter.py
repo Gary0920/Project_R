@@ -2135,6 +2135,53 @@ class GBrainAdapter:
             )
         return response
 
+    def schema_context(
+        self,
+        *,
+        source_id: str | None = None,
+        orphan_limit: int = 20,
+    ) -> dict[str, Any]:
+        target_source_id = source_id or self.settings.company_source_id
+        token, gate_error, credentials = self._get_think_bearer_token(target_source_id)
+        if gate_error:
+            return gate_error
+        response: dict[str, Any] = {
+            "status": "ok",
+            "method": "mcp",
+            "source_id": target_source_id,
+            "source_scope": {
+                "verified": self.settings.think_source_scope_verified,
+                "allowed_sources": list((credentials or {}).get("allowed_sources") or self._think_allowed_sources()),
+                "scope_is_token_bound": True,
+                "credential_source": (credentials or {}).get("source"),
+            },
+            "active_schema_pack": self._call_mcp_tool(
+                "get_active_schema_pack",
+                {},
+                bearer_token=token,
+                timeout_seconds=max(self.settings.timeout_seconds, 15.0),
+            ),
+            "schema_stats": self._call_mcp_tool(
+                "schema_stats",
+                {},
+                bearer_token=token,
+                timeout_seconds=max(self.settings.timeout_seconds, 15.0),
+            ),
+            "schema_graph": self._call_mcp_tool(
+                "schema_graph",
+                {},
+                bearer_token=token,
+                timeout_seconds=max(self.settings.timeout_seconds, 15.0),
+            ),
+            "schema_review_orphans": self._call_mcp_tool(
+                "schema_review_orphans",
+                {"limit": max(1, min(int(orphan_limit or 20), 200))},
+                bearer_token=token,
+                timeout_seconds=max(self.settings.timeout_seconds, 15.0),
+            ),
+        }
+        return response
+
     def _build_citation_fixer_prompt(
         self,
         *,

@@ -397,7 +397,7 @@ def _apply_frontmatter_policy(
             continue
         if value in (None, "", [], {}):
             continue
-        normalized = _normalize_frontmatter_value(value)
+        normalized = _normalize_source_event_value(value) if key_text == "source_events" else _normalize_frontmatter_value(value)
         if _should_preserve_frontmatter_key(key_text, source_scope=source_scope, source_file=source_file):
             preserved[key_text] = _merge_frontmatter_value(preserved.get(key_text), normalized)
         else:
@@ -453,10 +453,26 @@ def _normalize_frontmatter_value(value: Any) -> Any:
     return value
 
 
+def _normalize_source_event_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return re.sub(r"\[\[(.*?)]]", _frontmatter_wikilink_target, value)
+    if isinstance(value, list):
+        return [_normalize_source_event_value(item) for item in value if item not in (None, "")]
+    if isinstance(value, dict):
+        return {str(key): _normalize_source_event_value(item) for key, item in value.items() if item not in (None, "")}
+    return value
+
+
 def _frontmatter_wikilink_label(match: re.Match[str]) -> str:
     raw = match.group(1).strip()
     target, _, alias = raw.partition("|")
     return (alias or target).rsplit("/", 1)[-1].strip()
+
+
+def _frontmatter_wikilink_target(match: re.Match[str]) -> str:
+    raw = match.group(1).strip()
+    target, _, alias = raw.partition("|")
+    return (target or alias).strip()
 
 
 def _frontmatter_as_markdown(frontmatter: dict[str, Any]) -> str:
@@ -534,21 +550,77 @@ def _entities_as_markdown(values: list[str]) -> str:
     return "\n".join(f"- {value}" for value in values)
 
 
-def _timeline_signals(frontmatter: dict[str, Any], body: str) -> list[str]:
-    signals: list[str] = []
+def _timeline_signals(frontmatter: dict[str, Any], body: str) -> list[tuple[str, str]]:
+    signals: list[tuple[str, str]] = []
     for key, value in frontmatter.items():
         key_text = str(key).lower()
-        if any(marker in key_text for marker in ("date", "time", "created", "updated", "meeting")):
-            signals.append(f"{key}: {_value_as_text(value)}")
-    for match in re.finditer(r"\b(?:20\d{2})[-/](?:0?[1-9]|1[0-2])[-/](?:0?[1-9]|[12]\d|3[01])\b", body):
-        signals.append(match.group(0))
-    return _dedupe_strings(signals)
+        value_text = _value_as_text(value)
+        if any(marker in key_text for marker in ("date", "time", "created", "updated", "meeting", "source_events")):
+            for date in _extract_dates(value_text):
+                signals.append((date, f"{key}: {value_text}"))
+    for date, summary in _extract_dated_snippets(body):
+        signals.append((date, summary))
+    return _dedupe_timeline_signals(signals)
 
 
-def _timeline_as_markdown(values: list[str]) -> str:
+def _timeline_as_markdown(values: list[tuple[str, str]]) -> str:
     if not values:
         return "_No explicit timeline signals found by deterministic cleanup._"
-    return "\n".join(f"- {value}" for value in values)
+    return "\n".join(f"- **{date}** | {summary}" for date, summary in values)
+
+
+def _extract_dates(text: str) -> list[str]:
+    dates: list[str] = []
+    for match in re.finditer(r"\b(20\d{2})[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])\b", text):
+        date = _normalize_date_parts(match.group(1), match.group(2), match.group(3))
+        if date:
+            dates.append(date)
+    for match in re.finditer(r"\b(20\d{2})年(0?[1-9]|1[0-2])月(0?[1-9]|[12]\d|3[01])日?\b", text):
+        date = _normalize_date_parts(match.group(1), match.group(2), match.group(3))
+        if date:
+            dates.append(date)
+    for match in re.finditer(r"(?<!\d)(2[0-9])([01][0-9])([0-3][0-9])(?!\d)", text):
+        date = _normalize_date_parts(f"20{match.group(1)}", match.group(2), match.group(3))
+        if date:
+            dates.append(date)
+    return _dedupe_strings(dates)
+
+
+def _extract_dated_snippets(body: str) -> list[tuple[str, str]]:
+    signals: list[tuple[str, str]] = []
+    for line in body.splitlines():
+        stripped = line.strip(" -\t")
+        if not stripped:
+            continue
+        for date in _extract_dates(stripped):
+            signals.append((date, _compact_timeline_summary(stripped)))
+    return signals
+
+
+def _normalize_date_parts(year: str, month: str, day: str) -> str | None:
+    try:
+        parsed = datetime(int(year), int(month), int(day), tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return parsed.date().isoformat()
+
+
+def _compact_timeline_summary(value: str) -> str:
+    cleaned = re.sub(r"\s+", " ", value).strip()
+    cleaned = cleaned.strip("|-:： ")
+    return cleaned[:180] or "CRM source timeline signal"
+
+
+def _dedupe_timeline_signals(values: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
+    seen: set[tuple[str, str]] = set()
+    result: list[tuple[str, str]] = []
+    for date, summary in values:
+        key = (date.strip(), summary.strip())
+        if not key[0] or not key[1] or key in seen:
+            continue
+        seen.add(key)
+        result.append(key)
+    return result
 
 
 def _original_evidence(

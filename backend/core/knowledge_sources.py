@@ -409,15 +409,17 @@ class KnowledgeSources:
                 response = adapter.query(query, limit=8, detail="medium")
             except Exception as exc:
                 logger.warning("GBrain company-wiki query failed: %s", exc)
-                return []
+                continue
             if response.get("status") != "ok":
-                if response.get("status") not in {"auth_required", "disabled", "not_configured"}:
+                if response.get("status") in {"auth_required", "disabled", "not_configured"}:
+                    return []
+                else:
                     logger.warning(
                         "GBrain company-wiki query returned %s: %s",
                         response.get("status"),
                         response.get("error"),
                     )
-                return []
+                    continue
             sources = self._normalize_gbrain_results(response.get("result"))
             if not sources:
                 continue
@@ -964,6 +966,8 @@ def _best_company_local_excerpt(body: str, tokens: list[str]) -> str:
     best: tuple[int, str] | None = None
     lowered_tokens = [token.lower() for token in tokens]
     for paragraph in paragraphs[:80]:
+        if re.fullmatch(r"#{1,6}\s+.+", paragraph):
+            continue
         lowered = paragraph.lower()
         score = sum(1 for token in lowered_tokens if token in lowered)
         if score and (best is None or score > best[0]):

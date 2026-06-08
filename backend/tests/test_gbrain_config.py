@@ -608,6 +608,91 @@ class GBrainConfigTests(unittest.TestCase):
         self.assertEqual(result["source_scope"]["allowed_sources"], [project_source_id])
         self.assertEqual(result["source_scope"]["credential_source"], "manifest")
 
+    def test_schema_context_uses_token_bound_source_client(self):
+        captured_tools: list[dict] = []
+
+        def fake_urlopen(request, timeout):
+            if request.full_url.endswith("/token"):
+                return FakeHttpResponse('{"access_token":"customer-token","expires_in":3600,"token_type":"Bearer"}')
+            captured_tools.append(
+                {
+                    "authorization": request.get_header("Authorization"),
+                    "body": json.loads(request.data.decode("utf-8")),
+                }
+            )
+            tool_name = captured_tools[-1]["body"]["params"]["name"]
+            result_by_tool = {
+                "get_active_schema_pack": {"pack_name": "gbrain-base-v2"},
+                "schema_stats": {"per_source": [{"source_id": "customer-crm", "total_pages": 3}]},
+                "schema_graph": {"nodes": [], "edges": []},
+                "schema_review_orphans": {"orphan_count": 0, "orphans": []},
+            }
+            payload = {
+                "result": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(result_by_tool[tool_name]),
+                        }
+                    ]
+                },
+                "jsonrpc": "2.0",
+                "id": 1,
+            }
+            return FakeHttpResponse(f"event: message\ndata: {json.dumps(payload)}\n\n")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source_id = "customer-crm"
+            manifests = root / "manifests"
+            manifests.mkdir(parents=True)
+            (manifests / "gbrain-think-source-clients.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "clients": {
+                            source_id: {
+                                "source_id": source_id,
+                                "name": "project-r-think-customer-crm",
+                                "client_id": "customer-client",
+                                "client_secret": "customer-secret",
+                                "scope": "read write",
+                                "token_auth_method": "client_secret_post",
+                                "allowed_sources": [source_id],
+                                "created_at": "2026-06-08T00:00:00+00:00",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            env = self._env_for_root(
+                root,
+                GBRAIN_ENABLED="true",
+                GBRAIN_BASE_URL="http://127.0.0.1:3131",
+                GBRAIN_THINK_ENABLED="true",
+                GBRAIN_THINK_SOURCE_SCOPE_VERIFIED="true",
+                GBRAIN_THINK_ALLOWED_SOURCES="company-wiki",
+            )
+            with patch.dict(os.environ, env, clear=True), patch(
+                "core.gbrain._adapter.urllib.request.urlopen",
+                side_effect=fake_urlopen,
+            ):
+                result = GBrainAdapter().schema_context(source_id=source_id, orphan_limit=5)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["source_id"], source_id)
+        self.assertEqual(result["source_scope"]["allowed_sources"], [source_id])
+        self.assertEqual([item["body"]["params"]["name"] for item in captured_tools], [
+            "get_active_schema_pack",
+            "schema_stats",
+            "schema_graph",
+            "schema_review_orphans",
+        ])
+        for item in captured_tools:
+            self.assertEqual(item["authorization"], "Bearer customer-token")
+            self.assertNotIn("source_id", item["body"]["params"]["arguments"])
+
     def test_ensure_project_think_client_registers_and_persists_manifest(self):
         stdout = (
             'OAuth client registered: "project-r-think-project-bfi-7"\n'

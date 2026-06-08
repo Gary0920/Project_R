@@ -17,6 +17,8 @@ class ObsidianMarkdownPreprocessTests(unittest.TestCase):
             "type: person\n"
             "name: Aaron Morris\n"
             "company: '[[03_Companies/Binah]]'\n"
+            "source_events:\n"
+            "  - '[[04_Raw/客户信息/260528 Client List/Client_Master_List.md]]'\n"
             "tags:\n"
             "  - project_manager\n"
             "notes: Long CRM note belongs in body\n"
@@ -28,7 +30,7 @@ class ObsidianMarkdownPreprocessTests(unittest.TestCase):
             "![[avatar.png]]\n"
             "![logo](logo.png)\n"
             "---\n"
-            "Works on [[02_Projects/VELA]].\n"
+            "Works on [[02_Projects/VELA]]. Met on 2026-04-27.\n"
         )
 
         frontmatter, body, metadata = clean_obsidian_markdown(
@@ -60,6 +62,8 @@ class ObsidianMarkdownPreprocessTests(unittest.TestCase):
         self.assertIn("## Extracted Facts", body)
         self.assertIn("## Entities Mentioned", body)
         self.assertIn("## Events / Timeline Signals", body)
+        self.assertIn("- **2026-05-28** | source_events:", body)
+        self.assertIn("- **2026-04-27** | Works on VELA. Met on 2026-04-27.", body)
         self.assertIn("## Original Evidence", body)
         self.assertIn("Binah", body)
         self.assertIn("VELA -> `02_Projects/VELA`", body)

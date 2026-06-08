@@ -22,6 +22,18 @@ class RegressionGBrainAdapter:
         }
 
 
+class TimeoutGBrainAdapter:
+    def __init__(self):
+        self.queries: list[str] = []
+
+    def query(self, query: str, *, limit: int = 5, expand: bool = False, detail: str = "medium"):
+        self.queries.append(query)
+        return {
+            "status": "unreachable",
+            "error": "timed out",
+        }
+
+
 class GBrainQueryRegressionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -60,6 +72,47 @@ class GBrainQueryRegressionTests(unittest.TestCase):
         self.assertIn("project_email_rule", ids)
         self.assertIn("file_naming_rule", ids)
         self.assertIn("accessory_order_rule", ids)
+
+    def test_company_local_index_handles_gbrain_query_timeout(self):
+        adapter = TimeoutGBrainAdapter()
+        previous_index = os.environ.get("GBRAIN_COMPANY_LOCAL_INDEX_ENABLED")
+        previous_path = os.environ.get("GBRAIN_COMPANY_DERIVED_PATH")
+        fixture_root = Path(__file__).parent / "tmp_company_gbrain_ready"
+        target = fixture_root / "rules" / "书面化原则-e7807016.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            "---\n"
+            "title: 书面化原则\n"
+            "project_r_source_file: 书面化原则.md\n"
+            "---\n\n"
+            "# 书面化原则\n\n"
+            "所有重要决策、任务分配、沟通确认，必须通过书面形式记录并留痕。\n",
+            encoding="utf-8",
+        )
+        os.environ["GBRAIN_COMPANY_LOCAL_INDEX_ENABLED"] = "true"
+        os.environ["GBRAIN_COMPANY_DERIVED_PATH"] = str(fixture_root)
+        try:
+            sources = KnowledgeSources(gbrain_factory=lambda: adapter).search_company_sources("书面化原则是什么")
+        finally:
+            if previous_index is None:
+                os.environ.pop("GBRAIN_COMPANY_LOCAL_INDEX_ENABLED", None)
+            else:
+                os.environ["GBRAIN_COMPANY_LOCAL_INDEX_ENABLED"] = previous_index
+            if previous_path is None:
+                os.environ.pop("GBRAIN_COMPANY_DERIVED_PATH", None)
+            else:
+                os.environ["GBRAIN_COMPANY_DERIVED_PATH"] = previous_path
+            try:
+                target.unlink()
+                target.parent.rmdir()
+                fixture_root.rmdir()
+            except OSError:
+                pass
+
+        self.assertGreaterEqual(len(sources), 1)
+        self.assertIn("rules/书面化原则", sources[0]["file"])
+        self.assertIn("书面化原则", sources[0]["source_title"])
+        self.assertIn("留痕", sources[0]["content"])
 
 
 if __name__ == "__main__":

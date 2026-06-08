@@ -216,9 +216,9 @@ Phase 19 Mac mini 迁移暂缓，不作为近期阻塞项。
 - [x] 将客户资料按新 `_preprocessed/customer/crm/gbrain-ready/` 架构预处理。
 - [x] 将正式客户情报主 source、Think 回归和管理员图谱默认 source 切到 `customer-crm`。
 - [x] 跑 CRM gbrain-ready 图谱 / Timeline / 实体候选回归，覆盖 5Points、18 Mary Avenue、Aaron Morris。
-- [ ] 调用 GBrain 原生 schema / Entity Enrichment / native graph / native timeline 能力，并验证 token-bound customer scope。
+- [x] 调用 GBrain 原生 schema / Entity Enrichment / native graph / native timeline 能力，并验证 token-bound customer scope。
 - [x] 跑 5Points、18 Mary Avenue、Aaron Morris 防串库回归。
-- [ ] 在 CRM UI 中验收画像概览、图谱、时间线和 GBrain 状态；现有工作区文件面板图谱/Timeline 壳已可读取 `customer-crm`，仍需 CRM 入口手工验收和状态区收口。
+- [ ] 在 CRM UI 中验收画像概览、图谱、时间线和 GBrain 状态；2026-06-08 Gary 已明确 UI 验收暂停，待功能实相跑通后统一验收。现有工作区文件面板图谱/Timeline 壳已可读取 `customer-crm`，仍需 CRM 入口手工验收和状态区收口。
 
 完成标志：
 
@@ -226,7 +226,11 @@ Phase 19 Mac mini 迁移暂缓，不作为近期阻塞项。
 - 客户 `/query` 不回落到 `company-wiki`。
 - 普通客户成员不能触发 Entity Enrichment 或实体合并。
 
-实现状态：2026-06-05 已新增只读 inventory 脚本 `backend/scripts/gbrain_customer_reference_inventory.py`。本机盘点显示旧 `customer-reference` GBrain source 未注册、source-scoped OAuth client manifest 中无旧 client、`workspace_data/customer/reference` legacy root 不存在；保留 `workspace_data/customer/CRM/raw/` 424 个 Markdown 和 `_preprocessed/customer/crm/gbrain-ready/` 424 个 Markdown。正式客户情报主 source 已切到 `customer-crm`，`backend/scripts/gbrain_customer_reference_regression.py` 已改为查询 CRM gbrain-ready source，5Points、18 Mary Avenue、Aaron Morris 三条防串库 query 回归通过。`backend/core/gbrain_graph.py` 已兼容 CRM gbrain-ready 正文 `Source Metadata` 中的 `linked_people` / `linked_projects` / `linked_companies` / `source_events`，不修改源 Markdown 即可生成客户图谱、Timeline events 和实体候选；`backend/scripts/gbrain_graph_regression.py` 三条客户图谱回归通过。GBrain 原生 Entity Enrichment / native graph / native timeline 真实调用和 CRM UI 手工验收仍未完成。
+实现状态：2026-06-05 已新增只读 inventory 脚本 `backend/scripts/gbrain_customer_reference_inventory.py`。本机盘点显示旧 `customer-reference` GBrain source 未注册、source-scoped OAuth client manifest 中无旧 client、`workspace_data/customer/reference` legacy root 不存在；保留 `workspace_data/customer/CRM/raw/` 424 个 Markdown 和 `_preprocessed/customer/crm/gbrain-ready/` 424 个 Markdown。正式客户情报主 source 已切到 `customer-crm`，`backend/scripts/gbrain_customer_reference_regression.py` 已改为查询 CRM gbrain-ready source，5Points、18 Mary Avenue、Aaron Morris 三条防串库 query 回归通过。`backend/core/gbrain_graph.py` 已兼容 CRM gbrain-ready 正文 `Source Metadata` 中的 `linked_people` / `linked_projects` / `linked_companies` / `source_events`，不修改源 Markdown 即可生成客户图谱、Timeline events 和实体候选；`backend/scripts/gbrain_graph_regression.py` 三条客户图谱回归通过。
+
+2026-06-08 复核结果：GBrain HTTP service `health=ok`，`company-wiki` 注册路径匹配 `_preprocessed/company/company-wiki/gbrain-ready/`，`page_count=281`；`customer-crm` 注册路径匹配 `_preprocessed/customer/crm/gbrain-ready/`，`page_count=424`；旧 `customer-reference` source 仍为 missing。已修复公司知识真实回归中 GBrain query 超时导致整轮返回空的问题：`search_company_sources()` 现在会跳过单次 `unreachable` / timeout 并继续后续 query variant 与本地 gbrain-ready 轻量索引 fallback；同时修正 `System Thinking+File Organization` 新清洗 slug 的回归期望。复核通过：`backend/scripts/gbrain_query_regression.py` 9/9、`backend/scripts/gbrain_customer_reference_regression.py` 3/3、`backend/scripts/gbrain_graph_regression.py` 3/3。
+
+2026-06-08 原生 GBrain 客户情报能力闭环：`backend/core/obsidian_markdown_preprocess.py` 已把 CRM Obsidian source_events、ISO 日期和中文日期清洗为 GBrain 原生 `- **YYYY-MM-DD** | ...` timeline 格式，重新生成 `customer-crm` gbrain-ready 424 页并 full sync 到 GBrain；随后执行 GBrain 原生 `extract links --source db --source-id customer-crm --by-mention` 写入 616 条客户 source 内关系，执行 GBrain 原生 `extract timeline --source db --source-id customer-crm` 写入 951 条 timeline entries。`customer-crm` source repo 已提交 `228f0f5 Regenerate CRM GBrain-ready native graph timeline source`，GBrain source status 显示 `last_commit=228f0f5122c49388eb311208a9b845d00868fce0`、`last_sync_at=2026-06-08T07:07:56.252Z`、`page_count=424`。新增 `GBrainAdapter.schema_context()`，和 `graph_context()` 一样通过 source-scoped OAuth token 调用 `get_active_schema_pack`、`schema_stats`、`schema_graph`、`schema_review_orphans`、`traverse_graph`、`get_timeline`、`get_backlinks`，不在 MCP 参数中传可被客户端篡改的 source id。新增烟测 `backend/scripts/gbrain_customer_native_scope_smoke.py`，本机通过：`schema_total_pages=424`，per-source 仅 `customer-crm`，typed coverage=100%，类型分布 `person=253 / company=107 / project=64`；5Points native graph=567、timeline=4、backlinks=24；18 Mary Avenue native graph=389、timeline=4；Aaron Morris native timeline=1；`source_scope.verified=true`、`allowed_sources=["customer-crm"]`、`scope_is_token_bound=true`。CRM UI 手工验收按 Gary 2026-06-08 指示暂停，待功能实相稳定后统一验收。
 
 ## 8. 当前主线 D：项目质量与文件预览
 
