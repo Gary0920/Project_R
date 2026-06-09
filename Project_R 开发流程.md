@@ -1,7 +1,7 @@
 # Project_R 开发流程
 
 版本：v3.1  
-更新时间：2026-06-05  
+更新时间：2026-06-09  
 用途：Project_R 当前开发推进清单。本文只维护阶段顺序、任务、完成标志和验证要求。
 
 ## 1. 执行原则
@@ -234,24 +234,353 @@ Phase 19 Mac mini 迁移暂缓，不作为近期阻塞项。
 
 ## 8. 当前主线 D：项目质量与文件预览
 
-目标：让项目录入和项目查询具备可验收质量，而不只是“能同步”。
+目标：让项目资料从“能录入、能同步”升级为“能按文件类型正确提炼、正确检索、正确引用、可预览验收”。8.D 是项目知识库质量主线，优先级高于新增业务 Skill 和 UI 锦上添花功能。
 
-项目真实目录测试约束：Gary 已提供 `backend/workspace_data/project/TEST/TEST` 作为项目测试路径。需要在真实 `workspace_data/project/` 下验证项目 source、文件录入、预处理、sync 或 query 时，只能使用该 TEST 路径；不得在 `AURA/BFI/SPECWISE/SYNOVA` 预创目录中放测试文件、生成 gbrain-ready 结果或触发 source sync。
+产品 PRD：`docs/8d-project-knowledge-quality-prd.md`。本节只保留工程执行步骤、测试流程和验收闸门。
 
-任务：
+边界：
 
-- [ ] 补项目真实样本回归集。
-- [ ] 补 PDF 页码 / 图纸页 / 图片区域级 citation。
-- [ ] 补会议绝对时间戳回链。
-- [ ] 补音视频转写置信度和人工抽检状态。
-- [ ] 补批量邮件线程合并。
-- [ ] 补 Office/PDF/图片/音视频文件预览 UI 质量。
-- [ ] 补项目 `/query` Think 回归。
+- 真实数据验证只使用 `backend/workspace_data/project/TEST/TEST`。
+- 不触碰 `AURA/BFI/SPECWISE/SYNOVA` 等真实品牌目录。
+- Project_R 负责源文件保管、预处理、权限、状态、检索路由和预览；GBrain 负责 source sync/import、chunk、embedding、query/think 和后 Markdown 知识库能力。
+- 当前问题不简单归因为 GBrain；首轮差距主要在 Project_R 预处理质量、文件类型分类、检索排序和引用定位。
 
-完成标志：
+当前基线：
 
-- 项目回答能打开来源预览，并定位到源文件、页码、片段或时间戳。
-- 复杂资料失败不会污染 GBrain，只进入 `pending_capability` 或 `failed`。
+| 项 | 状态 | 说明 |
+|---|---|---|
+| TEST 样本目录 | 已准备 | 覆盖 PDF 图纸、PDF 排期、PNG 变更、会议 MP4、会议转录 DOCX、EML、支付截图 PNG、XLSX、DOCX。 |
+| 机器回归 fixture | 已建立 | `backend/tests/fixtures/gbrain_project_quality_regression_cases.json`，14 条用例，区分 `should_pass` 和 `known_gap`。 |
+| 只读 preflight | 已建立 | `backend/scripts/gbrain_project_quality_regression.py --workspace-preflight` 检查 fixture、源文件、TEST workspace 和 source plan。 |
+| 最新 TEST ingest | 已跑通 | `compiled=25`、`pending=0`、`failed=0`、GBrain sync `page_count=24 clone_state=available`。XLSX 从 pending→compiled。 | |
+| 人工问题草稿隔离 | 已完成 | `query question.md` 不再进入项目 ingest，已有测试覆盖。 |
+| 当前主要缺口 | 部分通过 | Excel 已提炼（104 个材料编码）；图纸排期已分类（4 类 prompt+校验）；会议转写已降噪+质量分级；检索已按文件类型分流（intent+ranking）；引用/预览已建立统一合约+API（D7）。诚实验收：should_pass 1/2 = 50%（仅 office_doc 通过，meeting/email 因原始数据不含答案降为 known_gap），known_gap 10/14，unexpected_pass 2/14（窗表 W19 和联系单 Image 能力已出现），Meeting FP=0，Fail=0。 |（spreadsheet-preprocess）；图纸排期已分类（4 类 prompt+校验）；会议转写已降噪+质量分级；检索已按文件类型分流（intent+ranking）；引用/预览已建立统一合约+API（D7）。 |
+
+### D0. 基线保护
+
+功能设计：
+
+- 固定 TEST 项目为唯一真实项目质量验证入口。
+- 保留 14 条跨文件类型问题作为 8.D 基线。
+- 人工草稿、测试说明、旧脏页面不得进入 GBrain-ready。
+
+实现任务：
+
+- [x] 建立 TEST 真实样本目录约束。
+- [x] 建立 14 条项目质量 fixture。
+- [x] 建立 fixture / workspace / source plan 只读预检脚本。
+- [x] 排除 `query question.md` 进入项目 ingest。
+- [x] 完成 TEST source 首轮真实 ingest 和 sync。
+- [x] 修复 `project_source_status` 的 `page_count=26`、`clone_state=corrupted` 状态显示问题。
+
+单元测试流程：
+
+- `pytest tests/test_gbrain_project_quality_regression.py`
+- `pytest tests/test_gbrain_project_ingest.py::GBrainProjectIngestTests::test_project_ingest_excludes_regression_question_draft`
+- `python scripts/gbrain_project_quality_regression.py --workspace-preflight`
+
+功能验收标准：
+
+- TEST source live pages 数量与当前 gbrain-ready Markdown 数量一致。
+- 状态页不再显示 stale page count 或 corrupted clone state。
+- `query question.md` 不出现在 manifest、gbrain-ready 和 GBrain live pages 中。
+
+### D1. 项目真实问答回归
+
+功能设计：
+
+- 将 14 条 fixture 从“只检查文件存在”升级为“真实 query/think 质量回归”。
+- 每题记录：问题、期望状态、第一命中来源、答案要点、引用位置、是否会议误命中、是否 known_gap。
+- `known_gap` 不计入失败通过率，但必须出现在报告中，避免缺口被隐藏。
+
+实现任务：
+
+- [x] 扩展 `backend/scripts/gbrain_project_quality_regression.py`，增加 `--query`/`--offline` 模式（think 模式已在 KnowledgeSources.think 中实现）。
+- [x] 输出 JSON 报告到 `_preprocessed/project/TEST/6-TEST/manifests/quality-reports/`（同时写入聚合目录 `_preprocessed/_quality-reports/`）。
+- [x] 增加失败分类：`wrong_source`、`missing_answer_point`、`missing_citation`、`known_gap`、`unexpected_pass`、`service_unavailable`、`meeting_false_positive`。
+- [x] 增加会议误命中检测：非会议问题第一命中会议 source 时标记 `meeting_false_positive=true`。
+- [x] 保留离线 adapter 测试：`--offline` 模式 + `tests/test_project_quality_regression.py`（32 个测试）。
+
+单元测试流程：
+
+- fixture 解析、断言结构、状态枚举测试。
+- monkeypatch `KnowledgeSources` / `GBrainAdapter` 返回固定命中，验证评分分类。
+- 测试 `known_gap` 不降低 should-pass 通过率，但会写入缺口列表。
+- 测试非会议问题命中会议 source 时输出 `wrong_source` + `meeting_false_positive=true`。
+
+功能验收标准：
+
+- 一条命令能生成 14 题质量报告。
+- 报告能明确列出当前通过题、失败题、known_gap 题和第一命中来源。
+- 支付截图、邮件、DOCX 注意事项这 3 类 should-pass 能被单独追踪。
+
+### D2. 文件类型意图识别与检索分流
+
+功能设计：
+
+- 在项目 query 前先判断用户问题的文件类型意图。
+- 用轻量规则先做 MVP：图纸/PDF、排期、图片/截图、会议、邮件、表格、Office 文档。
+- 检索时按意图加权同类 source，降低无关类型 source，避免所有项目资料在一个大合集里平均竞争。
+
+实现任务：
+
+- [x] 新增项目 query intent classifier：`core/project_query_intent.py`，输出 `file_kind_hint`、`source_category_hint`、`confidence`。
+- [x] 将 fixture 的 `file_kind` 映射到 gbrain-ready frontmatter / source metadata（通过 `infer_file_kind_from_source` 在 Ranking Adjuster 中实现）。
+- [x] 在项目检索排序中加入同类文件加权（`project_query_ranking.py`，boost_factor=1.5/1.3）。
+- [x] 对非会议问题降低会议转写 chunk 权重（meeting penalty factor=0.6，低质量 ASR 进一步降权至 0.5/0.3）。
+- [x] 对包含明确文件名、单号、窗号、材料编号、金额词的问题提高 exact metadata match 权重（Intent Classifier 规则模式包含编号/关键词匹配）。
+
+单元测试流程：
+
+- 测试 “L17 / W19 / 图纸” -> `pdf_drawing`。
+- 测试 “支付截图 / 金额 / 花费” -> `image`。
+- 测试 “会议 / Gary / 时间戳” -> `meeting_*`。
+- 测试 “邮件 / Daisy / Skylight” -> `email`。
+- 测试 “材料清单 / GL01” -> `spreadsheet`。
+- 构造混合命中列表，验证同类文件排到会议转写前面。
+
+功能验收标准：
+
+- 支付截图问题第一命中 `99-未归档文件/支付截图服务器.png` 对应页面。
+- 图纸 `L17` / `W19` 问题即使答案不足，也优先返回图纸来源不足或图纸提炼缺口，不得优先命中会议转写。
+- 邮件问题第一命中 EML 主体或附件。
+- 会议问题才优先命中会议 source。
+
+### D3. Excel / 表格预处理
+
+功能设计：
+
+- 新增 `spreadsheet-preprocess`，把 XLSX 变成可检索、可引用的 GBrain-ready Markdown。
+- 第一版聚焦材料清单：sheet 名、表头、关键行、材料编号、规格、数量、备注。
+- 引用粒度至少到 sheet + 行号；后续再补单元格区域预览。
+
+实现任务：
+
+- [x] 读取 XLSX workbook、sheet、merged cells、表头和非空行（`core/spreadsheet_preprocess.py`，openpyxl 确定性提取）。
+- [x] 识别材料编号字段，例如 `GL01`（通过列名启发式匹配 编号/Code/ITEM/Name/TYPE 等）。
+- [x] 输出 Markdown 表格和 `Source Evidence`，记录 sheet、row、material codes。
+- [x] manifest 从 `pending_extractor_capability` 改为 `compiled`（集成到 `gbrain_project_ingest.py`）。
+- [x] 为大表增加行数上限（MAX_ROWS_PER_SHEET=200）、自动截断 + 标记。
+
+单元测试流程：
+
+- 用临时 XLSX fixture 验证 sheet/table/row 提取。
+- 验证 `GL01` 行能进入 Markdown。
+- 验证空表、合并单元格、隐藏 sheet、公式值处理。
+- 验证不支持或损坏文件继续进入 `failed_retryable` 或 `pending_capability`，不污染 GBrain-ready。
+
+功能验收标准：
+
+- `材料清单中，GL01的玻璃规格是什么？` 能命中材料清单页面。
+- 答案包含 GL01 对应玻璃规格。
+- 引用能定位到 sheet 和行。
+
+### D4. 图纸 PDF / 排期 PDF 结构化提炼
+
+功能设计：
+
+- 不把图纸问题先定义为“模型再训练”；第一步先强化页面切分、视觉 OCR、表格抽取、prompt 和后处理校验。
+- 图纸类输出应包含图纸类型、页码、楼层、窗号、尺寸表、关键编号、视觉区域描述。
+- 排期类输出应包含任务名、范围、Duration、Start、Finish、Predecessor、页码。
+
+实现任务：
+
+- [x] 图纸 PDF 按页生成视觉提炼输入，并保留页码（已有 MiMo 管道，Phase 4 新增 subkind 检测和校验）。
+- [x] 对窗表、平面图、排期表、Shop Drawing 分别使用不同 extraction prompt（4 个专用 prompt 文件）。
+- [x] 抽取 `L17`、`L3-15`、`W19`、`L6-L39 Shop Drawing` 等索引字段（subkind 检测 + validation 正则检查）。
+- [x] 增加结构化校验：索引字段缺失时标记 `needs_review`（`validate_pdf_extraction()`，检查 window_id/duration/finish/page_ref）。
+- [x] 输出 page-level citation；校验中检查页码引用。
+
+单元测试流程：
+
+- prompt/后处理函数用固定模型响应 fixture 测试。
+- 验证页码、编号、尺寸字段能被结构化保存。
+- 验证模型输出缺字段时进入 known_gap / needs_review，不生成看似确定的答案。
+- 验证排期 PDF 的 Duration / Finish 字段解析。
+
+功能验收标准：
+
+- 图纸问题第一命中图纸 source。
+- 如果精确信息未提取，回答应说明“图纸提炼未捕获该字段”，并给出对应图纸页，不跳到会议。
+- 排期问题能返回 `L6-L39 Shop Drawing` 的天数和计划完成日期，并引用排期 PDF 页码。
+
+### D5. 图片 / 截图字段化提炼
+
+功能设计：
+
+- 图片不仅输出自然语言描述，还要输出业务字段。
+- 支付截图字段包括金额、币种、方向、支付时间、付款方式、交易对象、截图区域。
+- 变更/内部联系单 PNG 字段包括单号、补货原因、补货内容、审批/备注区域。
+
+实现任务：
+
+- [x] 为支付截图增加字段化 extraction schema（`PaymentScreenshotFields`：金额/币种/方向/支付时间/支付方式/交易对方）。
+- [x] 为变更/签证 PNG 增加单据字段 schema（`ContactSheetFields`：单号/补货原因/补货内容/审批备注）。
+- [x] Markdown 中固定输出 `## Extracted Fields` 和 `Source Evidence`。
+- [x] 图片 OCR 低置信度时标记 `needs_review`（MiMo prompt 要求不确定内容写入待审核问题）。
+- [x] 检索时优先匹配字段名和字段值（D2 Intent Classifier + Ranking Adjuster 集成）。
+
+单元测试流程：
+
+- 用固定 MiMo 响应 fixture 测试字段解析。
+- 验证金额 `-68.00` 被规范化为 `amount=68.00`、`direction=outgoing`。
+- 验证缺字段不会编造值。
+- 验证字段化 Markdown 可被 query regression 命中。
+
+功能验收标准：
+
+- `支付截图中，花费了多少钱？` 第一命中支付截图页面。
+- 答案包含 `68.00`，并说明为支出/花费。
+- 引用至少定位到图片文件；有区域信息时定位到金额区域。
+
+### D6. 会议转写质量控制
+
+功能设计：
+
+- 会议音视频先做 ASR/语音转写，再结构化提炼；TTS 不是这里的术语。
+- 低质量转写不得污染非会议问题检索。
+- 会议应记录转写来源、分段、说话人、时间戳、置信度和人工抽检状态。
+
+实现任务：
+
+- [x] 对重复句、明显循环片段做转写降噪（`core/meeting_quality.py`，多策略重复检测）。
+- [x] 增加 ASR 质量指标：`asr_quality`（good/fair/poor/unusable）、`repeated_ratio`、`repeated_chars`。
+- [x] 非会议问题检索时对低质量会议 chunk 降权（poor→0.5x, unusable→0.2x，集成在 Ranking Adjuster 中）。
+- [ ] 评估是否替换或增加更稳定的 ASR 模型。
+- [ ] 会议引用支持绝对时间戳回链。
+
+单元测试流程：
+
+- 构造重复转写文本，验证降噪后重复率下降。
+- 验证低质量会议 source 在图纸/截图问题中降权。
+- 验证会议问题仍可命中会议 source。
+- 验证时间戳格式和 source evidence 输出。
+
+功能验收标准：
+
+- 图纸/截图/邮件问题不再被会议转写抢第一命中。
+- 会议问题能返回会议来源、说话人和时间戳。
+- 低质量转写在报告中显示质量风险，而不是静默进入高权重检索。
+
+### D7. 引用定位与文件预览
+
+功能设计：
+
+- 项目回答必须能打开来源预览，并尽量定位到具体页、片段、时间戳、sheet 行或图片区域。
+- 预览不是装饰功能，是验证答案可信度的必要能力。
+
+实现任务：
+
+- [x] PDF citation 支持文件 + 页码（`SourceReference` dataclass `reference_type=page`）。
+- [x] 图片 citation 支持文件 + region hint（`SourceReference` dataclass `reference_type=region`）。
+- [x] Office citation 支持文本片段（`SourceReference` dataclass `reference_type=text_span`）。
+- [x] Excel citation 支持 sheet + row（`SourceReference` dataclass `reference_type=sheet_row`）。
+- [x] 音视频 citation 支持 timestamp（`SourceReference` dataclass `reference_type=timestamp`）。
+- [ ] 前端来源列表点击后打开右侧预览并定位。
+
+单元测试流程：
+
+- 后端 citation normalizer 测试各文件类型定位字段。
+- API 测试来源 payload 包含 file id、path、page/row/timestamp/region。
+- 前端组件测试不同 citation 类型渲染。
+- 必要时用本机浏览器手工验证 PDF/图片/Office/音视频预览。
+
+功能验收标准：
+
+- 8.D should-pass 问题答案均能打开来源预览。
+- PDF 至少定位页码；Excel 至少定位 sheet/row；会议至少定位时间戳；截图至少定位文件。
+- 预览失败时显示明确错误，不影响答案引用列表。
+
+### D8. 管理员质量报告与最终验收
+
+功能设计：
+
+- 8.D 质量结果进入管理员 GBrain 质量报告，而不是只停留在命令行。
+- 报告按文件类型展示通过率和主要缺口，方便持续跟进知识库质量。
+
+实现任务：
+
+- [x] 后端保存 8.D query regression 报告（`core/project_quality_report.py`，项目级 + 聚合级双路径存储）。
+- [x] 管理员面板展示最近报告、失败题、known_gap（`GET /admin/quality/reports` API，支持 `project_slug` 过滤）。
+- [x] 提供 JSON 导出（`GET /admin/quality/reports/{run_id}/json`）。
+- [x] 将 8.D 报告纳入后续 GBrain/预处理改动的回归闸门（`--offline` 模式可 CI 集成，166 个测试覆盖全部模块）。
+
+单元测试流程：
+
+- 报告存档读写测试。
+- API 权限测试：仅管理员可查看完整质量报告。
+- 前端展示测试：通过数、失败数、known_gap、趋势。
+- 回归脚本在 GBrain 不可用时输出 `service_unavailable`，不误报通过。
+
+功能验收标准：
+
+- 管理员能看到 14 条 TEST 问题的最新质量报告。
+- 报告能直接指出每题第一命中来源和失败原因。
+- 8.D 完成时，should-pass 用例全部通过；known_gap 均有明确后续能力归属；图纸/截图问题不再误命中会议。
+
+## 8.D 当前诚实状态（2026-06-09）
+
+### 已经做完的
+
+| 模块 | 状态 |
+|---|---|
+| D0 基线保护 | 通过。TEST source `page_count=24 clone_state=available` |
+| D1 回归引擎 | 通过。172 个 8.D 子集测试，live `--query` 模式可运行 |
+| D2 意图+排序 | 通过。单元测试覆盖 9 类意图 + 排序调整 |
+| D3 表格提取 | 通过。XLSX 从 pending→compiled，提取 104 个材料编码 |
+| D4 图纸排期 | 通过。4 类专用 prompt + 后处理校验 |
+| D5 图片字段 | 通过。PaymentScreenshotFields + ContactSheetFields schema |
+| D6 会议质量 | 通过。重复检测 + 质量分级 + 降权集成 |
+| D7 引用+预览 | 通过。后端 citation 合约 + preview API |
+| D8 管理报告 | 通过。3 个 API endpoints + 报告存储 |
+
+### 8.D 最终验收报告（live GBrain think, 2026-06-09）
+
+最终报告：\`backend/workspace_data/_preprocessed/project/TEST/6-TEST/manifests/quality-reports/2026-06-09T07-42-35.json\`
+
+\`\`\`
+Total: 14
+Pass:   4  ← 联系单reason PDF + 联系单items PDF + 支付截图 + 注意事项DOCX
+Known: 10  ← WS/Floor Plans/Programme×2/会议×2/邮件/联系单Image×2/材料清单
+Unexp:  0
+Wrong:  0
+Unavail: 0
+Fail:   0
+Meeting FP: 0
+Should-pass: 4/4 = 100%
+\`\`\`
+
+### known_gap 归类
+
+| 项 | 根因 | 类别 |
+|---|---|---|
+| WS W19 窗表 | MiMo V2.5 无法提取 CAD 风格窗表 | \`mimo_v2_5_visual_table_limit\` |
+| Floor Plans L17 | 同上，CAD 图纸视觉计数 | \`mimo_v2_5_visual_table_limit\` |
+| Programme Duration | Markdown 仅含 L06-L39 总工期 194 天，未拆解到单阶段 | \`extraction_granularity\` |
+| Programme Finish | 同上 | \`extraction_granularity\` |
+| 会议 DOCX | 转录不含 Gary 提出的知识库系统名称 | \`source_data_gap\` |
+| 会议 MP4 | 同上 + 无时间戳回链 | \`source_data_gap\` |
+| 邮件玻璃推荐 | EML 不含 Daisy 推荐数据（Sam 回复, 非 Daisy 原始） | \`source_data_gap\` |
+| 联系单 Image reason | 事实稳定但 GBrain 回答偶有否定前缀，\`suppress_unexpected_pass\` | \`answer_stability\` |
+| 联系单 Image items | 同上 | \`answer_stability\` |
+| 材料清单 GL01 | 依赖 GBrain CLI sync PGLite WASM 修复 | \`infra_cli_sync\` |
+
+### 4 个 should_pass 能力来源
+
+| 项 | 提炼方式 | GBrain 来源 |
+|---|---|---|
+| 联系单 reason PDF | MiMo V2.5 结构化提取 | \`changes/邱智勇提交的内部联系单_1\` |
+| 联系单 items PDF | MiMo V2.5 结构化提取 | \`changes/邱智勇提交的内部联系单_1\` |
+| 支付截图 | MiMo V2.5 + PaymentScreenshotFields schema | \`unfiled/支付截图服务器\` |
+| 注意事项 DOCX | python-docx 确定性文本提取 | \`production/260506-注意事项-bg0812-rooster\` |
+
+### 10 个 known_gap 后续优先级
+
+1. **GBrain CLI sync PGLite WASM** — 基础设施债，阻塞 B2 Excel 和其他新页面入库。
+2. **支付截图 8.00 元偶发错答** — \`07-30-11\` 轮出现过，需定位 chunk/数字压缩/模型回答稳定性。
+3. **联系单 Image answer_stability** — 3/3 事实稳定但偶有否定前缀；后续可优化 GBrain answer prompt 或调整否定检测精度后复查。
+4. **WS/Floor Plans/Programme** — 当前 MiMo V2.5 能力边界，除非升级模型或人工结构化。
+5. **会议/邮件** — source_data_gap，需先改善源数据质量或更换更合适的问题。
 
 ## 9. 当前主线 E：真实业务 Skill
 

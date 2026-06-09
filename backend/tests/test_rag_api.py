@@ -132,8 +132,14 @@ class RagApiTests(unittest.TestCase):
         self.original_worker_poll_jobs = maintenance_worker.poll_dream_cycle_jobs
         self.original_query_regression = rag_api._run_query_regression_cases
         self.original_think_regression = rag_api._run_think_regression_cases
+        self.env_backup = {
+            key: os.environ.get(key)
+            for key in ("GBRAIN_COMPANY_GBRAIN_READY_PATH", "GBRAIN_DOTENV_AUTOLOAD")
+        }
         self.temp_dir = tempfile.TemporaryDirectory()
         self.root = Path(self.temp_dir.name)
+        os.environ["GBRAIN_COMPANY_GBRAIN_READY_PATH"] = str(self.root / "derived")
+        os.environ["GBRAIN_DOTENV_AUTOLOAD"] = "false"
         (self.root / "derived" / ".pending_review" / "standards").mkdir(parents=True)
         (self.root / "derived" / ".pending_review" / "standards" / "standard.md").write_text(
             "---\nreview_status: pending_review\n---\n\n# standard\n",
@@ -142,7 +148,9 @@ class RagApiTests(unittest.TestCase):
 
         class _Settings:
             company_source_id = "company-wiki"
+            raw_path = self.root / "raw"
             derived_path = self.root / "derived"
+            gbrain_ready_path = self.root / "derived"
             manifests_path = self.root / "manifests"
             home_path = self.root
             cli_workdir = self.root / "gbrain-cli"
@@ -192,6 +200,11 @@ class RagApiTests(unittest.TestCase):
         maintenance_worker.poll_dream_cycle_jobs = self.original_worker_poll_jobs
         rag_api._run_query_regression_cases = self.original_query_regression
         rag_api._run_think_regression_cases = self.original_think_regression
+        for key, value in self.env_backup.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         self.temp_dir.cleanup()
         self.db.close()
 
@@ -540,7 +553,7 @@ class RagApiTests(unittest.TestCase):
         poll = rag_api.poll_gbrain_citation_fixer_jobs(self.admin, self.db)
 
         self.assertEqual(poll["transitions"][0]["status"], "completed")
-        self.assertEqual(poll["transitions"][0]["reconcile"]["status"], "synced_to_derived")
+        self.assertEqual(poll["transitions"][0]["reconcile"]["status"], "synced_to_gbrain_ready")
         self.assertEqual(canonical.read_text(encoding="utf-8"), "fixed citation\n")
         self.assertFalse(sidecar.exists())
         audit = self.db.query(AuditLog).filter(AuditLog.action == "admin_gbrain_citation_fixer_poll_jobs").one()

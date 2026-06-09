@@ -33,6 +33,7 @@ from models.skill_run import SkillRun
 from models.user import User
 from models.workspace import Workspace, WorkspaceFile, WorkspaceMember
 from models.workspace_ingest_job import WorkspaceIngestJob
+from core.project_quality_report import list_reports, load_report, report_summary_to_text
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 WORKSPACES_ROOT = Path(__file__).resolve().parent.parent / "workspace_data"
@@ -714,6 +715,79 @@ def _review_payload(review: KnowledgeReview) -> dict:
         "created_at": review.created_at,
         "reviewed_at": review.reviewed_at,
     }
+
+
+# ── 8.D Quality Report Endpoints ──────────────────────────────────────
+
+
+@router.get("/quality/reports")
+def list_quality_reports(
+    project_slug: str | None = Query(None, description="Filter by project slug"),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+):
+    """List quality regression reports (system admin only)."""
+    if not is_system_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="仅系统管理员可查看质量报告")
+    return list_reports(project_slug=project_slug, limit=limit)
+
+
+@router.get("/quality/reports/{run_id}")
+def get_quality_report(
+    run_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Get a single quality regression report by run_id (system admin only)."""
+    if not is_system_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="仅系统管理员可查看质量报告")
+
+    # Search across all project report dirs
+    from pathlib import Path
+    BACKEND_DIR = Path(__file__).resolve().parents[1]
+    AGGREGATED_DIR = BACKEND_DIR / "workspace_data" / "_preprocessed" / "_quality-reports"
+    if not AGGREGATED_DIR.exists():
+        raise HTTPException(status_code=404, detail="No quality reports found")
+
+    for project_dir in AGGREGATED_DIR.iterdir():
+        if not project_dir.is_dir():
+            continue
+        report_path = project_dir / f"{run_id}.json"
+        if report_path.exists():
+            report = load_report(report_path)
+            return report
+
+    raise HTTPException(status_code=404, detail=f"Report {run_id} not found")
+
+
+@router.get("/quality/reports/{run_id}/json")
+def download_quality_report_json(
+    run_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Download the raw JSON of a quality regression report."""
+    if not is_system_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="仅系统管理员可下载质量报告")
+
+    from pathlib import Path
+    BACKEND_DIR = Path(__file__).resolve().parents[1]
+    AGGREGATED_DIR = BACKEND_DIR / "workspace_data" / "_preprocessed" / "_quality-reports"
+    if not AGGREGATED_DIR.exists():
+        raise HTTPException(status_code=404, detail="No quality reports found")
+
+    for project_dir in AGGREGATED_DIR.iterdir():
+        if not project_dir.is_dir():
+            continue
+        report_path = project_dir / f"{run_id}.json"
+        if report_path.exists():
+            report = load_report(report_path)
+            from starlette.responses import JSONResponse
+            return JSONResponse(
+                content=report,
+                media_type="application/json",
+                headers={"Content-Disposition": f'attachment; filename="{run_id}.json"'},
+            )
+
+    raise HTTPException(status_code=404, detail=f"Report {run_id} not found")
 
 
 def _parse_date_filter(value: str, field: str) -> datetime:

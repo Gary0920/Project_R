@@ -38,7 +38,7 @@ class _FakeImageLLMClient:
 
 class ImageStructuredExtractionTests(unittest.TestCase):
     def test_image_prompt_requires_uncertainty_and_bilingual_output(self):
-        prompt = _image_prompt("审批流程.png")
+        prompt = _image_prompt("审批流程.png", "general")
 
         self.assertIn("不要编造", prompt)
         self.assertIn("中英文对齐", prompt)

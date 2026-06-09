@@ -247,8 +247,39 @@ class KnowledgeSources:
 
         answer = result.get("answer") if isinstance(result.get("answer"), str) else ""
         sources = self._normalize_think_sources(result, source_id)
+
+        # Phase 2: Project query intent classification + ranking adjustment
+        intent_result: dict[str, Any] | None = None
+        if sources and workspace and str(workspace.workspace_kind or "project") == "project":
+            try:
+                from core.project_query_intent import classify_project_query
+                from core.project_query_ranking import adjust_project_ranking, apply_ranking_to_sources
+
+                intent = classify_project_query(content)
+                if intent.confidence != "low":
+                    ranked = adjust_project_ranking(sources, intent)
+                    reordered = apply_ranking_to_sources(sources, ranked)
+                    if reordered:
+                        sources = reordered
+                    intent_result = {
+                        "file_kind_hint": intent.file_kind_hint,
+                        "source_category_hint": intent.source_category_hint,
+                        "confidence": intent.confidence,
+                        "matched_patterns": intent.matched_patterns,
+                    }
+            except Exception as exc:
+                logger.warning("Project query intent/ranking failed: %s", exc)
+
         if answer and sources:
             answer = answer.rstrip() + "\n\n引用与缺口： " + " ".join(f"来源 {index}" for index in range(1, len(sources) + 1))
+        metadata: dict[str, Any] = {
+            "gaps": result.get("gaps") if isinstance(result.get("gaps"), list) else [],
+            "conflicts": result.get("conflicts") if isinstance(result.get("conflicts"), list) else [],
+            "warnings": result.get("warnings") if isinstance(result.get("warnings"), list) else [],
+            "diagnostics": result.get("diagnostics") if isinstance(result.get("diagnostics"), dict) else {},
+        }
+        if intent_result:
+            metadata["project_query_intent"] = intent_result
         return {
             "ok": True,
             "status": "ok",
@@ -256,12 +287,7 @@ class KnowledgeSources:
             "reply": answer or "GBrain think 未返回可用回答。",
             "sources": sources,
             "model": str(result.get("modelUsed") or "think"),
-            "metadata": {
-                "gaps": result.get("gaps") if isinstance(result.get("gaps"), list) else [],
-                "conflicts": result.get("conflicts") if isinstance(result.get("conflicts"), list) else [],
-                "warnings": result.get("warnings") if isinstance(result.get("warnings"), list) else [],
-                "diagnostics": result.get("diagnostics") if isinstance(result.get("diagnostics"), dict) else {},
-            },
+            "metadata": metadata,
         }
 
     def search_workspace_sources(self, db: Session, workspace_id: int | None, content: str) -> list[dict]:

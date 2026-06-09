@@ -1,0 +1,360 @@
+{
+  "fixture_scope": {
+    "workspace_path": "backend/workspace_data/project/TEST/TEST",
+    "uses_real_project_files": true,
+    "requires_same_project_identity": false,
+    "notes": "Gary provided real project files for Project_R 8.D project quality testing. The files intentionally cover multiple source formats and may not belong to the same real project; project number or project name mismatch is not a regression failure."
+  },
+  "cases": [
+    {
+      "id": "test_floor_plan_l17_window_count_pdf",
+      "description": "Validate PDF drawing extraction can answer a Level 17 window-count question and cite the drawing source.",
+      "file_kind": "pdf_drawing",
+      "expected_status": "known_gap",
+      "query": "L17 层图纸里有多少个窗？",
+      "source_file": "02-图纸与技术资料/240704 Orama [Floor Plans].pdf",
+      "expected_location": {
+        "type": "page",
+        "value": 9,
+        "strict": false
+      },
+      "expected_answer": {
+        "required_terms_all": [
+          "LEVEL 17"
+        ],
+        "required_terms_any": [
+          "窗",
+          "窗号",
+          "数量"
+        ],
+        "notes": "The page number and exact count should be verified after PDF drawing extraction and source preview are implemented."
+      }
+    },
+    {
+      "id": "test_window_schedule_w19_size_pdf",
+      "description": "Validate PDF window schedule extraction can answer W19 size for L3-15.",
+      "file_kind": "pdf_drawing",
+      "expected_status": "known_gap",
+      "query": "L3-15 W19这个窗的宽高尺寸是多少？",
+      "source_file": "02-图纸与技术资料/240715 Orama [WS].pdf",
+      "expected_location": {
+        "type": "page",
+        "value": 1,
+        "strict": false
+      },
+      "expected_answer": {
+        "required_terms_all": [
+          "W19"
+        ],
+        "required_terms_any": [
+          "L3-15",
+          "宽高",
+          "尺寸"
+        ],
+        "notes": "Use this case to verify drawing/table extraction and page-level citation."
+      },
+      "notes": "MiMo V2.5 cannot extract CAD-style window schedule table rows. 4-page vision forced, model outputs general description. Accepted as model capability boundary (mimo_v2_5_visual_table_limit)."
+    },
+    {
+      "id": "test_programme_shop_drawing_duration_pdf",
+      "description": "Validate PDF schedule extraction can answer planned duration for L6-L39 shop drawings.",
+      "file_kind": "pdf_schedule",
+      "expected_status": "known_gap",
+      "query": "项目排期中L6-L39 Shop Drawing图纸需要多少天才能完成？",
+      "source_file": "02-图纸与技术资料/260205 Madeline [Facade Supply Programme] Rev04.pdf",
+      "expected_location": {
+        "type": "page",
+        "value": 1,
+        "strict": false
+      },
+      "expected_answer": {
+        "required_terms_all": [
+          "L6-L39",
+          "Shop Drawing"
+        ],
+        "required_terms_any": [
+          "Duration",
+          "天",
+          "天数"
+        ],
+        "notes": "Expected numeric duration is intentionally not strict until the schedule PDF extraction result is reviewed."
+      }
+    },
+    {
+      "id": "test_programme_shop_drawing_finish_pdf",
+      "description": "Validate PDF schedule extraction can answer finish date for L6-L39 shop drawings.",
+      "file_kind": "pdf_schedule",
+      "expected_status": "known_gap",
+      "query": "项目排期中L6-L39 Shop Drawing图纸计划完成日期是什么时候？",
+      "source_file": "02-图纸与技术资料/260205 Madeline [Facade Supply Programme] Rev04.pdf",
+      "expected_location": {
+        "type": "page",
+        "value": 1,
+        "strict": false
+      },
+      "expected_answer": {
+        "required_terms_all": [
+          "L6-L39",
+          "Shop Drawing"
+        ],
+        "required_terms_any": [
+          "Finish",
+          "完成日期",
+          "计划完成"
+        ],
+        "notes": "Expected date is intentionally not strict until the schedule PDF extraction result is reviewed."
+      }
+    },
+    {
+      "id": "test_internal_contact_replenishment_reason_pdf",
+      "description": "Validate internal contact PDF extraction can answer why BG0806-LXD01 requires replenishment.",
+      "file_kind": "pdf_drawing",
+      "expected_status": "should_pass",
+      "query": "内部联系单 BG0806-LXD01-补货 为什么要补货？",
+      "source_file": "04-变更与签证/邱智勇提交的内部联系单.pdf",
+      "expected_location": {
+        "type": "page",
+        "value": 1,
+        "strict": false
+      },
+      "expected_answer": {
+        "required_terms_all": [
+          "客户自费",
+          "推拉门",
+          "五金"
+        ],
+        "required_terms_any": [
+          "补货",
+          "增补",
+          "原因"
+        ],
+        "notes": "PDF and PNG versions are tested separately to verify format-specific extraction."
+      }
+    },
+    {
+      "id": "test_internal_contact_replenishment_reason_image",
+      "description": "Validate PNG image extraction can answer why BG0806-LXD01 requires replenishment.",
+      "file_kind": "image",
+      "expected_status": "known_gap",
+      "query": "内部联系单 BG0806-LXD01-补货 为什么要补货？",
+      "source_file": "04-变更与签证/邱智勇提交的内部联系单_1.png",
+      "expected_location": {
+        "type": "region",
+        "value": "reason / description area",
+        "strict": false
+      },
+      "expected_answer": {
+        "required_terms_all": [
+          "BG0806-LXD01"
+        ],
+        "required_terms_any": [
+          "补货",
+          "增补",
+          "原因"
+        ],
+        "notes": "Known gap until image region-level citation is implemented.",
+        "suppress_unexpected_pass": true
+      },
+      "notes": "Observational known_gap: GBrain answers correct facts 3/3, but occasionally starts with negative prefix (未能直接找到). Source points to correct page (联系单_1). Suppress unexpected_pass until negation stability is resolved."
+    },
+    {
+      "id": "test_internal_contact_replenishment_items_pdf",
+      "description": "Validate internal contact PDF extraction can answer what needs replenishment.",
+      "file_kind": "pdf_drawing",
+      "expected_status": "should_pass",
+      "query": "内部联系单 BG0806-LXD01-补货 补什么？",
+      "source_file": "04-变更与签证/邱智勇提交的内部联系单.pdf",
+      "expected_location": {
+        "type": "page",
+        "value": 2,
+        "strict": false
+      },
+      "expected_answer": {
+        "required_terms_all": [
+          "BRD-2099"
+        ],
+        "required_terms_any": [
+          "BG0806-LXD01",
+          "铝材",
+          "五金",
+          "配件"
+        ],
+        "notes": "PDF and PNG versions are tested separately to verify format-specific extraction."
+      },
+      "notes": "Upgraded from known_gap. BG0806-LXD01 moved to any because GBrain occasionally parses doc number differently. BRD-2099 (material code) is the stable fact anchor."
+    },
+    {
+      "id": "test_internal_contact_replenishment_items_image",
+      "description": "Validate PNG image extraction can answer what needs replenishment.",
+      "file_kind": "image",
+      "expected_status": "known_gap",
+      "query": "内部联系单 BG0806-LXD01-补货 补什么？",
+      "source_file": "04-变更与签证/邱智勇提交的内部联系单_2.png",
+      "expected_location": {
+        "type": "region",
+        "value": "items / material list area",
+        "strict": false
+      },
+      "expected_answer": {
+        "required_terms_all": [
+          "BG0806-LXD01"
+        ],
+        "required_terms_any": [
+          "铝材",
+          "五金",
+          "配件"
+        ],
+        "notes": "Known gap until image region-level citation is implemented."
+      }
+    },
+    {
+      "id": "test_meeting_new_knowledge_system_transcript_docx",
+      "description": "Validate meeting transcript DOCX extraction can answer the knowledge-base system name question.",
+      "file_kind": "meeting_transcript_docx",
+      "expected_status": "known_gap",
+      "query": "会议中Gary提出了一个新的知识库系统叫什么？",
+      "source_file": "03-会议纪要/20260529-143933_张学辉Gary_张学辉发起的视频会议_0529_audio.docx",
+      "expected_location": {
+        "type": "text_span",
+        "value": "Gary mentions the new knowledge-base system",
+        "strict": false
+      },
+      "expected_answer": {
+        "required_terms_all": [
+          "Gary",
+          "GBrain"
+        ],
+        "required_terms_any": [
+          "知识库"
+        ],
+        "notes": "The exact system name should be verified after transcript extraction output is reviewed."
+      },
+      "notes": "Downgraded from should_pass: raw meeting transcript does not contain a clear proposal of a named system. Gary mentions GBrain once in questioning context. BFI is not in the transcript (was hallucinated by GBrain from email subject)."
+    },
+    {
+      "id": "test_meeting_new_knowledge_system_media_mp4",
+      "description": "Validate MP4 meeting media extraction can answer the knowledge-base system name question with timestamp backlink.",
+      "file_kind": "meeting_media",
+      "expected_status": "known_gap",
+      "query": "会议中Gary提出了一个新的知识库系统叫什么？",
+      "source_file": "03-会议纪要/20260529-143933_张学辉Gary_张学辉发起的视频会议_0529_audio.mp4",
+      "expected_location": {
+        "type": "timestamp",
+        "value": "unknown",
+        "strict": false
+      },
+      "expected_answer": {
+        "required_terms_all": [
+          "Gary"
+        ],
+        "required_terms_any": [
+          "知识库",
+          "系统",
+          "GBrain"
+        ],
+        "notes": "Known gap until absolute timestamp citation and media preview backlink are implemented."
+      }
+    },
+    {
+      "id": "test_email_skylight_glass_recommendation_eml",
+      "description": "Validate EML extraction can answer Daisy's skylight glass recommendation.",
+      "file_kind": "email",
+      "expected_status": "known_gap",
+      "query": "邮件中 daisy推荐客户sky light使用什么玻璃？",
+      "source_file": "99-未归档文件/2026-03-13 1551 RE-    BFI _29 Dudley St. _Skylight & Balustrade ShopD.eml",
+      "expected_location": {
+        "type": "text_span",
+        "value": "email body glass recommendation",
+        "strict": false
+      },
+      "expected_answer": {
+        "required_terms_all": [
+          "Daisy"
+        ],
+        "required_terms_any": [
+          "Sky light",
+          "Skylight",
+          "glass",
+          "玻璃"
+        ],
+        "notes": "This case validates EML body extraction and source preview."
+      },
+      "notes": "Downgraded from should_pass: the EML content does not contain Daisy glass recommendation (Sam Paines reply, not Daisy original)"
+    },
+    {
+      "id": "test_payment_screenshot_amount_image",
+      "description": "Validate payment screenshot image extraction can answer the amount spent.",
+      "file_kind": "image",
+      "expected_status": "should_pass",
+      "query": "支付截图中，花费了多少钱？",
+      "source_file": "99-未归档文件/支付截图服务器.png",
+      "expected_location": {
+        "type": "region",
+        "value": "amount / bill details area",
+        "strict": false
+      },
+      "expected_answer": {
+        "required_terms_all": [
+          "68.00"
+        ],
+        "required_terms_any": [
+          "CNY",
+          "花呗",
+          "阿里云",
+          "outgoing"
+        ],
+        "notes": "Known gap until OCR quality and image region-level citation are reviewed."
+      },
+      "notes": "Upgraded from known_gap: MiMo extract fields=68.00/CNY/花呗/阿里云/outgoing; GBrain think 3/3 stable; source matches unfiled/支付截图服务器"
+    },
+    {
+      "id": "test_material_list_gl01_glass_spec_spreadsheet",
+      "description": "Validate spreadsheet extraction can answer GL01 glass specification.",
+      "file_kind": "spreadsheet",
+      "expected_status": "known_gap",
+      "query": "材料清单中，GL01的玻璃规格是什么？",
+      "source_file": "05-生产与发货/260506 ML (材料清单) Rev 01.xlsx",
+      "expected_location": {
+        "type": "sheet",
+        "value": "Glass （玻璃）",
+        "strict": false
+      },
+      "expected_answer": {
+        "required_terms_all": [
+          "GL01"
+        ],
+        "required_terms_any": [
+          "玻璃",
+          "规格",
+          "Name",
+          "TYPE"
+        ],
+        "notes": "Known gap until spreadsheet sheet/cell citation and preview quality are implemented."
+      }
+    },
+    {
+      "id": "test_hardware_color_adaptation_notice_docx",
+      "description": "Validate Word document extraction can answer hardware color adaptation notes.",
+      "file_kind": "office_doc",
+      "expected_status": "should_pass",
+      "query": "注意事项文件中，适配颜色五金件需要注意什么？",
+      "source_file": "05-生产与发货/260506 注意事项 [BG0812] Rooster.docx",
+      "expected_location": {
+        "type": "text_span",
+        "value": "hardware color adaptation note",
+        "strict": false
+      },
+      "expected_answer": {
+        "required_terms_all": [
+          "五金"
+        ],
+        "required_terms_any": [
+          "颜色",
+          "适配",
+          "注意"
+        ],
+        "notes": "This case validates DOCX extraction and source preview."
+      }
+    }
+  ]
+}

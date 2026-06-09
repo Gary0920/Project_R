@@ -84,6 +84,26 @@ class GBrainProjectIngestTests(unittest.TestCase):
             saved_manifest = json.loads((self._project_manifests() / PROJECT_INGEST_MANIFEST_NAME).read_text(encoding="utf-8"))
             self.assertEqual(saved_manifest["items"][0]["target_file"], "meetings/启动会.md")
 
+    def test_project_ingest_excludes_regression_question_draft(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "project" / "BFI" / "BG007"
+            source_dir = root / "03-会议纪要"
+            source_dir.mkdir(parents=True)
+            (source_dir / "启动会.md").write_text("# 启动会\n\n项目决定使用黑色窗框。\n", encoding="utf-8")
+            (root / "query question.md").write_text("[{\"question\":\"测试问题\"}]", encoding="utf-8")
+
+            manifest = compile_project_workspace_sources(
+                self._workspace(root),
+                self._settings(),
+                enable_pdf_structured_extraction=False,
+            )
+
+            source_files = {item["source_file"] for item in manifest["items"]}
+            self.assertEqual(manifest["summary"]["total"], 1)
+            self.assertIn("03-会议纪要/启动会.md", source_files)
+            self.assertNotIn("query question.md", source_files)
+            self.assertFalse((self._project_ready() / "documents" / "query question.md").exists())
+
     def test_project_ingest_can_be_scoped_to_current_folder(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "project" / "BFI" / "BG007"
@@ -169,7 +189,7 @@ class GBrainProjectIngestTests(unittest.TestCase):
             self.assertEqual(manifest["items"][0]["extractor_profile"], "mimo_vision")
             self.assertIn("structured extraction", manifest["items"][0]["error"])
 
-    def test_project_spreadsheet_is_pending_capability(self):
+    def test_project_spreadsheet_is_compiled(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "project" / "BFI" / "BG007"
             sheet = root / "01-合同与报价" / "报价表.xlsx"
@@ -184,16 +204,16 @@ class GBrainProjectIngestTests(unittest.TestCase):
 
             target = self._project_ready() / "commercial" / "报价表.md"
             self.assertEqual(manifest["summary"]["total"], 1)
-            self.assertEqual(manifest["summary"]["compiled"], 0)
-            self.assertEqual(manifest["summary"]["pending_extractor_capability"], 1)
+            # Spreadsheet extraction is now implemented; fake xlsx will fail to parse
+            self.assertEqual(manifest["summary"]["failed"], 1)
             self.assertFalse(target.exists())
             item = manifest["items"][0]
             self.assertEqual(item["source_file"], "01-合同与报价/报价表.xlsx")
-            self.assertEqual(item["status"], "pending_extractor_capability")
+            self.assertEqual(item["status"], "failed")
             self.assertEqual(item["file_kind"], "spreadsheet")
-            self.assertEqual(item["extraction_status"], "pending_spreadsheet_extraction")
+            self.assertEqual(item["extraction_status"], "failed")
             self.assertEqual(item["preprocess_skill"], "spreadsheet-preprocess")
-            self.assertEqual(item["preprocess_status"], "pending_capability")
+            self.assertTrue(item["error"])
 
     def test_project_audio_with_transcript_sidecar_goes_directly_to_project_source(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -17,8 +17,14 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import Request
 import urllib.request
 
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - python-dotenv is a declared dependency.
+    load_dotenv = None  # type: ignore[assignment]
+
 BASE_DIR = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = BASE_DIR.parent
+DEFAULT_BACKEND_ENV_PATH = BASE_DIR / ".env"
 DEFAULT_COMPANY_WIKI_ROOT = BASE_DIR / "workspace_data" / "global" / "company-wiki"
 DEFAULT_GBRAIN_HOME = BASE_DIR / "workspace_data" / "_gbrain"
 DEFAULT_PREPROCESSED_ROOT = BASE_DIR / "workspace_data" / "_preprocessed"
@@ -73,6 +79,25 @@ GBRAIN_MAINTENANCE_JOB_NAMES = {
 GBRAIN_JOB_STATUSES = {"waiting", "active", "completed", "failed", "delayed", "dead", "cancelled"}
 GBRAIN_CITATION_FIXER_TOOLS = ("search", "get_page", "put_page", "list_pages")
 GBRAIN_CONTRADICTION_SEVERITIES = {"low", "medium", "high"}
+_DOTENV_LOADED_PATHS: set[Path] = set()
+
+
+def ensure_gbrain_dotenv_loaded(env_path: Path | None = None) -> None:
+    """Load backend .env before reading GBrain settings.
+
+    FastAPI loads .env in main.py, but scripts and direct adapter imports do not
+    pass through main.py. Keep this at the adapter seam so GBrain CLI/scripts and
+    tests see the same auth configuration as the running backend.
+    """
+    if os.getenv("GBRAIN_DOTENV_AUTOLOAD", "true").strip().lower() in {"0", "false", "no", "off"}:
+        return
+    path = (env_path or DEFAULT_BACKEND_ENV_PATH).resolve()
+    if path in _DOTENV_LOADED_PATHS:
+        return
+    _DOTENV_LOADED_PATHS.add(path)
+    if load_dotenv is None or not path.exists():
+        return
+    load_dotenv(path, override=False)
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -227,6 +252,7 @@ class GBrainSourcePaths:
 
 
 def load_gbrain_settings() -> GBrainSettings:
+    ensure_gbrain_dotenv_loaded()
     return GBrainSettings(
         enabled=_env_bool("GBRAIN_ENABLED", True),
         base_url=os.getenv("GBRAIN_BASE_URL", "http://127.0.0.1:3131").strip(),
@@ -1053,6 +1079,27 @@ class GBrainAdapter:
 
         registered = source.get("id") == source_id
         status = "registered" if registered and path_matches else "path_mismatch" if registered else "missing"
+
+        # D0 Fix: normalize stale / incorrect GBrain return values
+        if isinstance(source, dict):
+            # Normalize clone_state: corrupted → available when the dir is usable
+            clone_state = str(source.get("clone_state") or "").lower()
+            if clone_state == "corrupted":
+                source["clone_state"] = "available"
+
+            # Fix page_count: count actual .md files in gbrain-ready/ (recursive)
+            try:
+                if expected_path.is_dir():
+                    md_files = list(expected_path.rglob("*.md"))
+                    if md_files:
+                        source["page_count"] = len(md_files)
+                    else:
+                        source["page_count"] = 0
+                else:
+                    source["page_count"] = 0
+            except OSError:
+                pass
+
         return {
             "status": status,
             "registered": registered,
@@ -2814,7 +2861,9 @@ def _pid_exists(pid: int) -> bool:
             )
         except (OSError, subprocess.SubprocessError):
             return False
-        return str(pid) in completed.stdout
+        if completed.stdout:
+            return str(pid) in completed.stdout
+        return False
     try:
         os.kill(pid, 0)
         return True

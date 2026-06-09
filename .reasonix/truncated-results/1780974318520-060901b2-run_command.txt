@@ -1,0 +1,705 @@
+$ python -c "import sys; sys.path.insert(0,'backend'); import pytest; sys.exit(pytest.main(['-v', 'backend/tests/test_spreadsheet_preprocess.py', '--rootdir=backend']))" 2>&1
+[exit 1]
+============================= test session starts =============================
+platform win32 -- Python 3.11.9, pytest-9.0.3, pluggy-1.6.0 -- D:\Python\python.EXE
+cachedir: .pytest_cache
+rootdir: D:\Gary\System-Building\02-Ongoing\Project_R\backend
+plugins: anyio-4.13.0
+collecting ... collected 16 items
+
+backend\tests\test_spreadsheet_preprocess.py::TestCleanCell::test_float_int PASSED [  6%]
+backend\tests\test_spreadsheet_preprocess.py::TestCleanCell::test_none PASSED [ 12%]
+backend\tests\test_spreadsheet_preprocess.py::TestCleanCell::test_str PASSED [ 18%]
+backend\tests\test_spreadsheet_preprocess.py::TestCleanCell::test_string PASSED [ 25%]
+backend\tests\test_spreadsheet_preprocess.py::TestIsMaterialCodeColumn::test_chinese_patterns PASSED [ 31%]
+backend\tests\test_spreadsheet_preprocess.py::TestIsMaterialCodeColumn::test_english_patterns PASSED [ 37%]
+backend\tests\test_spreadsheet_preprocess.py::TestIsMaterialCodeColumn::test_non_material PASSED [ 43%]
+backend\tests\test_spreadsheet_preprocess.py::TestBuildMarkdownTable::test_basic_table PASSED [ 50%]
+backend\tests\test_spreadsheet_preprocess.py::TestBuildMarkdownTable::test_empty_headers PASSED [ 56%]
+backend\tests\test_spreadsheet_preprocess.py::TestExtractSpreadsheetMarkdown::test_empty_sheet_skipped FAILED [ 62%]
+backend\tests\test_spreadsheet_preprocess.py::TestExtractSpreadsheetMarkdown::test_empty_sheet_skipped ERROR [ 62%]
+backend\tests\test_spreadsheet_preprocess.py::TestExtractSpreadsheetMarkdown::test_handle_missing_openpyxl FAILED [ 68%]
+backend\tests\test_spreadsheet_preprocess.py::TestExtractSpreadsheetMarkdown::test_handle_missing_openpyxl ERROR [ 68%]
+backend\tests\test_spreadsheet_preprocess.py::TestExtractSpreadsheetMarkdown::test_hidden_sheet_skipped FAILED [ 75%]
+backend\tests\test_spreadsheet_preprocess.py::TestExtractSpreadsheetMarkdown::test_hidden_sheet_skipped ERROR [ 75%]
+backend\tests\test_spreadsheet_preprocess.py::TestExtractSpreadsheetMarkdown::test_material_codes_detected FAILED [ 81%]
+backend\tests\test_spreadsheet_preprocess.py::TestExtractSpreadsheetMarkdown::test_material_codes_detected ERROR [ 81%]
+backend\tests\test_spreadsheet_preprocess.py::TestExtractSpreadsheetMarkdown::test_multiple_sheets FAILED [ 87%]
+backend\tests\test_spreadsheet_preprocess.py::TestExtractSpreadsheetMarkdown::test_multiple_sheets ERROR [ 87%]
+backend\tests\test_spreadsheet_preprocess.py::TestExtractSpreadsheetMarkdown::test_simple_extraction FAILED [ 93%]
+backend\tests\test_spreadsheet_preprocess.py::TestExtractSpreadsheetMarkdown::test_simple_extraction ERROR [ 93%]
+backend\tests\test_spreadsheet_preprocess.py::TestExtractSpreadsheetMarkdown::test_truncated_long_sheet FAILED [100%]
+backend\tests\test_spreadsheet_preprocess.py::TestExtractSpreadsheetMarkdown::test_truncated_long_sheet ERROR [100%]
+
+=================================== ERRORS ====================================
+_ ERROR at teardown of TestExtractSpreadsheetMarkdown.test_empty_sheet_skipped _
+
+path = 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmpbg5023r_'
+onerror = <function TemporaryDirectory._rmtree.<locals>.onerror at 0x000000002D566E80>
+
+    def _rmtree_unsafe(path, onerror):
+        try:
+            with os.scandir(path) as scandir_it:
+                entries = list(scandir_it)
+        except OSError:
+            onerror(os.scandir, path, sys.exc_info())
+            entries = []
+        for entry in entries:
+            fullname = entry.path
+            if _rmtree_isdir(entry):
+                try:
+                    if entry.is_symlink():
+                        # This can only happen if someone replaces
+                        # a directory with a symlink after the call to
+                        # os.scandir or entry.is_dir above.
+                        raise OSError("Cannot call rmtree on a symbolic link")
+                except OSError:
+                    onerror(os.path.islink, fullname, sys.exc_info())
+                    continue
+                _rmtree_unsafe(fullname, onerror)
+            else:
+                try:
+>                   os.unlink(fullname)
+E                   PermissionError: [WinError 32] 另一个程序正在使用此文件，进程无法访问。: 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmpbg5023r_\\test_material_list.xlsx'
+
+D:\Python\Lib\shutil.py:632: PermissionError
+
+During handling of the above exception, another exception occurred:
+
+self = <test_spreadsheet_preprocess.TestExtractSpreadsheetMarkdown testMethod=test_empty_sheet_skipped>
+
+    def tearDown(self):
+>       self._tmpdir.cleanup()
+
+backend\tests\test_spreadsheet_preprocess.py:84: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+D:\Python\Lib\tempfile.py:947: in cleanup
+    self._rmtree(self.name, ignore_errors=self._ignore_cleanup_errors)
+D:\Python\Lib\tempfile.py:929: in _rmtree
+    _shutil.rmtree(name, onerror=onerror)
+D:\Python\Lib\shutil.py:787: in rmtree
+    return _rmtree_unsafe(path, onerror)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+D:\Python\Lib\shutil.py:634: in _rmtree_unsafe
+    onerror(os.unlink, fullname, sys.exc_info())
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+func = <built-in function unlink>
+path = 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmpbg5023r_\\test_material_list.xlsx'
+exc_info = (<class 'PermissionError'>, PermissionError(13, '另一个程序正在使用此文件，进程无法访问。'), <traceback object at 0x00000000048B76C0>)
+
+    def onerror(func, path, exc_info):
+        if issubclass(exc_info[0], PermissionError):
+            if repeated and path == name:
+                if ignore_errors:
+                    return
+                raise
+    
+            try:
+                if path != name:
+                    _resetperms(_os.path.dirname(path))
+                _resetperms(path)
+    
+                try:
+>                   _os.unlink(path)
+E                   PermissionError: [WinError 32] 另一个程序正在使用此文件，进程无法访问。: 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmpbg5023r_\\test_material_list.xlsx'
+
+D:\Python\Lib\tempfile.py:893: PermissionError
+_ ERROR at teardown of TestExtractSpreadsheetMarkdown.test_handle_missing_openpyxl _
+
+path = 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmpnprxt1fa'
+onerror = <function TemporaryDirectory._rmtree.<locals>.onerror at 0x000000002D567600>
+
+    def _rmtree_unsafe(path, onerror):
+        try:
+            with os.scandir(path) as scandir_it:
+                entries = list(scandir_it)
+        except OSError:
+            onerror(os.scandir, path, sys.exc_info())
+            entries = []
+        for entry in entries:
+            fullname = entry.path
+            if _rmtree_isdir(entry):
+                try:
+                    if entry.is_symlink():
+                        # This can only happen if someone replaces
+                        # a directory with a symlink after the call to
+                        # os.scandir or entry.is_dir above.
+                        raise OSError("Cannot call rmtree on a symbolic link")
+                except OSError:
+                    onerror(os.path.islink, fullname, sys.exc_info())
+                    continue
+                _rmtree_unsafe(fullname, onerror)
+            else:
+                try:
+>                   os.unlink(fullname)
+E                   PermissionError: [WinError 32] 另一个程序正在使用此文件，进程无法访问。: 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmpnprxt1fa\\test_material_list.xlsx'
+
+D:\Python\Lib\shutil.py:632: PermissionError
+
+During handling of the above exception, another exception occurred:
+
+self = <test_spreadsheet_preprocess.TestExtractSpreadsheetMarkdown testMethod=test_handle_missing_openpyxl>
+
+    def tearDown(self):
+>       self._tmpdir.cleanup()
+
+backend\tests\test_spreadsheet_preprocess.py:84: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+D:\Python\Lib\tempfile.py:947: in cleanup
+    self._rmtree(self.name, ignore_errors=self._ignore_cleanup_errors)
+D:\Python\Lib\tempfile.py:929: in _rmtree
+    _shutil.rmtree(name, onerror=onerror)
+D:\Python\Lib\shutil.py:787: in rmtree
+    return _rmtree_unsafe(path, onerror)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+D:\Python\Lib\shutil.py:634: in _rmtree_unsafe
+    onerror(os.unlink, fullname, sys.exc_info())
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+func = <built-in function unlink>
+path = 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmpnprxt1fa\\test_material_list.xlsx'
+exc_info = (<class 'PermissionError'>, PermissionError(13, '另一个程序正在使用此文件，进程无法访问。'), <traceback object at 0x000000002D6318C0>)
+
+    def onerror(func, path, exc_info):
+        if issubclass(exc_info[0], PermissionError):
+            if repeated and path == name:
+                if ignore_errors:
+                    return
+                raise
+    
+            try:
+                if path != name:
+                    _resetperms(_os.path.dirname(path))
+                _resetperms(path)
+    
+                try:
+>                   _os.unlink(path)
+E                   PermissionError: [WinError 32] 另一个程序正在使用此文件，进程无法访问。: 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmpnprxt1fa\\test_material_list.xlsx'
+
+D:\Python\Lib\tempfile.py:893: PermissionError
+_ ERROR at teardown of TestExtractSpreadsheetMarkdown.test_hidden_sheet_skipped _
+
+path = 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmpotkl43s3'
+onerror = <function TemporaryDirectory._rmtree.<locals>.onerror at 0x000000002D684D60>
+
+    def _rmtree_unsafe(path, onerror):
+        try:
+            with os.scandir(path) as scandir_it:
+                entries = list(scandir_it)
+        except OSError:
+            onerror(os.scandir, path, sys.exc_info())
+            entries = []
+        for entry in entries:
+            fullname = entry.path
+            if _rmtree_isdir(entry):
+                try:
+                    if entry.is_symlink():
+                        # This can only happen if someone replaces
+                        # a directory with a symlink after the call to
+                        # os.scandir or entry.is_dir above.
+                        raise OSError("Cannot call rmtree on a symbolic link")
+                except OSError:
+                    onerror(os.path.islink, fullname, sys.exc_info())
+                    continue
+                _rmtree_unsafe(fullname, onerror)
+            else:
+                try:
+>                   os.unlink(fullname)
+E                   PermissionError: [WinError 32] 另一个程序正在使用此文件，进程无法访问。: 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmpotkl43s3\\test_hidden.xlsx'
+
+D:\Python\Lib\shutil.py:632: PermissionError
+
+During handling of the above exception, another exception occurred:
+
+self = <test_spreadsheet_preprocess.TestExtractSpreadsheetMarkdown testMethod=test_hidden_sheet_skipped>
+
+    def tearDown(self):
+>       self._tmpdir.cleanup()
+
+backend\tests\test_spreadsheet_preprocess.py:84: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+D:\Python\Lib\tempfile.py:947: in cleanup
+    self._rmtree(self.name, ignore_errors=self._ignore_cleanup_errors)
+D:\Python\Lib\tempfile.py:929: in _rmtree
+    _shutil.rmtree(name, onerror=onerror)
+D:\Python\Lib\shutil.py:787: in rmtree
+    return _rmtree_unsafe(path, onerror)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+D:\Python\Lib\shutil.py:634: in _rmtree_unsafe
+    onerror(os.unlink, fullname, sys.exc_info())
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+func = <built-in function unlink>
+path = 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmpotkl43s3\\test_hidden.xlsx'
+exc_info = (<class 'PermissionError'>, PermissionError(13, '另一个程序正在使用此文件，进程无法访问。'), <traceback object at 0x000000002D5DE740>)
+
+    def onerror(func, path, exc_info):
+        if issubclass(exc_info[0], PermissionError):
+            if repeated and path == name:
+                if ignore_errors:
+                    return
+                raise
+    
+            try:
+                if path != name:
+                    _resetperms(_os.path.dirname(path))
+                _resetperms(path)
+    
+                try:
+>                   _os.unlink(path)
+E                   PermissionError: [WinError 32] 另一个程序正在使用此文件，进程无法访问。: 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmpotkl43s3\\test_hidden.xlsx'
+
+D:\Python\Lib\tempfile.py:893: PermissionError
+_ ERROR at teardown of TestExtractSpreadsheetMarkdown.test_material_codes_detected _
+
+path = 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmp8lvwy23h'
+onerror = <function TemporaryDirectory._rmtree.<locals>.onerror at 0x000000002D565D00>
+
+    def _rmtree_unsafe(path, onerror):
+        try:
+            with os.scandir(path) as scandir_it:
+                entries = list(scandir_it)
+        except OSError:
+            onerror(os.scandir, path, sys.exc_info())
+            entries = []
+        for entry in entries:
+            fullname = entry.path
+            if _rmtree_isdir(entry):
+                try:
+                    if entry.is_symlink():
+                        # This can only happen if someone replaces
+                        # a directory with a symlink after the call to
+                        # os.scandir or entry.is_dir above.
+                        raise OSError("Cannot call rmtree on a symbolic link")
+                except OSError:
+                    onerror(os.path.islink, fullname, sys.exc_info())
+                    continue
+                _rmtree_unsafe(fullname, onerror)
+            else:
+                try:
+>                   os.unlink(fullname)
+E                   PermissionError: [WinError 32] 另一个程序正在使用此文件，进程无法访问。: 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmp8lvwy23h\\test_material_list.xlsx'
+
+D:\Python\Lib\shutil.py:632: PermissionError
+
+During handling of the above exception, another exception occurred:
+
+self = <test_spreadsheet_preprocess.TestExtractSpreadsheetMarkdown testMethod=test_material_codes_detected>
+
+    def tearDown(self):
+>       self._tmpdir.cleanup()
+
+backend\tests\test_spreadsheet_preprocess.py:84: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+D:\Python\Lib\tempfile.py:947: in cleanup
+    self._rmtree(self.name, ignore_errors=self._ignore_cleanup_errors)
+D:\Python\Lib\tempfile.py:929: in _rmtree
+    _shutil.rmtree(name, onerror=onerror)
+D:\Python\Lib\shutil.py:787: in rmtree
+    return _rmtree_unsafe(path, onerror)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+D:\Python\Lib\shutil.py:634: in _rmtree_unsafe
+    onerror(os.unlink, fullname, sys.exc_info())
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+func = <built-in function unlink>
+path = 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmp8lvwy23h\\test_material_list.xlsx'
+exc_info = (<class 'PermissionError'>, PermissionError(13, '另一个程序正在使用此文件，进程无法访问。'), <traceback object at 0x000000002D561000>)
+
+    def onerror(func, path, exc_info):
+        if issubclass(exc_info[0], PermissionError):
+            if repeated and path == name:
+                if ignore_errors:
+                    return
+                raise
+    
+            try:
+                if path != name:
+                    _resetperms(_os.path.dirname(path))
+                _resetperms(path)
+    
+                try:
+>                   _os.unlink(path)
+E                   PermissionError: [WinError 32] 另一个程序正在使用此文件，进程无法访问。: 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmp8lvwy23h\\test_material_list.xlsx'
+
+D:\Python\Lib\tempfile.py:893: PermissionError
+__ ERROR at teardown of TestExtractSpreadsheetMarkdown.test_multiple_sheets ___
+
+path = 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmprxsmm2w5'
+onerror = <function TemporaryDirectory._rmtree.<locals>.onerror at 0x000000002D686160>
+
+    def _rmtree_unsafe(path, onerror):
+        try:
+            with os.scandir(path) as scandir_it:
+                entries = list(scandir_it)
+        except OSError:
+            onerror(os.scandir, path, sys.exc_info())
+            entries = []
+        for entry in entries:
+            fullname = entry.path
+            if _rmtree_isdir(entry):
+                try:
+                    if entry.is_symlink():
+                        # This can only happen if someone replaces
+                        # a directory with a symlink after the call to
+                        # os.scandir or entry.is_dir above.
+                        raise OSError("Cannot call rmtree on a symbolic link")
+                except OSError:
+                    onerror(os.path.islink, fullname, sys.exc_info())
+                    continue
+                _rmtree_unsafe(fullname, onerror)
+            else:
+                try:
+>                   os.unlink(fullname)
+E                   PermissionError: [WinError 32] 另一个程序正在使用此文件，进程无法访问。: 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmprxsmm2w5\\test_material_list.xlsx'
+
+D:\Python\Lib\shutil.py:632: PermissionError
+
+During handling of the above exception, another exception occurred:
+
+self = <test_spreadsheet_preprocess.TestExtractSpreadsheetMarkdown testMethod=test_multiple_sheets>
+
+    def tearDown(self):
+>       self._tmpdir.cleanup()
+
+backend\tests\test_spreadsheet_preprocess.py:84: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+D:\Python\Lib\tempfile.py:947: in cleanup
+    self._rmtree(self.name, ignore_errors=self._ignore_cleanup_errors)
+D:\Python\Lib\tempfile.py:929: in _rmtree
+    _shutil.rmtree(name, onerror=onerror)
+D:\Python\Lib\shutil.py:787: in rmtree
+    return _rmtree_unsafe(path, onerror)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+D:\Python\Lib\shutil.py:634: in _rmtree_unsafe
+    onerror(os.unlink, fullname, sys.exc_info())
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+func = <built-in function unlink>
+path = 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmprxsmm2w5\\test_material_list.xlsx'
+exc_info = (<class 'PermissionError'>, PermissionError(13, '另一个程序正在使用此文件，进程无法访问。'), <traceback object at 0x000000002D5E7140>)
+
+    def onerror(func, path, exc_info):
+        if issubclass(exc_info[0], PermissionError):
+            if repeated and path == name:
+                if ignore_errors:
+                    return
+                raise
+    
+            try:
+                if path != name:
+                    _resetperms(_os.path.dirname(path))
+                _resetperms(path)
+    
+                try:
+>                   _os.unlink(path)
+E                   PermissionError: [WinError 32] 另一个程序正在使用此文件，进程无法访问。: 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmprxsmm2w5\\test_material_list.xlsx'
+
+D:\Python\Lib\tempfile.py:893: PermissionError
+_ ERROR at teardown of TestExtractSpreadsheetMarkdown.test_simple_extraction __
+
+path = 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmp_ou3va7n'
+onerror = <function TemporaryDirectory._rmtree.<locals>.onerror at 0x000000002D6862A0>
+
+    def _rmtree_unsafe(path, onerror):
+        try:
+            with os.scandir(path) as scandir_it:
+                entries = list(scandir_it)
+        except OSError:
+            onerror(os.scandir, path, sys.exc_info())
+            entries = []
+        for entry in entries:
+            fullname = entry.path
+            if _rmtree_isdir(entry):
+                try:
+                    if entry.is_symlink():
+                        # This can only happen if someone replaces
+                        # a directory with a symlink after the call to
+                        # os.scandir or entry.is_dir above.
+                        raise OSError("Cannot call rmtree on a symbolic link")
+                except OSError:
+                    onerror(os.path.islink, fullname, sys.exc_info())
+                    continue
+                _rmtree_unsafe(fullname, onerror)
+            else:
+                try:
+>                   os.unlink(fullname)
+E                   PermissionError: [WinError 32] 另一个程序正在使用此文件，进程无法访问。: 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmp_ou3va7n\\test_material_list.xlsx'
+
+D:\Python\Lib\shutil.py:632: PermissionError
+
+During handling of the above exception, another exception occurred:
+
+self = <test_spreadsheet_preprocess.TestExtractSpreadsheetMarkdown testMethod=test_simple_extraction>
+
+    def tearDown(self):
+>       self._tmpdir.cleanup()
+
+backend\tests\test_spreadsheet_preprocess.py:84: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+D:\Python\Lib\tempfile.py:947: in cleanup
+    self._rmtree(self.name, ignore_errors=self._ignore_cleanup_errors)
+D:\Python\Lib\tempfile.py:929: in _rmtree
+    _shutil.rmtree(name, onerror=onerror)
+D:\Python\Lib\shutil.py:787: in rmtree
+    return _rmtree_unsafe(path, onerror)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+D:\Python\Lib\shutil.py:634: in _rmtree_unsafe
+    onerror(os.unlink, fullname, sys.exc_info())
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+func = <built-in function unlink>
+path = 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmp_ou3va7n\\test_material_list.xlsx'
+exc_info = (<class 'PermissionError'>, PermissionError(13, '另一个程序正在使用此文件，进程无法访问。'), <traceback object at 0x000000002E734580>)
+
+    def onerror(func, path, exc_info):
+        if issubclass(exc_info[0], PermissionError):
+            if repeated and path == name:
+                if ignore_errors:
+                    return
+                raise
+    
+            try:
+                if path != name:
+                    _resetperms(_os.path.dirname(path))
+                _resetperms(path)
+    
+                try:
+>                   _os.unlink(path)
+E                   PermissionError: [WinError 32] 另一个程序正在使用此文件，进程无法访问。: 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmp_ou3va7n\\test_material_list.xlsx'
+
+D:\Python\Lib\tempfile.py:893: PermissionError
+_ ERROR at teardown of TestExtractSpreadsheetMarkdown.test_truncated_long_sheet _
+
+path = 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmpzvic5sjo'
+onerror = <function TemporaryDirectory._rmtree.<locals>.onerror at 0x000000002D685E40>
+
+    def _rmtree_unsafe(path, onerror):
+        try:
+            with os.scandir(path) as scandir_it:
+                entries = list(scandir_it)
+        except OSError:
+            onerror(os.scandir, path, sys.exc_info())
+            entries = []
+        for entry in entries:
+            fullname = entry.path
+            if _rmtree_isdir(entry):
+                try:
+                    if entry.is_symlink():
+                        # This can only happen if someone replaces
+                        # a directory with a symlink after the call to
+                        # os.scandir or entry.is_dir above.
+                        raise OSError("Cannot call rmtree on a symbolic link")
+                except OSError:
+                    onerror(os.path.islink, fullname, sys.exc_info())
+                    continue
+                _rmtree_unsafe(fullname, onerror)
+            else:
+                try:
+>                   os.unlink(fullname)
+E                   PermissionError: [WinError 32] 另一个程序正在使用此文件，进程无法访问。: 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmpzvic5sjo\\test_material_list.xlsx'
+
+D:\Python\Lib\shutil.py:632: PermissionError
+
+During handling of the above exception, another exception occurred:
+
+self = <test_spreadsheet_preprocess.TestExtractSpreadsheetMarkdown testMethod=test_truncated_long_sheet>
+
+    def tearDown(self):
+>       self._tmpdir.cleanup()
+
+backend\tests\test_spreadsheet_preprocess.py:84: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+D:\Python\Lib\tempfile.py:947: in cleanup
+    self._rmtree(self.name, ignore_errors=self._ignore_cleanup_errors)
+D:\Python\Lib\tempfile.py:929: in _rmtree
+    _shutil.rmtree(name, onerror=onerror)
+D:\Python\Lib\shutil.py:787: in rmtree
+    return _rmtree_unsafe(path, onerror)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+D:\Python\Lib\shutil.py:634: in _rmtree_unsafe
+    onerror(os.unlink, fullname, sys.exc_info())
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+func = <built-in function unlink>
+path = 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmpzvic5sjo\\test_material_list.xlsx'
+exc_info = (<class 'PermissionError'>, PermissionError(13, '另一个程序正在使用此文件，进程无法访问。'), <traceback object at 0x000000002E716D00>)
+
+    def onerror(func, path, exc_info):
+        if issubclass(exc_info[0], PermissionError):
+            if repeated and path == name:
+                if ignore_errors:
+                    return
+                raise
+    
+            try:
+                if path != name:
+                    _resetperms(_os.path.dirname(path))
+                _resetperms(path)
+    
+                try:
+>                   _os.unlink(path)
+E                   PermissionError: [WinError 32] 另一个程序正在使用此文件，进程无法访问。: 'C:\\Users\\79292\\AppData\\Local\\Temp\\tmpzvic5sjo\\test_material_list.xlsx'
+
+D:\Python\Lib\tempfile.py:893: PermissionError
+================================== FAILURES ===================================
+___________ TestExtractSpreadsheetMarkdown.test_empty_sheet_skipped ___________
+
+self = <test_spreadsheet_preprocess.TestExtractSpreadsheetMarkdown testMethod=test_empty_sheet_skipped>
+
+    def test_empty_sheet_skipped(self):
+        _create_test_xlsx(self.xlsx_path, {
+            "Empty": [["Header"]],
+        })
+>       result = extract_spreadsheet_markdown(self.xlsx_path)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+backend\tests\test_spreadsheet_preprocess.py:138: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+backend\core\spreadsheet_preprocess.py:68: in extract_spreadsheet_markdown
+    return _extract_from_workbook(wb, source_path)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+wb = <openpyxl.workbook.workbook.Workbook object at 0x000000002D57FF50>
+source_path = WindowsPath('C:/Users/79292/AppData/Local/Temp/tmpbg5023r_/test_material_list.xlsx')
+
+    def _extract_from_workbook(wb: Any, source_path: Path) -> SpreadsheetExtractionResult:
+        """Extract structured Markdown from an open workbook handle."""
+        sheet_extractions: list[SheetExtraction] = []
+        total_rows = 0
+        all_material_codes: list[str] = []
+        all_warnings: list[str] = []
+    
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            if ws.sheet_state != "visible":
+                continue
+    
+            rows_iter = ws.iter_rows(values_only=True)
+            headers: list[str] = []
+            table_rows: list[list[str]] = []
+            row_count = 0
+            truncated = False
+            header_row_index = 0
+            material_code_column: str | None = None
+    
+            for row_index, row in enumerate(rows_iter):
+                values = [_clean_cell(cell) for cell in row]
+                non_empty = [v for v in values if v]
+    
+>               if not header_row_found:
+                       ^^^^^^^^^^^^^^^^
+E               NameError: name 'header_row_found' is not defined
+
+backend\core\spreadsheet_preprocess.py:97: NameError
+_________ TestExtractSpreadsheetMarkdown.test_handle_missing_openpyxl _________
+
+self = <test_spreadsheet_preprocess.TestExtractSpreadsheetMarkdown testMethod=test_handle_missing_openpyxl>
+
+    def test_handle_missing_openpyxl(self):
+        """Test graceful failure when openpyxl is not installed."""
+        # Create a test file first
+        if not self.xlsx_path.exists():
+            _create_test_xlsx(self.xlsx_path, {"Sheet1": [["A"], ["1"]]})
+>       result = extract_spreadsheet_markdown(self.xlsx_path)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+backend\tests\test_spreadsheet_preprocess.py:183: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+backend\core\spreadsheet_preprocess.py:68: in extract_spreadsheet_markdown
+    return _extract_from_workbook(wb, source_path)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+wb = <openpyxl.workbook.workbook.Workbook object at 0x000000002D256CD0>
+source_path = WindowsPath('C:/Users/79292/AppData/Local/Temp/tmpnprxt1fa/test_material_list.xlsx')
+
+    def _extract_from_workbook(wb: Any, source_path: Path) -> SpreadsheetExtractionResult:
+        """Extract structured Markdown from an open workbook handle."""
+        sheet_extractions: list[SheetExtraction] = []
+        total_rows = 0
+        all_material_codes: list[str] = []
+        all_warnings: list[str] = []
+    
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            if ws.sheet_state != "visible":
+                continue
+    
+            rows_iter = ws.iter_rows(values_only=True)
+            headers: list[str] = []
+            table_rows: list[list[str]] = []
+            row_count = 0
+            truncated = False
+            header_row_index = 0
+            material_code_column: str | None = None
+    
+            for row_index, row in enumerate(rows_iter):
+                values = [_clean_cell(cell) for cell in row]
+                non_empty = [v for v in values if v]
+    
+>               if not header_row_found:
+                       ^^^^^^^^^^^^^^^^
+E               NameError: name 'header_row_found' is not defined
+
+backend\core\spreadsheet_preprocess.py:97: NameError
+__________ TestExtractSpreadsheetMarkdown.test_hidden_sheet_skipped ___________
+
+self = <test_spreadsheet_preprocess.TestExtractSpreadsheetMarkdown testMethod=test_hidden_sheet_skipped>
+
+    def test_hidden_sheet_skipped(self):
+        from openpyxl import Workbook
+    
+        wb = Workbook()
+        ws1 = wb.active
+        ws1.title = "Visible"
+        ws1.append(["Name", "Value"])
+        ws1.append(["A", "1"])
+    
+        ws2 = wb.create_sheet(title="Hidden")
+        ws2.sheet_state = "hidden"
+        ws2.append(["Secret", "Data"])
+        ws2.append(["X", "2"])
+    
+        xlsx_path = Path(self._tmpdir.name) / "test_hidden.xlsx"
+        wb.save(str(xlsx_path))
+    
+>       result = extract_spreadsheet_markdown(xlsx_path)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+backend\tests\test_spreadsheet_preprocess.py:160: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+backend\core\spreadsheet_preprocess.py:68: in extract_spreadsheet_markdown
+    return _extract_from_workbook(wb, source_path)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+wb = <openpyxl.workbook.workbook.Workbook object at 0x000000002D62F9D0>
+source_path = WindowsPath('C:/Users/79292/AppData/Local/Temp/tmpotkl43s3/test_hidden.xlsx')
+
+    def _extract_from_workbook(wb: Any, source_path: Path) -> SpreadsheetExtractionResult:
+        """Extract structured Markdown from an open workbook handle."""
+        sheet_extractions: list[SheetExtraction] = []
+        total_rows = 0
+        all_material_codes: list[str] = []
+        all_warnings: list[str] = []
+    
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            if ws.sheet_state != "visible":
+                continue
+    
+            rows_iter = ws.iter_rows(values_only=True)
+            headers: list[str] = []
+            table_rows: list[list[str]] = []
+            row_count = 0
+            truncated = False
+            header_row_index = 0
+            material_code_column: str | None = None
+    
+            for row_index, row in enumerate(rows_iter):
+                values = [_clea
+
+[… truncated 11369 chars …]

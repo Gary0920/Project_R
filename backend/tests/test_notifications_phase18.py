@@ -56,7 +56,9 @@ class NotificationsPhase18Tests(unittest.TestCase):
                 "GBRAIN_COMPANY_RAW_PATH",
                 "GBRAIN_COMPANY_DERIVED_PATH",
                 "GBRAIN_COMPANY_MANIFESTS_PATH",
+                "GBRAIN_PREPROCESSED_ROOT",
                 "GBRAIN_LOCAL_GIT_ENABLED",
+                "GBRAIN_DOTENV_AUTOLOAD",
             )
         }
         root = Path(self.gbrain_root.name)
@@ -64,7 +66,9 @@ class NotificationsPhase18Tests(unittest.TestCase):
         os.environ["GBRAIN_COMPANY_RAW_PATH"] = str(root / "raw")
         os.environ["GBRAIN_COMPANY_DERIVED_PATH"] = str(root / "derived")
         os.environ["GBRAIN_COMPANY_MANIFESTS_PATH"] = str(root / "manifests")
+        os.environ["GBRAIN_PREPROCESSED_ROOT"] = str(root / "_preprocessed")
         os.environ["GBRAIN_LOCAL_GIT_ENABLED"] = "false"
+        os.environ["GBRAIN_DOTENV_AUTOLOAD"] = "false"
         self.admin = User(username="admin", password_hash="hash", role="admin", nickname="Admin")
         self.employee = User(username="employee", password_hash="hash", role="employee", nickname="Employee")
         self.other_admin = User(username="admin-2", password_hash="hash", role="admin", nickname="Admin 2")
@@ -248,7 +252,7 @@ class NotificationsPhase18Tests(unittest.TestCase):
             self.db.query(Notification)
             .filter(
                 Notification.category == "workspace",
-                Notification.title == "项目知识库录入完成",
+                Notification.title == "工作区知识库录入完成",
                 Notification.user_id == self.admin.id,
             )
             .all()

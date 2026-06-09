@@ -41,6 +41,11 @@ from core.gbrain_ingest import (
     _split_frontmatter,
     _write_markdown,
 )
+from core.meeting_quality import (
+    detect_repeated_text,
+    quality_to_manifest_metadata,
+    TranscriptionQualityResult,
+)
 from core.meeting_structured_extraction import (
     MeetingStructuredExtractionResult,
     PROMPT_VERSION as MEETING_PROMPT_VERSION,
@@ -70,6 +75,12 @@ from core.image_structured_extraction import (
     SKILL_VERSION as IMAGE_PREPROCESS_VERSION,
     extract_image_structured_markdown,
 )
+from core.spreadsheet_preprocess import (
+    SpreadsheetExtractionResult,
+    SKILL_NAME as SPREADSHEET_PREPROCESS_SKILL,
+    SKILL_VERSION as SPREADSHEET_PREPROCESS_VERSION,
+    extract_spreadsheet_markdown,
+)
 
 
 DRAWING_PDF_PREPROCESS_SKILL = "drawing-pdf-vision-preprocess"
@@ -83,6 +94,7 @@ PROJECT_DIR_CATEGORY_MAP = {
     "99-未归档文件": "unfiled",
 }
 PROJECT_RUNTIME_DIRS = {"derived", "manifests", ".trash", ".git", "__pycache__"}
+PROJECT_INGEST_EXCLUDED_FILENAMES = {"query question.md"}
 PROJECT_INGEST_MANIFEST_NAME = "project-source-ingest-manifest.json"
 EMAIL_ATTACHMENT_DIR_SUFFIX = ".attachments"
 
@@ -328,6 +340,10 @@ def _compile_project_source(
                     "warnings": list(result.warnings),
                     "vision_pages": list(result.vision_pages),
                     "vision_image_count": result.vision_image_count,
+                    "pdf_subkind": result.pdf_subkind,
+                    "validation_checks": result.validation.get("checks", {}),
+                    "validation_warnings": result.validation.get("warnings", []),
+                    "validation_review_status": result.validation.get("review_status"),
                 },
             )
         if suffix in MEDIA_EXTENSIONS:
@@ -398,6 +414,7 @@ def _compile_project_source(
                         "transcript_refinement_status": (
                             transcription_result.refinement_status if transcription_result is not None else None
                         ),
+                        "meeting_quality": _build_meeting_quality_metadata(transcription_result),
                         "transcript_refinement_model_profile": (
                             transcription_result.refinement_model_profile if transcription_result is not None else None
                         ),
@@ -544,16 +561,63 @@ def _compile_project_source(
                 },
             )
         if classification.file_kind == "spreadsheet":
+            try:
+                result = extract_spreadsheet_markdown(source_path)
+            except Exception as exc:
+                return ProjectCompiledSource(
+                    source_path,
+                    "failed",
+                    error=f"spreadsheet extraction failed: {exc}",
+                    source_sha256=source_hash,
+                    metadata={
+                        **classifier_metadata,
+                        "extraction_status": "failed",
+                        "preprocess_skill": SPREADSHEET_PREPROCESS_SKILL,
+                        "error": str(exc),
+                    },
+                )
+            if result.review_status == "failed_retryable":
+                return ProjectCompiledSource(
+                    source_path,
+                    "pending_extractor_capability",
+                    error="openpyxl not available",
+                    source_sha256=source_hash,
+                    metadata={
+                        **classifier_metadata,
+                        "extraction_status": "pending_capability",
+                        "preprocess_skill": SPREADSHEET_PREPROCESS_SKILL,
+                        "preprocess_status": "pending_openpyxl_install",
+                    },
+                )
+            _compile_project_spreadsheet_source(
+                source_path,
+                target_path,
+                workspace,
+                paths,
+                ingested_at,
+                source_hash,
+                result,
+                classification,
+            )
             return ProjectCompiledSource(
                 source_path,
-                "pending_extractor_capability",
-                error=classification.classifier_reason,
+                "compiled",
+                target_path,
                 source_sha256=source_hash,
                 metadata={
                     **classifier_metadata,
-                    "extraction_status": "pending_spreadsheet_extraction",
-                    "preprocess_skill": "spreadsheet-preprocess",
-                    "preprocess_status": "pending_capability",
+                    "extraction_status": result.review_status,
+                    "review_status": result.review_status,
+                    "source_scope_review_policy": "project_no_admin_review",
+                    "extractor": result.extractor,
+                    "preprocess_skill": result.skill_name,
+                    "preprocess_version": result.skill_version,
+                    "prompt_version": result.prompt_version,
+                    "sheet_count": result.sheet_count,
+                    "total_rows": result.total_rows,
+                    "material_codes_found": result.material_codes_found,
+                    "file_kind": result.file_kind,
+                    "warnings": list(result.warnings),
                 },
             )
         return ProjectCompiledSource(
@@ -861,6 +925,59 @@ def _compile_project_image_structured_source(
     _write_markdown(target_path, frontmatter, extraction.markdown)
 
 
+def _compile_project_spreadsheet_source(
+    source_path: Path,
+    target_path: Path,
+    workspace: Any,
+    paths: dict[str, Path],
+    ingested_at: str,
+    source_hash: str,
+    extraction: SpreadsheetExtractionResult,
+    classification: ExtractorClassification,
+) -> None:
+    frontmatter = {
+        **_project_frontmatter(workspace, source_path, paths, ingested_at, source_hash),
+        **classification.to_manifest_metadata(),
+        "title": source_path.stem,
+        "type": "spreadsheet",
+        "content_kind": "spreadsheet_deterministic_extract",
+        "authority_level": "project_source_record",
+        "source_file": _relative_posix(source_path, paths["root"]),
+        "source_file_sha256": source_hash,
+        "source_file_type": source_path.suffix.lower().lstrip(".") or "spreadsheet",
+        "preprocess_skill": SPREADSHEET_PREPROCESS_SKILL,
+        "preprocess_version": SPREADSHEET_PREPROCESS_VERSION,
+        "preprocess_status": "succeeded",
+        "prompt_version": extraction.prompt_version,
+        "extraction_status": extraction.review_status,
+        "review_status": extraction.review_status,
+        "source_scope_review_policy": "project_no_admin_review",
+        "extractor": extraction.extractor,
+        "sheet_count": extraction.sheet_count,
+        "total_rows": extraction.total_rows,
+        "material_codes_found": extraction.material_codes_found,
+        "file_kind": extraction.file_kind,
+        "tags": ["项目表格", "材料清单", str(getattr(workspace, "brand", "") or ""), str(getattr(workspace, "slug", "") or "")],
+    }
+    if extraction.warnings:
+        frontmatter["extraction_warnings"] = list(extraction.warnings)
+    _write_markdown(target_path, frontmatter, extraction.markdown)
+
+
+def _build_meeting_quality_metadata(
+    transcription_result: Any,
+) -> dict[str, Any]:
+    """Build meeting quality metadata from transcription result."""
+    if transcription_result is None:
+        return {}
+    transcript_text = getattr(transcription_result, "transcript_text", "") or ""
+    try:
+        quality = detect_repeated_text(transcript_text)
+        return quality_to_manifest_metadata(quality)
+    except Exception:
+        return {}
+
+
 def _project_frontmatter(
     workspace: Any,
     source_path: Path,
@@ -924,6 +1041,8 @@ def _iter_project_source_files(
         if candidate.resolve() in transcript_sidecars:
             continue
         if _is_inside_runtime_dir(candidate, paths, sidecar_dirs):
+            continue
+        if candidate.name.casefold() in PROJECT_INGEST_EXCLUDED_FILENAMES:
             continue
         files.append(candidate)
     return files

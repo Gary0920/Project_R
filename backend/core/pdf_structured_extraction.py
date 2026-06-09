@@ -24,6 +24,15 @@ SKILL_NAME = "pdf-structured-preprocess"
 SKILL_VERSION = "1.0.0"
 PROMPT_VERSION = "rules-pdf-structured-v1"
 
+# Phase 4: PDF subkind detection patterns
+_PDF_SUBKIND_RULES: list[tuple[re.Pattern, str, str]] = [
+    (re.compile(r"window.schedule|ws\b", re.IGNORECASE), "drawing_window_schedule", "pdf-drawing-ws"),
+    (re.compile(r"facade.supply.programme|programme|排期", re.IGNORECASE), "drawing_schedule", "pdf-drawing-schedule"),
+    (re.compile(r"shop.drawing", re.IGNORECASE), "drawing_shop_drawing", "pdf-drawing-sd"),
+    (re.compile(r"floor.plan|平面图|elevation|立面图|general.arrangement", re.IGNORECASE), "drawing_general_arrangement", "pdf-drawing-ga"),
+]
+_SUBKIND_PROMPT_DIR = Path(__file__).resolve().parents[1] / "prompts"
+
 SYSTEM_PROMPT = """你是 Project_R 的 PDF 结构化资料提炼 Agent。
 
 你的任务不是抄写 PDF，也不是把抽取出的碎片文本重新排版，而是把 PDF 中稳定、可复用、可被业务人员检索的问题答案提炼成可审阅 Markdown。
@@ -38,6 +47,91 @@ SYSTEM_PROMPT = """你是 Project_R 的 PDF 结构化资料提炼 Agent。
 - 不能编造 PDF 中没有的事实。
 - 输出 Markdown 正文，不要输出 YAML frontmatter，不要包裹代码块。
 """
+
+
+# ── Phase 4: Subkind detection ────────────────────────────────────────────
+
+
+def _detect_pdf_subkind(filename: str) -> tuple[str, str | None]:
+    """Detect PDF subkind from filename.
+
+    Returns (subkind, prompt_key) where subkind is one of:
+        drawing_window_schedule, drawing_schedule, drawing_shop_drawing,
+        drawing_general_arrangement, general_pdf
+    And prompt_key is the prompt filename stem (or None for general).
+    """
+    name = Path(filename).stem.lower().replace("_", " ").replace("-", " ")
+    for pattern, subkind, prompt_key in _PDF_SUBKIND_RULES:
+        if pattern.search(name):
+            return subkind, prompt_key
+    return "general_pdf", None
+
+
+def _load_subkind_prompt(prompt_key: str | None) -> str | None:
+    """Load a subkind-specific prompt file from prompts/ directory."""
+    if prompt_key is None:
+        return None
+    prompt_path = _SUBKIND_PROMPT_DIR / f"{prompt_key}.txt"
+    if prompt_path.exists():
+        return prompt_path.read_text(encoding="utf-8").strip()
+    return None
+
+
+# ── Phase 4: Validation ───────────────────────────────────────────────────
+
+
+def validate_pdf_extraction(
+    markdown: str,
+    pdf_path: Path,
+    subkind: str,
+) -> dict[str, Any]:
+    """Validate PDF extraction quality.
+
+    Returns dict with:
+        review_status: "approved" | "needs_review"
+        warnings: list[str]
+        checks: dict of check_name → bool
+    """
+    checks: dict[str, bool] = {}
+    warnings: list[str] = []
+    md_lower = markdown.lower()
+
+    if subkind == "drawing_window_schedule":
+        has_window_id = bool(re.search(r"w\d+", md_lower))
+        has_dimension = bool(re.search(r"(width|height|宽|高|尺寸)", md_lower))
+        has_page_ref = bool(re.search(r"p\.?\s*\d+|第\d+页|page\s*\d+", md_lower))
+        checks["has_window_ids"] = has_window_id
+        checks["has_dimensions"] = has_dimension
+        checks["has_page_references"] = has_page_ref
+        if not has_window_id:
+            warnings.append("Window schedule: no W-prefix window IDs found")
+        if not has_dimension:
+            warnings.append("Window schedule: no width/height dimensions found")
+
+    elif subkind == "drawing_schedule":
+        has_duration = bool(re.search(r"(duration|天|天数|工期)", md_lower))
+        has_finish = bool(re.search(r"(finish|完成日期|计划完成)", md_lower))
+        has_task_name = bool(re.search(r"(task|shop.drawing|任务)", md_lower))
+        checks["has_duration"] = has_duration
+        checks["has_finish_date"] = has_finish
+        checks["has_task_names"] = has_task_name
+        if not has_duration and not has_finish:
+            warnings.append("Schedule: no Duration or Finish date found")
+
+    elif subkind in ("drawing_general_arrangement", "drawing_shop_drawing"):
+        has_page_ref = bool(re.search(r"p\.?\s*\d+|第\d+页|page\s*\d+", md_lower))
+        has_level = bool(re.search(r"(level\s+\d+|floor\s+\d+|l\d+|楼层|第.层)", md_lower))
+        checks["has_page_references"] = has_page_ref
+        checks["has_level_info"] = has_level
+        if not has_page_ref:
+            warnings.append("Drawing: no page references found")
+
+    review_status = "needs_review" if warnings else "approved"
+    return {
+        "review_status": review_status,
+        "warnings": warnings,
+        "checks": checks,
+    }
 
 
 @dataclass(frozen=True)
@@ -74,6 +168,9 @@ class PDFStructuredExtractionResult:
     warnings: tuple[str, ...] = ()
     vision_pages: tuple[int, ...] = ()
     vision_image_count: int = 0
+    # Phase 4: PDF subkind and validation
+    pdf_subkind: str = "general_pdf"
+    validation: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -175,17 +272,26 @@ def extract_pdf_structured_markdown(
     markdown = _normalize_final_markdown(_strip_markdown_wrapper(final_response.text), source_path.stem)
     _assert_bilingual_markdown(markdown)
 
+    # Phase 4: Subkind detection + validation
+    pdf_subkind, prompt_key = _detect_pdf_subkind(source_path.name)
+    validation = validate_pdf_extraction(markdown, source_path, pdf_subkind)
+    all_warnings = list(warnings) + validation.get("warnings", [])
+    review_status = validation.get("review_status", "pending_review")
+
     return PDFStructuredExtractionResult(
         markdown=markdown,
         page_count=len(pages),
         pages_analyzed=len(selected_pages),
+        review_status=review_status,
         model_profile=client.settings.profile or options.model_profile,
         provider=client.settings.provider,
         model=client.settings.model,
         token_usage=usage,
-        warnings=tuple(warnings),
+        warnings=tuple(all_warnings),
         vision_pages=vision_pages,
         vision_image_count=len(image_inputs),
+        pdf_subkind=pdf_subkind,
+        validation=validation,
     )
 
 

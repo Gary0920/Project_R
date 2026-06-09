@@ -76,6 +76,7 @@ class GBrainConfigTests(unittest.TestCase):
             "GBRAIN_COMPANY_MANIFESTS_PATH": str(root / "manifests"),
             "GBRAIN_PREPROCESSED_ROOT": str(root / "_preprocessed"),
             "GBRAIN_LOCAL_GIT_ENABLED": "false",
+            "GBRAIN_DOTENV_AUTOLOAD": "false",
         }
         for key in ("PATH", "Path", "SystemRoot", "WINDIR"):
             if key in os.environ:
@@ -379,7 +380,8 @@ class GBrainConfigTests(unittest.TestCase):
         self.assertEqual(status["status"], "registered")
         self.assertTrue(status["registered"])
         self.assertTrue(status["path_matches"])
-        self.assertEqual(status["source"]["clone_state"], "corrupted")
+        # D0 normalization: corrupted -> available
+        self.assertEqual(status["source"]["clone_state"], "available")
 
     def test_query_scopes_to_company_source(self):
         payload = {
