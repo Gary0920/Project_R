@@ -10,13 +10,45 @@ from models.workspace import WorkspaceFile, WorkspaceMember
 
 
 DEFAULT_WORKSPACE_DIRS = (
-    "01-合同与报价",
-    "02-图纸与技术资料",
-    "03-会议纪要",
-    "04-变更与签证",
-    "05-生产与发货",
-    "06-现场与客诉",
+    "01-项目启动",
+    "02-项目准备",
+    "03-样品阶段",
+    "04-施工图阶段",
+    "05-开模阶段",
+    "06-结构计算",
+    "07-热工计算",
+    "08-工程认证",
+    "09-项目统筹会",
+    "10-VMU阶段",
+    "11-PMU阶段",
+    "12-项目交接加工组",
+    "13-加工拆单与下单",
+    "14-大货生产",
+    "15-物流运输",
+    "16-项目结算",
+    "17-财务与款项",
+    "18-售后客诉",
+    "19-变更管理",
+    "20-会议与沟通",
+    "21-Skill输出与草稿",
+    "90-通用上传资料",
     "99-未归档文件",
+)
+DEFAULT_PROJECT_WORKSPACE_TEMPLATE_DIRS = DEFAULT_WORKSPACE_DIRS + (
+    "20-会议与沟通/01-原始资料",
+    "20-会议与沟通/02-转录文本",
+    "20-会议与沟通/03-辅助总结",
+    "20-会议与沟通/04-会议纪要",
+    "20-会议与沟通/05-行动项",
+    "21-Skill输出与草稿/01-待确认结果",
+    "21-Skill输出与草稿/02-已确认保存",
+    "90-通用上传资料/01-PDF与报告",
+    "90-通用上传资料/02-Office文档",
+    "90-通用上传资料/03-表格清单",
+    "90-通用上传资料/04-邮件EML",
+    "90-通用上传资料/05-图片截图",
+    "90-通用上传资料/06-压缩包",
+    "90-通用上传资料/07-其他",
 )
 DEFAULT_USER_WORKSPACE_DIRS = (
     "常用文件",
@@ -39,6 +71,55 @@ MAX_WORKSPACE_ADMIN_UPLOAD_MB = int(os.getenv("WORKSPACE_ADMIN_MAX_UPLOAD_MB", "
 MAX_WORKSPACE_UPLOAD_BYTES = MAX_WORKSPACE_UPLOAD_MB * 1024 * 1024
 MAX_WORKSPACE_ADMIN_UPLOAD_BYTES = MAX_WORKSPACE_ADMIN_UPLOAD_MB * 1024 * 1024
 TRASH_DIRNAME = ".trash"
+
+# ── Meeting folder constants ────────────────────────────────────────────
+MEETING_SUBDIRS = (
+    "01-原始资料",
+    "02-转录文本",
+    "03-辅助总结",
+    "04-会议纪要",
+    "05-行动项",
+)
+PROJECT_MEETING_PARENT = "20-会议与沟通"
+CRM_MEETING_PARENT = "raw/会议记录"
+MEETING_FOLDER_MAX_LEN = 80
+
+
+def make_meeting_folder_name(timestamp: datetime | None, topic: str) -> str:
+    """Generate YYYYMMDD-HHMM-sanitized-topic folder name."""
+    ts = timestamp or datetime.now(timezone.utc)
+    prefix = ts.strftime("%Y%m%d-%H%M")
+    cleaned = re.sub(r"[^\w一-鿿.\-()（）\[\]【】 &]", "_", (topic or "未命名会议").strip())
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    name = f"{prefix}-{cleaned}" if cleaned else f"{prefix}-未命名会议"
+    # Enforce max length on the whole name
+    if len(name) > MEETING_FOLDER_MAX_LEN:
+        keep_prefix = len(prefix) + 1  # prefix + hyphen
+        tail = cleaned[:MEETING_FOLDER_MAX_LEN - keep_prefix].rstrip("_-")
+        name = f"{prefix}-{tail or '未命名会议'}"
+    return safe_name(name)
+
+
+def meeting_parent_path(workspace_kind: str) -> str:
+    """Return the parent directory path for meeting folders per workspace kind."""
+    if workspace_kind == "project":
+        return PROJECT_MEETING_PARENT
+    if workspace_kind == "customer":
+        return CRM_MEETING_PARENT
+    raise HTTPException(status_code=400, detail="当前工作区类型不支持会议文件夹")
+
+
+def meeting_folder_collision_free(parent: Path, name: str) -> Path:
+    """Return a collision-free meeting folder path, appending (1), (2) etc."""
+    candidate = parent / name
+    if not candidate.exists():
+        return candidate
+    index = 1
+    while True:
+        candidate = parent / f"{name} ({index})"
+        if not candidate.exists():
+            return candidate
+        index += 1
 
 
 def safe_name(name: str) -> str:

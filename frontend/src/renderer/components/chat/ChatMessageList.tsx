@@ -552,6 +552,9 @@ function renderSkillRunCard(
   const missingFields = skillRun.missing_inputs
     .map((item) => String(item.label ?? item.name ?? "待补充字段"))
     .filter(Boolean);
+  const missingInstruction = missingFields.length
+    ? missingInputInstruction(skillRun.skill_name, skillRun.missing_inputs)
+    : "";
   const dispatchSteps = Array.isArray(skillRun.dispatch?.steps) ? skillRun.dispatch.steps as Array<Record<string, unknown>> : [];
   return (
     <div className="message-skill-card">
@@ -575,6 +578,9 @@ function renderSkillRunCard(
           ))}
         </div>
       ) : null}
+      {missingInstruction ? (
+        <MessageCodeBlock code={missingInstruction} language="下一步操作" />
+      ) : null}
       {options.showGeneratedFile !== false && skillRun.generated_file && options.onDownloadGeneratedFile ? (
         renderGeneratedFileCard(skillRun.generated_file, options.onDownloadGeneratedFile)
       ) : skillRun.generated_file ? (
@@ -582,6 +588,23 @@ function renderSkillRunCard(
       ) : null}
     </div>
   );
+}
+
+function missingInputInstruction(skillName: string | null | undefined, missingInputs: Array<Record<string, unknown>>) {
+  const normalizedSkill = String(skillName ?? "").trim();
+  const names = new Set(missingInputs.map((item) => String(item.name ?? "").trim()));
+  const labels = new Set(missingInputs.map((item) => String(item.label ?? "").trim()));
+  if (normalizedSkill === "audio-transcription" || names.has("audio_source") || labels.has("音频或视频文件")) {
+    return "请先在当前会话上传或从项目文件中引用一个音频/视频文件，然后重新发送“将这段录音转录成文字”。支持 MP3、WAV、M4A、OGG、FLAC、MP4、MOV 等格式。";
+  }
+  if (normalizedSkill === "term-correction" || normalizedSkill === "术语纠错" || names.has("term_corrections")) {
+    return "请提供术语纠正规则，每行一条，例如：LAM Wiki -> LLM Wiki。";
+  }
+  const fields = missingInputs
+    .map((item) => String(item.label ?? item.name ?? "待补充字段").trim())
+    .filter(Boolean)
+    .join("、");
+  return fields ? `请补充：${fields}。` : "";
 }
 
 function agentRunStatusLabel(status: string) {
@@ -641,7 +664,7 @@ function renderAgentRunCard(agentRun: AgentRunResponse) {
         <div className={`message-agent-current-step ${failedEvent ? "is-failed" : ""}`}>
           <span>{failedEvent ? "失败位置" : "当前步骤"}</span>
           <strong>{(failedEvent ?? activeEvent)?.title}</strong>
-          {(failedEvent ?? activeEvent)?.detail ? <p>{(failedEvent ?? activeEvent)?.detail}</p> : null}
+          {agentEventDetail(failedEvent ?? activeEvent) ? <p>{agentEventDetail(failedEvent ?? activeEvent)}</p> : null}
         </div>
       ) : null}
       {isPlanning ? (
@@ -661,7 +684,7 @@ function renderAgentRunCard(agentRun: AgentRunResponse) {
                   <strong>{event.title}</strong>
                   <small>{agentEventStatusLabel(event.status)}</small>
                 </div>
-                {event.detail ? <p>{event.detail}</p> : null}
+                {agentEventDetail(event) ? <p>{agentEventDetail(event)}</p> : null}
               </div>
             </li>
           ))}
@@ -672,13 +695,30 @@ function renderAgentRunCard(agentRun: AgentRunResponse) {
   );
 }
 
+function agentEventDetail(event: AgentRunResponse["events"][number] | undefined) {
+  if (!event) return "";
+  const missingInputs = Array.isArray(event.payload?.missing_inputs)
+    ? event.payload.missing_inputs as Array<Record<string, unknown>>
+    : [];
+  if (missingInputs.length) {
+    const instruction = missingInputInstruction(null, missingInputs);
+    if (instruction) return instruction;
+  }
+  return event.detail;
+}
+
+function _isDefaultPromptId(promptId: string | null | undefined) {
+  return promptId === "builtin:builtin-project-r";
+}
+
 function hasContextTrace(contextTrace: ChatContextTraceResponse | null | undefined) {
   if (!contextTrace) return false;
+  const hasVisiblePrompt = contextTrace.prompt?.system_prompt_provided
+    || (contextTrace.prompt?.selected_prompt_id && !_isDefaultPromptId(contextTrace.prompt.selected_prompt_id));
   return Boolean(
     contextTrace.attachments?.length ||
     contextTrace.knowledge?.source_count ||
-    contextTrace.prompt?.selected_prompt_id ||
-    contextTrace.prompt?.system_prompt_provided ||
+    hasVisiblePrompt ||
     contextTrace.skill?.skill_name ||
     contextTrace.gbrain_think?.gap_count ||
     contextTrace.gbrain_think?.conflict_count ||
@@ -752,14 +792,17 @@ function renderContextTraceCard(
             {gbrainWarnings.length ? <small className="is-warning">警告 {gbrainWarnings.length} 条</small> : null}
           </div>
         ) : null}
-        {(prompt?.selected_prompt_id || prompt?.system_prompt_provided || contextTrace.skill?.skill_name) ? (
+        {prompt?.system_prompt_provided || (prompt?.selected_prompt_id && !_isDefaultPromptId(prompt.selected_prompt_id)) ? (
           <div className="message-context-trace-section">
-            <span>提示词 / Skill</span>
-            {prompt?.selected_prompt_id ? <small>{prompt.selected_prompt_id}</small> : null}
-            {contextTrace.skill?.display_name || contextTrace.skill?.skill_name ? (
-              <small>{contextTrace.skill.display_name || contextTrace.skill.skill_name}</small>
-            ) : null}
+            <span>提示词</span>
+            {prompt?.selected_prompt_id && !_isDefaultPromptId(prompt.selected_prompt_id) ? <small>{prompt.selected_prompt_id}</small> : null}
             {prompt?.system_prompt_provided ? <small>{prompt.system_prompt_preview || "已使用会话提示词"}</small> : null}
+          </div>
+        ) : null}
+        {contextTrace.skill?.skill_name ? (
+          <div className="message-context-trace-section">
+            <span>Skill</span>
+            <small>{contextTrace.skill.display_name || contextTrace.skill.skill_name}</small>
           </div>
         ) : null}
       </div>
@@ -805,13 +848,22 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
   } = controller;
 
   function getLoadingProcessSteps(isInline = false) {
+    const latestUserMessage = [...messages].reverse().find((message) => message.role === "user") as any;
+    const latestContent = String(latestUserMessage?.content ?? "").trim();
+    // Skill from controller state (set when user selects a Skill before sending)
+    const activeSkillName = (controller as any).selectedSkill?.display_name
+      || (controller as any).selectedSkill?.name
+      || null;
+
     if (mode === "agent") {
+      if (activeSkillName) {
+        const label = typeof activeSkillName === "string" ? activeSkillName : String(activeSkillName);
+        return ["已选择 Skill：" + label, "正在读取上下文", "正在执行任务"];
+      }
       return isInline
         ? ["正在整理执行步骤", "正在更新任务状态", "正在生成结果"]
         : ["正在理解任务目标", "正在整理执行计划", "正在准备步骤状态"];
     }
-    const latestUserMessage = [...messages].reverse().find((message) => message.role === "user") as any;
-    const latestContent = String(latestUserMessage?.content ?? "").trim();
     const hasAttachments = Array.isArray(latestUserMessage?.attachments) && latestUserMessage.attachments.length > 0;
     if (latestContent.startsWith("/query")) {
       return ["正在识别知识库问题", "正在确认查询范围", "正在生成回答"];

@@ -7,6 +7,7 @@ import mimetypes
 from datetime import datetime, timezone
 from pathlib import Path
 import shutil
+import subprocess
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
@@ -42,12 +43,17 @@ from core.notification_service import (
 )
 from core.workspace_files import (
     DEFAULT_UNFILED_DIR,
+    DEFAULT_PROJECT_WORKSPACE_TEMPLATE_DIRS,
     DEFAULT_WORKSPACE_DIRS,
     MAX_WORKSPACE_ADMIN_UPLOAD_BYTES,
     MAX_WORKSPACE_ADMIN_UPLOAD_MB,
     MAX_WORKSPACE_UPLOAD_BYTES,
     MAX_WORKSPACE_UPLOAD_MB,
+    MEETING_SUBDIRS,
     is_template_root as _is_template_root,
+    make_meeting_folder_name,
+    meeting_folder_collision_free,
+    meeting_parent_path,
     member_can_mutate_file as _member_can_mutate_file,
     member_can_restore_file as _member_can_restore_file,
     resolve_conflict_path as _resolve_conflict_path,
@@ -196,6 +202,36 @@ class UploadWorkspaceFileRequest(BaseModel):
 class CreateWorkspaceFolderRequest(BaseModel):
     parent_path: str = ""
     name: str
+
+
+class CreateMeetingFolderRequest(BaseModel):
+    topic: str
+    meeting_time: str | None = None  # ISO-8601 datetime string, optional
+
+
+class SaveMeetingTranscriptRequest(BaseModel):
+    folder_path: str  # relative path of the meeting folder inside the workspace
+    content: str
+    input_type: str = "paste"  # paste / txt / md / docx
+    original_filename: str = ""
+
+
+class MeetingFolderResponse(BaseModel):
+    ok: bool
+    meeting_folder_path: str
+    created_dirs: list[str]
+    created_files: list[str]
+    gbrain_ingest: bool = False
+    agent_run: AgentRunResponse | None = None
+
+
+class SaveMeetingTranscriptResponse(BaseModel):
+    ok: bool
+    meeting_folder_path: str
+    transcript_v1_path: str
+    transcript_latest_path: str
+    gbrain_ingest: bool = False
+    agent_run: AgentRunResponse | None = None
 
 
 class RenameWorkspacePathRequest(BaseModel):
@@ -381,7 +417,7 @@ def _normalize_workspace_kind(kind: str | None, brand: str | None = None) -> str
 
 def _workspace_dirs(workspace: Workspace) -> tuple[str, ...]:
     if workspace.workspace_kind == "project":
-        return DEFAULT_WORKSPACE_DIRS
+        return DEFAULT_PROJECT_WORKSPACE_TEMPLATE_DIRS
     if workspace.workspace_kind == "customer":
         return (CRM_RAW_DIR,)
     return ()
@@ -1725,6 +1761,1559 @@ def create_workspace_folder(
     )
     db.commit()
     return WorkspaceFileMutationResponse(ok=True, path=rel_path, agent_run=serialize_agent_run(db, agent_run))
+
+
+# ── Meeting endpoints ────────────────────────────────────────────────────
+
+@router.post("/{workspace_id}/meetings/folder", response_model=MeetingFolderResponse)
+def create_meeting_folder(
+    workspace_id: int,
+    req: CreateMeetingFolderRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Create a single-meeting folder structure inside the workspace."""
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    _ensure_member(db, user.id, workspace_id)
+
+    if workspace.workspace_kind == "user":
+        raise HTTPException(status_code=400, detail="个人工作台不支持创建会议文件夹")
+
+    root = _workspace_file_root(workspace)
+
+    # Determine parent directory for meetings
+    parent_rel_str = meeting_parent_path(workspace.workspace_kind)
+    parent_rel = _safe_relative_path(parent_rel_str)
+    _ensure_not_trash_path(parent_rel)
+    parent = _resolve_workspace_child(root, parent_rel)
+    parent.mkdir(parents=True, exist_ok=True)
+
+    # Parse optional meeting time
+    meeting_dt: datetime | None = None
+    if req.meeting_time:
+        try:
+            meeting_dt = datetime.fromisoformat(req.meeting_time)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="会议时间格式不合法，请使用 ISO-8601")
+
+    folder_name = make_meeting_folder_name(meeting_dt, req.topic)
+    meeting_dir = meeting_folder_collision_free(parent, folder_name)
+    meeting_dir.mkdir(parents=True, exist_ok=True)
+
+    created_dirs: list[str] = []
+    for sub in MEETING_SUBDIRS:
+        sub_dir = meeting_dir / sub
+        sub_dir.mkdir(parents=True, exist_ok=True)
+        created_dirs.append(sub_dir.relative_to(root).as_posix())
+
+    meeting_rel = meeting_dir.relative_to(root).as_posix()
+    created_dirs.insert(0, meeting_rel)
+
+    _write_workspace_audit(
+        db,
+        user.id,
+        "meeting_folder_create",
+        _audit_detail(
+            workspace_id,
+            meeting_rel,
+            actor_id=user.id,
+            workspace_kind=workspace.workspace_kind,
+            meeting_folder_path=meeting_rel,
+            created_dirs=created_dirs,
+            gbrain_ingest=False,
+        ),
+    )
+    agent_run = _write_workspace_file_agent_run(
+        db,
+        user_id=user.id,
+        workspace=workspace,
+        source_type="meeting_folder_create",
+        title="创建会议文件夹",
+        path=meeting_rel,
+        detail=f"会议：{req.topic}",
+    )
+    db.commit()
+    return MeetingFolderResponse(
+        ok=True,
+        meeting_folder_path=meeting_rel,
+        created_dirs=created_dirs,
+        created_files=[],
+        gbrain_ingest=False,
+        agent_run=serialize_agent_run(db, agent_run),
+    )
+
+
+@router.post("/{workspace_id}/meetings/transcript", response_model=SaveMeetingTranscriptResponse)
+def save_meeting_transcript(
+    workspace_id: int,
+    req: SaveMeetingTranscriptRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Save pasted meeting text as transcript-v1.md and transcript-latest.md inside an existing meeting folder."""
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    _ensure_member(db, user.id, workspace_id)
+
+    if workspace.workspace_kind == "user":
+        raise HTTPException(status_code=400, detail="个人工作台不支持保存会议转录")
+
+    root = _workspace_file_root(workspace)
+    folder_rel = _safe_relative_path(req.folder_path)
+    _ensure_not_trash_path(folder_rel)
+    folder_dir = _resolve_workspace_child(root, folder_rel)
+    if not folder_dir.exists() or not folder_dir.is_dir():
+        raise HTTPException(status_code=400, detail="会议文件夹不存在")
+
+    # Validate this is a proper meeting folder with all 5 subdirectories
+    missing = [sub for sub in MEETING_SUBDIRS if not (folder_dir / sub).is_dir()]
+    if missing:
+        raise HTTPException(status_code=400, detail="请选择会议文件夹后保存转录文本")
+
+    # Enforce parent path whitelist per workspace kind
+    expected_parent = meeting_parent_path(workspace.workspace_kind)
+    folder_posix = folder_rel.as_posix()
+    if folder_posix != expected_parent and not folder_posix.startswith(expected_parent + "/"):
+        raise HTTPException(status_code=400, detail=f"会议文件夹必须位于 {expected_parent}/ 下")
+
+    transcript_dir = folder_dir / "02-转录文本"
+
+    content = req.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="转录文本不能为空")
+
+    # Build transcript markdown with formal template
+    now_utc = datetime.now(timezone.utc)
+    transcript_md = _build_transcript_markdown(
+        content, now_utc,
+        input_type=req.input_type,
+        original_filename=req.original_filename,
+    )
+
+    # Write transcript-v1.md
+    v1_path = _resolve_conflict_path(transcript_dir, "transcript-v1.md", "keep_both")
+    if v1_path is None:
+        raise HTTPException(status_code=500, detail="无法写入转录文件")
+    v1_path.write_text(transcript_md, encoding="utf-8")
+    v1_rel = v1_path.relative_to(root).as_posix()
+
+    # Write / overwrite transcript-latest.md
+    latest_path = transcript_dir / "transcript-latest.md"
+    latest_path.write_text(transcript_md, encoding="utf-8")
+    latest_rel = latest_path.relative_to(root).as_posix()
+
+    # Record WorkspaceFile metadata for both files
+    _upsert_workspace_file(
+        db, workspace_id, user.id, v1_rel,
+        "transcript-v1.md", "text/markdown", len(transcript_md.encode("utf-8")), v1_path,
+    )
+    _upsert_workspace_file(
+        db, workspace_id, user.id, latest_rel,
+        "transcript-latest.md", "text/markdown", len(transcript_md.encode("utf-8")), latest_path,
+    )
+
+    _write_workspace_audit(
+        db,
+        user.id,
+        "meeting_transcript_save",
+        _audit_detail(
+            workspace_id,
+            req.folder_path,
+            actor_id=user.id,
+            workspace_kind=workspace.workspace_kind,
+            meeting_folder_path=req.folder_path,
+            created_files=[v1_rel, latest_rel],
+            gbrain_ingest=False,
+        ),
+    )
+    agent_run = _write_workspace_file_agent_run(
+        db,
+        user_id=user.id,
+        workspace=workspace,
+        source_type="meeting_transcript_save",
+        title="保存会议转录文本",
+        path=req.folder_path,
+        detail=f"转录：transcript-v1.md, transcript-latest.md",
+    )
+    db.commit()
+    return SaveMeetingTranscriptResponse(
+        ok=True,
+        meeting_folder_path=req.folder_path,
+        transcript_v1_path=v1_rel,
+        transcript_latest_path=latest_rel,
+        gbrain_ingest=False,
+        agent_run=serialize_agent_run(db, agent_run),
+    )
+
+
+@router.post("/{workspace_id}/meetings/transcript/file", response_model=SaveMeetingTranscriptResponse)
+async def save_meeting_transcript_from_file(
+    workspace_id: int,
+    folder_path: str = Form(...),
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Upload a TXT/MD/DOCX file as meeting transcript source."""
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    _ensure_member(db, user.id, workspace_id)
+
+    if workspace.workspace_kind == "user":
+        raise HTTPException(status_code=400, detail="个人工作台不支持保存会议转录")
+
+    filename = (file.filename or "untitled").strip()
+    lower = filename.lower()
+
+    # Determine input type and extract text
+    content: str
+    input_type: str
+    if lower.endswith(".docx"):
+        content_bytes = await file.read()
+        content = _extract_text_from_docx(content_bytes, filename)
+        input_type = "docx"
+    elif lower.endswith(".txt"):
+        content_bytes = await file.read()
+        content = content_bytes.decode("utf-8", errors="replace")
+        input_type = "txt"
+    elif lower.endswith(".md") or lower.endswith(".markdown"):
+        content_bytes = await file.read()
+        content = content_bytes.decode("utf-8", errors="replace")
+        input_type = "md"
+    else:
+        raise HTTPException(status_code=400, detail="仅支持 TXT / MD / DOCX 格式的转录文件")
+
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="文件内容为空，无法生成转录")
+
+    # Delegate to the same logic as the paste endpoint
+    return save_meeting_transcript(
+        workspace_id,
+        SaveMeetingTranscriptRequest(
+            folder_path=folder_path,
+            content=content,
+            input_type=input_type,
+            original_filename=filename,
+        ),
+        user,
+        db,
+    )
+
+
+# ── DOCX extraction ─────────────────────────────────────────────────────
+
+def _extract_text_from_docx(file_bytes: bytes, filename: str = "") -> str:
+    """Extract plain text from a .docx file using python-docx."""
+    import io
+    try:
+        from docx import Document
+        doc = Document(io.BytesIO(file_bytes))
+        paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+        if not paragraphs:
+            # Try extracting from tables as well
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        text = cell.text.strip()
+                        if text:
+                            paragraphs.append(text)
+        return "\n\n".join(paragraphs)
+    except ImportError:
+        raise HTTPException(status_code=500, detail="DOCX 解析组件未安装")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"DOCX 文件解析失败：{exc}")
+
+
+# ── Helper ───────────────────────────────────────────────────────────────
+
+_TRANSCRIPT_MEDIA_INPUT_TYPES = {"mp3", "wav", "m4a", "ogg", "flac", "mp4", "mov", "avi", "wmv", "mkv", "webm"}
+
+
+def _transcript_source_label(input_type: str, original_filename: str = "") -> str:
+    suffix = f"（{original_filename}）" if original_filename else ""
+    normalized = (input_type or "paste").strip().lower()
+    if normalized == "paste":
+        return "用户粘贴文本"
+    if normalized == "txt":
+        return f"TXT 上传{suffix}"
+    if normalized == "md":
+        return f"MD 上传{suffix}"
+    if normalized in ("docx", "doc"):
+        return f"DOCX 上传{suffix}"
+    if normalized in _TRANSCRIPT_MEDIA_INPUT_TYPES:
+        return f"音视频自动转录{suffix}"
+    return f"{normalized.upper()} 输入{suffix}" if normalized else f"文件输入{suffix}"
+
+
+def _build_transcript_markdown(
+    raw_text: str,
+    now: datetime,
+    input_type: str = "paste",
+    original_filename: str = "",
+) -> str:
+    """Build the formal five-section transcript template."""
+    ts = now.strftime("%Y-%m-%d %H:%M UTC")
+    source_label = _transcript_source_label(input_type, original_filename)
+
+    # ── Basic speaker detection ──────────────────────────────────────
+    speakers, segments = _detect_speakers(raw_text)
+    speaker_count = len(speakers)
+
+    # ── Speaker overview table ───────────────────────────────────────
+    speaker_rows: list[str] = []
+    for sp in speakers:
+        speaker_rows.append(
+            f"| {sp['id']} | {sp['label']} | 未映射 "
+            f"| {sp.get('ratio','—')} "
+            f"| {sp.get('duration','—')} "
+            f"| 待确认 |"
+        )
+
+    # ── Full transcript table ────────────────────────────────────────
+    transcript_rows: list[str] = []
+    for seg in segments:
+        transcript_rows.append(
+            f"| {seg.get('line','—')} "
+            f"| {seg['time']} "
+            f"| {seg['speaker_id']} "
+            f"| {seg['speaker_label']} "
+            f"| {seg['content']} "
+            f"| {seg.get('confidence','—')} "
+            f"| {seg.get('flag','—')} |"
+        )
+
+    # ── Timeline ─────────────────────────────────────────────────────
+    timeline_rows: list[str] = []
+    for seg in segments[:20]:
+        summary = seg['content'][:40].replace("\n", " ").replace("|", "/")
+        timeline_rows.append(f"| {seg.get('line','—')} | {seg['time']} | {seg['speaker_id']} | {summary} |")
+
+    return (
+        "# 会议转录文本\n\n"
+        "## 基本信息\n\n"
+        f"| 字段 | 值 |\n"
+        f"|---|---|\n"
+        f"| 转录时间 | {ts} |\n"
+        f"| 转录来源 | {source_label} |\n"
+        f"| 输入类型 | {input_type} |\n"
+        f"| 原始文件名 | {original_filename or '—'} |\n"
+        f"| 检测说话人数 | {speaker_count} |\n"
+        "\n"
+        "## 说话人概览\n\n"
+        "| 说话人ID | 显示名称 | 映射状态 | 发言占比 | 发言时长 | 备注 |\n"
+        "|---|---|---|---|---|---|\n"
+        + "\n".join(speaker_rows) + "\n"
+        "\n"
+        "## 说话人时间轴\n\n"
+        "| 行号 | 时间点 | 说话人ID | 内容摘要 |\n"
+        "|---|---|---|---|\n"
+        + "\n".join(timeline_rows) + "\n"
+        "\n"
+        "## 疑似术语纠错\n\n"
+        "| 原识别 | 建议修正 | 类型 | 置信度 | 来源时间点 |\n"
+        "|---|---|---|---|---|\n"
+        "| — | — | — | — | — |\n"
+        "\n"
+        "## 完整转录\n\n"
+        "| 行号 | 时间点 | 说话人ID | 显示名称 | 内容 | 置信度 | 标记 |\n"
+        "|---|---|---|---|---|---|---|\n"
+        + "\n".join(transcript_rows) + "\n"
+        "\n"
+        "---\n"
+        "*本转录由 Project_R 自动生成。说话人映射和术语纠错为初始结果，请人工复核。*\n"
+    )
+
+
+def _detect_speakers(text: str) -> tuple[list[dict], list[dict]]:
+    """Basic speaker detection from text patterns.
+
+    Looks for:
+    - `Name:` or `Name：` (Chinese colon) at line start
+    - `Speaker N:` patterns
+    - `[Name]` bracketed speaker tags
+
+    If no patterns found, treats entire text as Speaker 1.
+    """
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    if not lines:
+        return (
+            [{"id": "Speaker 1", "label": "Speaker 1", "ratio": "100%", "duration": "—"}],
+            [{"line": 1, "time": "—", "speaker_id": "Speaker 1", "speaker_label": "Speaker 1", "content": text[:200], "confidence": "—", "flag": "—"}],
+        )
+
+    # Pattern 1: "Name:" or "Name：" at line start
+    speaker_pattern = re.compile(r"^(.{1,30}?)[：:]\s*(.+)", re.UNICODE)
+    # Pattern 2: "Speaker N" pattern
+    speaker_n_pattern = re.compile(r"^(Speaker\s*\d+|发言人\s*[A-Za-z\d]+)\s*[：:]\s*(.+)", re.IGNORECASE)
+    # Pattern 3: "[Name]" bracketed
+    bracket_pattern = re.compile(r"^\[(.{1,30}?)\]\s*(.+)", re.UNICODE)
+
+    segments: list[dict] = []
+    speaker_ids: dict[str, str] = {}  # label → speaker_id
+    speaker_line_counts: dict[str, int] = {}
+    next_speaker_index = 1
+
+    for line in lines:
+        match = speaker_n_pattern.match(line) or bracket_pattern.match(line) or speaker_pattern.match(line)
+        if match:
+            raw_label = match.group(1).strip()
+            content = match.group(2).strip()
+        else:
+            raw_label = ""
+            content = line
+
+        if raw_label:
+            if raw_label not in speaker_ids:
+                sid = f"Speaker {next_speaker_index}"
+                speaker_ids[raw_label] = sid
+                speaker_line_counts[sid] = 0
+                next_speaker_index += 1
+            sid = speaker_ids[raw_label]
+        else:
+            # Continuation — attribute to last speaker
+            sid = segments[-1]["speaker_id"] if segments else f"Speaker {next_speaker_index}"
+            if sid not in speaker_line_counts:
+                speaker_ids[f"Speaker {next_speaker_index}"] = sid
+                speaker_line_counts[sid] = 0
+                next_speaker_index += 1
+
+        speaker_line_counts[sid] = speaker_line_counts.get(sid, 0) + 1
+        # Truncate long content for table cells
+        cell_content = content[:200].replace("\n", " ").replace("|", "/")
+        segments.append({
+            "line": len(segments) + 1,
+            "time": "—",
+            "speaker_id": sid,
+            "speaker_label": raw_label or sid,
+            "content": cell_content,
+            "confidence": "—",
+            "flag": "—" if raw_label else "待确认",
+        })
+
+    total = sum(speaker_line_counts.values()) or 1
+    speakers: list[dict] = []
+    for label, sid in speaker_ids.items():
+        count = speaker_line_counts.get(sid, 0)
+        speakers.append({
+            "id": sid,
+            "label": label,
+            "ratio": f"{round(count / total * 100)}%",
+            "duration": "—",
+        })
+
+    if not speakers:
+        speakers = [{"id": "Speaker 1", "label": "Speaker 1", "ratio": "100%", "duration": "—"}]
+    if not segments:
+        segments = [{"line": 1, "time": "—", "speaker_id": "Speaker 1", "speaker_label": "Speaker 1", "content": text[:200], "confidence": "—", "flag": "—"}]
+
+    return speakers, segments
+
+
+# ── Step 3: Meeting minutes & actions generation ─────────────────────────
+
+class MeetingGenerateRequest(BaseModel):
+    folder_path: str
+    regenerate: bool = False  # if True, create a new version even if already generated
+
+
+class MeetingGenerateResponse(BaseModel):
+    ok: bool
+    meeting_folder_path: str
+    minutes_v_path: str
+    minutes_latest_path: str
+    actions_v_path: str
+    actions_latest_path: str
+    gbrain_ingest: bool = False
+    agent_run: AgentRunResponse | None = None
+    model_used: str = ""
+    token_cost: int = 0
+
+
+def _next_version_number(dir_path: Path, prefix: str) -> int:
+    """Find the next version number for a file series like prefix-v1.md, prefix-v2.md."""
+    highest = 0
+    if not dir_path.exists():
+        return 1
+    pattern = re.compile(rf"^{re.escape(prefix)}-v(\d+)\.md$", re.IGNORECASE)
+    for child in dir_path.iterdir():
+        if child.is_file():
+            m = pattern.match(child.name)
+            if m:
+                highest = max(highest, int(m.group(1)))
+    return highest + 1
+
+
+_MEETING_SYSTEM_PROMPT = """你是 Project_R 的企业会议纪要助手。你擅长从中文/英文会议转录文本中提取关键信息，生成结构化的会议纪要和行动项。
+
+规则：
+1. 只根据转录文本中的依据生成内容，不得编造。
+2. 没有明确负责人的行动项，标记为「待确认」。
+3. 没有明确截止时间的行动项，截止时间写「待确认」。
+4. 没有明确依据的决策、风险、问题，标记为「待确认」。
+5. 使用中文输出，专业、简洁、可操作。
+6. 输出格式为标准的 Markdown，严格按照用户要求的模板分段。"""
+
+
+def _build_minutes_prompt(
+    transcript_text: str,
+    speaker_map_text: str | None = None,
+    term_corrections_text: str | None = None,
+) -> str:
+    """Build the user prompt for minutes generation from transcript."""
+    sections = [
+        "# 会议纪要生成",
+        "",
+        "请根据以下会议转录文本生成正式会议纪要。",
+        "如果提供了说话人映射，请使用真实名称而非 Speaker ID。",
+    ]
+    if speaker_map_text:
+        sections.append("\n## 说话人映射参考\n\n" + speaker_map_text)
+    if term_corrections_text:
+        sections.append("\n## 术语纠错参考\n\n" + term_corrections_text)
+    sections.append("\n## 会议转录文本\n\n" + transcript_text)
+    sections.append(
+        """
+
+## 输出模板
+
+请严格按以下 Markdown 模板输出。不得省略任何段落。没有内容时写「—」或「无」。
+
+### 会议基本信息
+| 字段 | 值 |
+|---|---|
+| 会议主题 | （从内容推断，如无法推断写「待确认」） |
+| 会议时间 | （从内容或文件名推断，如无法推断写「待确认」） |
+| 参会人 | （列出检测到的说话人，如无法推断写「待确认」） |
+| 会议类型 | 项目统筹会 / 客户沟通会 / 技术交底 / 现场协调 / 内部复盘 / 培训分享 / 其他 |
+| 转录来源 | 用户粘贴文本 |
+
+### 一句话结论
+（用一句话概括会议最核心的结论或决定）
+
+### 会议摘要
+（按议题或话题组织，每个议题包含：议题名称、讨论内容、结论）
+
+### 关键决策
+| ID | 决策 | 决策背景 | 影响范围 | 来源依据 | 置信度 | 待确认 |
+|---|---|---|---|---|---|---|
+| D1 | ... | ... | ... | transcript | 高/中/低 | 是/否 |
+
+### 风险与问题
+| ID | 风险或问题 | 类型 | 影响 | 建议下一步 | 负责人 | 严重度 |
+|---|---|---|---|---|---|---|
+| R1 | ... | 技术/工期/成本/商务/客户/资料缺口 | ... | ... | ... | 高/中/低 |
+
+### 待确认事项
+| ID | 待确认事项 | 为什么需要确认 | 建议确认对象 | 来源 |
+|---|---|---|---|---|
+| Q1 | ... | ... | ... | transcript |
+
+### 可沉淀知识候选
+（如果有可以沉淀为公司规则、项目经验或流程改进的知识，列出候选。如果没有写「无」）
+- 类型：公司规则候选 / 项目经验候选 / 流程改进候选 / 模板候选
+- 内容：...
+
+### 生成说明
+- 生成时间：当前时间
+- 转录来源：用户粘贴文本
+- 使用模型：DeepSeek Flash
+- 说话人映射：未使用 / 已使用
+- 待确认项目：N 项
+
+"""
+    )
+    return "\n".join(sections)
+
+
+def _build_actions_prompt(
+    transcript_text: str,
+    speaker_map_text: str | None = None,
+    term_corrections_text: str | None = None,
+) -> str:
+    """Build the user prompt for action items generation from transcript."""
+    sections = [
+        "# 行动项生成",
+        "",
+        "请根据以下会议转录文本提取行动项。",
+        "如果提供了说话人映射，请使用真实名称而非 Speaker ID。",
+    ]
+    if speaker_map_text:
+        sections.append("\n## 说话人映射参考\n\n" + speaker_map_text)
+    if term_corrections_text:
+        sections.append("\n## 术语纠错参考\n\n" + term_corrections_text)
+    sections.append("\n## 会议转录文本\n\n" + transcript_text)
+    sections.append(
+        """
+
+## 输出模板
+
+请严格按以下 Markdown 模板输出。不得省略任何段落。没有行动项时写「无」。
+
+### 基本信息
+| 字段 | 值 |
+|---|---|
+| 来源会议 | （自动填入） |
+| 提取时间 | （当前时间） |
+| 行动项总数 | N |
+
+### 行动项总览
+| 状态 | 数量 |
+|---|---|
+| 待确认 | N |
+| 待执行 | N |
+| 已完成 | 0 |
+| 已取消 | 0 |
+
+### 行动项清单
+| ID | 状态 | 优先级 | 行动项 | 负责人 | 协作人 | 截止时间 | 依赖条件 | 来源依据 | 待确认原因 |
+|---|---|---|---|---|---|---|---|---|---|
+| A1 | 待确认/待执行 | 高/中/低 | ... | ...（无则写待确认） | ...（无则写—） | ...（无则写待确认） | ...（无则写—） | transcript | ...（无则写—） |
+
+### 按负责人分组
+（用二级标题列出每位负责人的行动项）
+
+### 待确认行动项
+（单独列出所有标记为「待确认」的行动项）
+
+### 生成说明
+- 生成时间：当前时间
+- 使用模型：DeepSeek Flash
+- 待确认项目：N 项
+- 注意：行动项仅供参考，请人工复核后执行
+
+"""
+    )
+    return "\n".join(sections)
+
+
+def _read_file_safe(path: Path) -> str:
+    """Read a file as string, return empty if missing."""
+    if not path.exists() or not path.is_file():
+        return ""
+    return path.read_text(encoding="utf-8")
+
+
+def _parse_table_row_count(markdown_text: str, section_header: str) -> int:
+    """Count data rows in a table section (headers and separators excluded)."""
+    lines = markdown_text.split("\n")
+    in_section = False
+    data_count = 0
+    for line in lines:
+        if section_header in line and line.startswith("|"):
+            in_section = True
+            continue
+        if in_section:
+            if "---" in line:
+                continue
+            if not line.startswith("|"):
+                break
+            data_count += 1
+    return data_count
+
+
+@router.post("/{workspace_id}/meetings/generate", response_model=MeetingGenerateResponse)
+def generate_meeting_minutes_and_actions(
+    workspace_id: int,
+    req: MeetingGenerateRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Generate meeting minutes and action items from transcript via LLM."""
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    _ensure_member(db, user.id, workspace_id)
+
+    if workspace.workspace_kind == "user":
+        raise HTTPException(status_code=400, detail="个人工作台不支持生成会议纪要")
+    if workspace.workspace_kind not in ("project", "customer"):
+        raise HTTPException(status_code=400, detail="不支持的工作区类型")
+
+    root = _workspace_file_root(workspace)
+    folder_rel = _safe_relative_path(req.folder_path)
+    _ensure_not_trash_path(folder_rel)
+    folder_dir = _resolve_workspace_child(root, folder_rel)
+    if not folder_dir.exists() or not folder_dir.is_dir():
+        raise HTTPException(status_code=400, detail="会议文件夹不存在")
+
+    # Validate meeting folder structure
+    missing = [sub for sub in MEETING_SUBDIRS if not (folder_dir / sub).is_dir()]
+    if missing:
+        raise HTTPException(status_code=400, detail="请选择会议文件夹后生成纪要")
+
+    # Enforce parent path whitelist
+    expected_parent = meeting_parent_path(workspace.workspace_kind)
+    folder_posix = folder_rel.as_posix()
+    if folder_posix != expected_parent and not folder_posix.startswith(expected_parent + "/"):
+        raise HTTPException(status_code=400, detail=f"会议文件夹必须位于 {expected_parent}/ 下")
+
+    # Read transcript
+    transcript_dir = folder_dir / "02-转录文本"
+    transcript_path = transcript_dir / "transcript-latest.md"
+    if not transcript_path.exists():
+        raise HTTPException(status_code=400, detail="转录文件（transcript-latest.md）不存在，请先保存转录")
+    transcript_text = transcript_path.read_text(encoding="utf-8")
+    if not transcript_text.strip():
+        raise HTTPException(status_code=400, detail="转录文件为空")
+
+    # Read optional speaker map and term corrections
+    speaker_map_path = folder_dir / "02-转录文本" / "speaker-map-latest.md"
+    speaker_map_text = _read_file_safe(speaker_map_path)
+    term_corrections_path = folder_dir / "02-转录文本" / "term-corrections-latest.md"
+    term_corrections_text = _read_file_safe(term_corrections_path)
+
+    # Determine version numbers
+    minutes_dir = folder_dir / "04-会议纪要"
+    actions_dir = folder_dir / "05-行动项"
+    minutes_dir.mkdir(parents=True, exist_ok=True)
+    actions_dir.mkdir(parents=True, exist_ok=True)
+
+    minutes_ver = _next_version_number(minutes_dir, "minutes")
+    actions_ver = _next_version_number(actions_dir, "actions")
+
+    # If regenerate is False and already exists, don't overwrite
+    if not req.regenerate:
+        if (minutes_dir / "minutes-latest.md").exists() or (actions_dir / "actions-latest.md").exists():
+            raise HTTPException(
+                status_code=409,
+                detail="已存在纪要与行动项。如需重新生成，请设置 regenerate=True 或先删除已有文件",
+            )
+
+    # LLM generation
+    from core.llm import get_llm_client
+
+    minutes_md: str = ""
+    actions_md: str = ""
+    token_input: int = 0
+    token_output: int = 0
+    model_used: str = "template-fallback"
+
+    try:
+        _minutes_prompt = _build_minutes_prompt(transcript_text, speaker_map_text, term_corrections_text)
+        _actions_prompt = _build_actions_prompt(transcript_text, speaker_map_text, term_corrections_text)
+
+        client = get_llm_client("deepseek-flash")
+        model_used = "deepseek-flash"
+
+        # Generate minutes
+        minutes_response = client.complete(
+            [{"role": "user", "content": _minutes_prompt}],
+            system_prompt=_MEETING_SYSTEM_PROMPT,
+            temperature=0.3,
+        )
+        minutes_md = minutes_response.text.strip() if minutes_response.text else ""
+        if minutes_response.usage:
+            token_input += minutes_response.usage.get("input_tokens", 0)
+            token_output += minutes_response.usage.get("output_tokens", 0)
+
+        # Generate actions
+        actions_response = client.complete(
+            [{"role": "user", "content": _actions_prompt}],
+            system_prompt=_MEETING_SYSTEM_PROMPT,
+            temperature=0.3,
+        )
+        actions_md = actions_response.text.strip() if actions_response.text else ""
+        if actions_response.usage:
+            token_input += actions_response.usage.get("input_tokens", 0)
+            token_output += actions_response.usage.get("output_tokens", 0)
+
+    except Exception as exc:
+        # If LLM fails, fall back to template-based generation
+        model_used = "template-fallback"
+        from core.time_utils import serialize_datetime_utc
+        now_ts = serialize_datetime_utc(datetime.now(timezone.utc))
+        minutes_md = _build_fallback_minutes(transcript_text, now_ts, str(exc))
+        actions_md = _build_fallback_actions(now_ts)
+
+    # Save minutes
+    minutes_v_path = minutes_dir / f"minutes-v{minutes_ver}.md"
+    minutes_v_path.write_text(minutes_md, encoding="utf-8")
+    minutes_v_rel = minutes_v_path.relative_to(root).as_posix()
+
+    minutes_latest_path = minutes_dir / "minutes-latest.md"
+    minutes_latest_path.write_text(minutes_md, encoding="utf-8")
+    minutes_latest_rel = minutes_latest_path.relative_to(root).as_posix()
+
+    # Save actions
+    actions_v_path = actions_dir / f"actions-v{actions_ver}.md"
+    actions_v_path.write_text(actions_md, encoding="utf-8")
+    actions_v_rel = actions_v_path.relative_to(root).as_posix()
+
+    actions_latest_path = actions_dir / "actions-latest.md"
+    actions_latest_path.write_text(actions_md, encoding="utf-8")
+    actions_latest_rel = actions_latest_path.relative_to(root).as_posix()
+
+    # Record WorkspaceFile metadata
+    _upsert_workspace_file(
+        db, workspace_id, user.id, minutes_v_rel,
+        f"minutes-v{minutes_ver}.md", "text/markdown", len(minutes_md.encode("utf-8")), minutes_v_path,
+    )
+    # Mark previously synced files as needs_reingest
+    for prefix_dir, prefix_name in [(minutes_dir, "minutes"), (actions_dir, "actions")]:
+        if not prefix_dir.exists():
+            continue
+        for child in prefix_dir.iterdir():
+            if child.is_file() and child.name.startswith(prefix_name) and child != minutes_v_path and child != minutes_latest_path:
+                cr = child.relative_to(root).as_posix()
+                cmeta = db.query(WorkspaceFile).filter(
+                    WorkspaceFile.workspace_id == workspace_id,
+                    WorkspaceFile.relative_path == cr).first()
+                if cmeta and cmeta.rag_status in ("synced", "gbrain_ready", "sync_pending"):
+                    cmeta.rag_status = "needs_reingest"
+
+    _upsert_workspace_file(
+        db, workspace_id, user.id, minutes_latest_rel,
+        "minutes-latest.md", "text/markdown", len(minutes_md.encode("utf-8")), minutes_latest_path,
+    )
+    _upsert_workspace_file(
+        db, workspace_id, user.id, actions_v_rel,
+        f"actions-v{actions_ver}.md", "text/markdown", len(actions_md.encode("utf-8")), actions_v_path,
+    )
+    _upsert_workspace_file(
+        db, workspace_id, user.id, actions_latest_rel,
+        "actions-latest.md", "text/markdown", len(actions_md.encode("utf-8")), actions_latest_path,
+    )
+
+    total_tokens = token_input + token_output
+
+    _write_workspace_audit(
+        db,
+        user.id,
+        "meeting_minutes_generate",
+        _audit_detail(
+            workspace_id,
+            req.folder_path,
+            actor_id=user.id,
+            workspace_kind=workspace.workspace_kind,
+            meeting_folder_path=req.folder_path,
+            created_files=[minutes_v_rel, minutes_latest_rel, actions_v_rel, actions_latest_rel],
+            model=model_used,
+            token_cost=total_tokens,
+            gbrain_ingest=False,
+        ),
+    )
+    agent_run = _write_workspace_file_agent_run(
+        db,
+        user_id=user.id,
+        workspace=workspace,
+        source_type="meeting_minutes_generate",
+        title="生成会议纪要与行动项",
+        path=req.folder_path,
+        detail=f"纪要：minutes-v{minutes_ver}.md, actions-v{actions_ver}.md",
+    )
+    db.commit()
+    return MeetingGenerateResponse(
+        ok=True,
+        meeting_folder_path=req.folder_path,
+        minutes_v_path=minutes_v_rel,
+        minutes_latest_path=minutes_latest_rel,
+        actions_v_path=actions_v_rel,
+        actions_latest_path=actions_latest_rel,
+        gbrain_ingest=False,
+        agent_run=serialize_agent_run(db, agent_run),
+        model_used=model_used,
+        token_cost=total_tokens,
+    )
+
+
+def _build_fallback_minutes(transcript_text: str, timestamp: str, error: str = "") -> str:
+    """Template-based fallback when LLM is unavailable."""
+    return f"""# 会议纪要
+
+## 会议基本信息
+
+| 字段 | 值 |
+|---|---|
+| 会议主题 | 待确认 |
+| 会议时间 | 待确认 |
+| 参会人 | 待确认 |
+| 会议类型 | 其他 |
+| 转录来源 | 用户粘贴文本 |
+
+## 一句话结论
+
+待确认（LLM 暂不可用：{error}）
+
+## 会议摘要
+
+待确认
+
+## 关键决策
+
+| ID | 决策 | 决策背景 | 影响范围 | 来源依据 | 置信度 | 待确认 |
+|---|---|---|---|---|---|---|
+| — | — | — | — | — | — | 是 |
+
+## 风险与问题
+
+| ID | 风险或问题 | 类型 | 影响 | 建议下一步 | 负责人 | 严重度 |
+|---|---|---|---|---|---|---|
+| — | — | — | — | — | — | — |
+
+## 待确认事项
+
+| ID | 待确认事项 | 为什么需要确认 | 建议确认对象 | 来源 |
+|---|---|---|---|---|
+| Q1 | 全部内容 | LLM 暂不可用，请人工编写纪要 | 会议组织者 | — |
+
+## 可沉淀知识候选
+
+无（LLM 暂不可用）
+
+## 生成说明
+
+- 生成时间：{timestamp}
+- 转录来源：用户粘贴文本
+- 使用模型：template-fallback
+- 待确认项目：全部
+"""
+
+
+def _build_fallback_actions(timestamp: str) -> str:
+    """Template-based fallback for action items when LLM is unavailable."""
+    return f"""# 行动项
+
+## 基本信息
+
+| 字段 | 值 |
+|---|---|
+| 来源会议 | 待确认 |
+| 提取时间 | {timestamp} |
+| 行动项总数 | 0 |
+
+## 行动项总览
+
+| 状态 | 数量 |
+|---|---|
+| 待确认 | 0 |
+| 待执行 | 0 |
+| 已完成 | 0 |
+| 已取消 | 0 |
+
+## 行动项清单
+
+无（LLM 暂不可用，请人工从转录文本提取）
+
+## 待确认行动项
+
+无
+
+## 生成说明
+
+- 生成时间：{timestamp}
+- 使用模型：template-fallback
+- 待确认项目：全部
+- 注意：行动项仅供参考，请人工复核后执行
+"""
+
+
+# ── Step 4: Speaker map & term corrections ───────────────────────────────
+
+class SpeakerMapItem(BaseModel):
+    speaker_id: str  # e.g. "Speaker 1"
+    display_name: str  # e.g. "张三"
+
+
+class SaveSpeakerMapRequest(BaseModel):
+    folder_path: str
+    speakers: list[SpeakerMapItem]
+
+
+class SpeakerMapResponse(BaseModel):
+    ok: bool
+    meeting_folder_path: str
+    speaker_map_path: str
+    gbrain_ingest: bool = False
+
+
+class TermCorrectionItem(BaseModel):
+    original: str
+    corrected: str
+    type: str = "general"  # general / name / technical / acronym
+    confidence: str = "中"
+
+
+class SaveTermCorrectionsRequest(BaseModel):
+    folder_path: str
+    corrections: list[TermCorrectionItem]
+
+
+class TermCorrectionsResponse(BaseModel):
+    ok: bool
+    meeting_folder_path: str
+    corrections_path: str
+    gbrain_ingest: bool = False
+
+
+class DetectedSpeaker(BaseModel):
+    speaker_id: str
+    display_name: str
+    ratio: str
+    duration: str = "—"
+
+
+class MeetingSpeakersResponse(BaseModel):
+    ok: bool
+    detected_speakers: list[DetectedSpeaker]
+
+
+def _parse_speakers_from_transcript(transcript_text: str) -> list[DetectedSpeaker]:
+    """Parse the 说话人概览 section of a transcript to extract speaker info."""
+    speakers: list[DetectedSpeaker] = []
+    in_section = False
+    for line in transcript_text.split("\n"):
+        if "说话人概览" in line and "##" in line:
+            in_section = True
+            continue
+        if in_section:
+            if "## " in line and "说话人概览" not in line:
+                break
+            if line.startswith("|") and "---" not in line and "说话人ID" not in line:
+                # Parse table row: | Speaker 1 | Speaker 1 | 未映射 | 60% | — | 待确认 |
+                parts = [p.strip() for p in line.split("|") if p.strip()]
+                if len(parts) >= 4:
+                    speakers.append(DetectedSpeaker(
+                        speaker_id=parts[0],
+                        display_name=parts[1] if len(parts) > 1 else parts[0],
+                        ratio=parts[3] if len(parts) > 3 else "—",
+                        duration=parts[4] if len(parts) > 4 else "—",
+                    ))
+    return speakers
+
+
+@router.get("/{workspace_id}/meetings/speakers", response_model=MeetingSpeakersResponse)
+def get_meeting_speakers(
+    workspace_id: int,
+    folder_path: str = Query(..., min_length=1),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Parse detected speakers from the transcript."""
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    _ensure_member(db, user.id, workspace_id)
+
+    if workspace.workspace_kind == "user":
+        raise HTTPException(status_code=400, detail="个人工作台不支持此操作")
+    _validate_meeting_folder(workspace, folder_path)
+
+    root = _workspace_file_root(workspace)
+    folder_dir = _resolve_workspace_child(root, _safe_relative_path(folder_path))
+
+    transcript_path = folder_dir / "02-转录文本" / "transcript-latest.md"
+    if not transcript_path.exists():
+        raise HTTPException(status_code=400, detail="转录文件不存在")
+
+    text = transcript_path.read_text(encoding="utf-8")
+    speakers = _parse_speakers_from_transcript(text)
+    return MeetingSpeakersResponse(ok=True, detected_speakers=speakers)
+
+
+def _build_speaker_map_markdown(speakers: list[SpeakerMapItem], author: str, timestamp: str) -> str:
+    """Build speaker-map-latest.md formal content."""
+    rows = "\n".join(
+        f"| {_escape_pipe(s.speaker_id)} | {_escape_pipe(s.display_name)} | 已映射 | {_escape_pipe(author)} | {timestamp} |"
+        for s in speakers
+    )
+    return (
+        "# 说话人映射\n\n"
+        "## 映射状态\n\n"
+        f"- 修改人：{author}\n"
+        f"- 修改时间：{timestamp}\n"
+        f"- 映射状态：已确认\n\n"
+        "## 说话人映射表\n\n"
+        "| 说话人ID | 显示名称 | 映射状态 | 修改人 | 修改时间 |\n"
+        "|---|---|---|---|---|\n"
+        f"{rows}\n"
+    )
+
+
+@router.post("/{workspace_id}/meetings/speaker-map", response_model=SpeakerMapResponse)
+def save_meeting_speaker_map(
+    workspace_id: int,
+    req: SaveSpeakerMapRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Save speaker mapping as speaker-map-latest.md."""
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    _ensure_member(db, user.id, workspace_id)
+    _validate_meeting_folder(workspace, req.folder_path)
+
+    root = _workspace_file_root(workspace)
+    folder_rel = _safe_relative_path(req.folder_path)
+    folder_dir = _resolve_workspace_child(root, folder_rel)
+    transcript_dir = folder_dir / "02-转录文本"
+    transcript_dir.mkdir(parents=True, exist_ok=True)
+
+    now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    author_name = user.nickname or user.username
+
+    # Version numbering
+    ver = _next_version_number(transcript_dir, "speaker-map")
+
+    md = _build_speaker_map_markdown(req.speakers, author_name, now_ts)
+
+    v_path = transcript_dir / f"speaker-map-v{ver}.md"
+    v_path.write_text(md, encoding="utf-8")
+    latest_path = transcript_dir / "speaker-map-latest.md"
+    latest_path.write_text(md, encoding="utf-8")
+
+    v_rel = v_path.relative_to(root).as_posix()
+    latest_rel = latest_path.relative_to(root).as_posix()
+
+    _upsert_workspace_file(db, workspace_id, user.id, v_rel,
+                           f"speaker-map-v{ver}.md", "text/markdown", len(md.encode("utf-8")), v_path)
+    _upsert_workspace_file(db, workspace_id, user.id, latest_rel,
+                           "speaker-map-latest.md", "text/markdown", len(md.encode("utf-8")), latest_path)
+
+    _write_workspace_audit(db, user.id, "meeting_speaker_map_save",
+                           _audit_detail(workspace_id, req.folder_path, actor_id=user.id,
+                                         gbrain_ingest=False))
+    db.commit()
+    return SpeakerMapResponse(ok=True, meeting_folder_path=req.folder_path,
+                               speaker_map_path=latest_rel, gbrain_ingest=False)
+
+
+def _build_term_corrections_markdown(corrections: list[TermCorrectionItem], timestamp: str) -> str:
+    rows = "\n".join(
+        f"| {_escape_pipe(c.original)} | {_escape_pipe(c.corrected)} | {_escape_pipe(c.type)} | {c.confidence} | 已确认 |"
+        for c in corrections
+    )
+    return (
+        "# 术语纠错\n\n"
+        f"- 修改时间：{timestamp}\n"
+        f"- 纠错数：{len(corrections)}\n\n"
+        "## 术语纠错表\n\n"
+        "| 原识别 | 建议修正 | 类型 | 置信度 | 状态 |\n"
+        "|---|---|---|---|---|\n"
+        f"{rows}\n"
+    )
+
+
+@router.post("/{workspace_id}/meetings/term-corrections", response_model=TermCorrectionsResponse)
+def save_meeting_term_corrections(
+    workspace_id: int,
+    req: SaveTermCorrectionsRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Save term corrections as term-corrections-latest.md."""
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    _ensure_member(db, user.id, workspace_id)
+    _validate_meeting_folder(workspace, req.folder_path)
+
+    root = _workspace_file_root(workspace)
+    folder_rel = _safe_relative_path(req.folder_path)
+    folder_dir = _resolve_workspace_child(root, folder_rel)
+    transcript_dir = folder_dir / "02-转录文本"
+    transcript_dir.mkdir(parents=True, exist_ok=True)
+
+    now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    ver = _next_version_number(transcript_dir, "term-corrections")
+
+    md = _build_term_corrections_markdown(req.corrections, now_ts)
+
+    v_path = transcript_dir / f"term-corrections-v{ver}.md"
+    v_path.write_text(md, encoding="utf-8")
+    latest_path = transcript_dir / "term-corrections-latest.md"
+    latest_path.write_text(md, encoding="utf-8")
+
+    v_rel = v_path.relative_to(root).as_posix()
+    latest_rel = latest_path.relative_to(root).as_posix()
+
+    _upsert_workspace_file(db, workspace_id, user.id, v_rel,
+                           f"term-corrections-v{ver}.md", "text/markdown", len(md.encode("utf-8")), v_path)
+    _upsert_workspace_file(db, workspace_id, user.id, latest_rel,
+                           "term-corrections-latest.md", "text/markdown", len(md.encode("utf-8")), latest_path)
+
+    _write_workspace_audit(db, user.id, "meeting_term_corrections_save",
+                           _audit_detail(workspace_id, req.folder_path, actor_id=user.id,
+                                         gbrain_ingest=False))
+    db.commit()
+    return TermCorrectionsResponse(ok=True, meeting_folder_path=req.folder_path,
+                                    corrections_path=latest_rel, gbrain_ingest=False)
+
+
+def _escape_pipe(text: str) -> str:
+    """Escape | characters in Markdown table cell content."""
+    return text.replace("|", "&#124;")
+
+
+def _validate_meeting_folder(workspace: "Workspace", folder_path: str) -> None:
+    """Shared validation: check that folder_path is a valid meeting folder."""
+    from core.workspace_files import MEETING_SUBDIRS, meeting_parent_path
+    root = _workspace_file_root(workspace)
+    folder_rel = _safe_relative_path(folder_path)
+    _ensure_not_trash_path(folder_rel)
+    folder_dir = _resolve_workspace_child(root, folder_rel)
+    if not folder_dir.exists() or not folder_dir.is_dir():
+        raise HTTPException(status_code=400, detail="会议文件夹不存在")
+    missing = [sub for sub in MEETING_SUBDIRS if not (folder_dir / sub).is_dir()]
+    if missing:
+        raise HTTPException(status_code=400, detail="请选择会议文件夹")
+    expected_parent = meeting_parent_path(workspace.workspace_kind)
+    folder_posix = folder_rel.as_posix()
+    if folder_posix != expected_parent and not folder_posix.startswith(expected_parent + "/"):
+        raise HTTPException(status_code=400, detail=f"会议文件夹必须位于 {expected_parent}/ 下")
+
+
+# ── Step 5: Media transcription ───────────────────────────────────────────
+
+_SUPPORTED_MEDIA_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".mp4", ".mov", ".avi", ".wmv", ".mkv", ".webm"}
+
+
+class MediaTranscribeResponse(BaseModel):
+    ok: bool
+    meeting_folder_path: str
+    media_path: str
+    transcript_v1_path: str
+    transcript_latest_path: str
+    transcription_status: str
+    segment_count: int = 1
+    warnings: list[str] = []
+    gbrain_ingest: bool = False
+    agent_run: AgentRunResponse | None = None
+    token_cost: int = 0
+
+
+def _size_mb(path: Path) -> float:
+    return path.stat().st_size / (1024 * 1024) if path.exists() else 0.0
+
+
+def _duration_minutes(path: Path) -> int | None:
+    """Estimate media duration in minutes via ffprobe. Returns None if unavailable."""
+    try:
+        proc = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+            capture_output=True, text=True, timeout=15,
+        )
+        return max(1, round(float(proc.stdout.strip()) / 60))
+    except Exception:
+        return None
+
+
+@router.post("/{workspace_id}/meetings/transcribe/media", response_model=MediaTranscribeResponse)
+async def transcribe_meeting_media(
+    workspace_id: int,
+    folder_path: str = Form(...),
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Upload and transcribe meeting audio/video via MiMo V2.5."""
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    _ensure_member(db, user.id, workspace_id)
+
+    if workspace.workspace_kind == "user":
+        raise HTTPException(status_code=400, detail="个人工作台不支持音视频转录")
+    _validate_meeting_folder(workspace, folder_path)
+
+    filename = (file.filename or "recording").strip()
+    lower = filename.lower()
+    ext = Path(filename).suffix.lower()
+    if ext not in _SUPPORTED_MEDIA_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"仅支持音视频格式：{', '.join(sorted(_SUPPORTED_MEDIA_EXTENSIONS))}")
+
+    root = _workspace_file_root(workspace)
+    folder_rel = _safe_relative_path(folder_path)
+    folder_dir = _resolve_workspace_child(root, folder_rel)
+
+    # Save raw media to 01-原始资料/
+    raw_dir = folder_dir / "01-原始资料"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    media_path = _resolve_conflict_path(raw_dir, _safe_name(filename), "keep_both")
+    if media_path is None:
+        raise HTTPException(status_code=500, detail="无法保存媒体文件")
+
+    content_bytes = await file.read()
+    media_path.write_bytes(content_bytes)
+    media_rel = media_path.relative_to(root).as_posix()
+
+    # Warn for long videos > 30 min
+    duration_min = _duration_minutes(media_path)
+    if duration_min is not None and duration_min > 30:
+        pass  # caller/frontend handles confirmation; this is informational
+
+    # Transcribe via core.media_transcription
+    from core.media_transcription import transcribe_media_to_markdown, load_media_transcription_options
+    from core.llm import get_llm_client
+
+    token_cost = 0
+    try:
+        options = load_media_transcription_options()
+        transcription_client = get_llm_client(options.model_profile)
+        result = transcribe_media_to_markdown(media_path, options=options, llm_client=transcription_client)
+        transcript_text = result.transcript_text
+        transcription_status = result.transcription_status
+        segment_count = result.segment_count
+        warnings_list = list(result.warnings) if result.warnings else []
+        if result.token_usage:
+            token_cost += result.token_usage.get("input_tokens", 0) + result.token_usage.get("output_tokens", 0)
+        if result.refinement_token_usage:
+            token_cost += result.refinement_token_usage.get("input_tokens", 0) + result.refinement_token_usage.get("output_tokens", 0)
+    except Exception as exc:
+        transcription_status = "failed"
+        segment_count = 0
+        warnings_list = [str(exc)]
+        transcript_text = (
+            f"# 会议转录文本 - 转录失败\n\n"
+            f"**转录状态**：failed\n\n"
+            f"**错误**：{exc}\n\n"
+            f"请检查媒体文件是否有效，或联系管理员。\n"
+        )
+
+    # Save transcript
+    transcript_dir = folder_dir / "02-转录文本"
+    transcript_dir.mkdir(parents=True, exist_ok=True)
+
+    # Use the formal template wrapper
+    now_utc = datetime.now(timezone.utc)
+    if transcription_status == "failed":
+        final_md = transcript_text
+    else:
+        final_md = _build_transcript_markdown(transcript_text, now_utc, input_type=ext.lstrip("."), original_filename=filename)
+
+    v1_path = _resolve_conflict_path(transcript_dir, "transcript-v1.md", "keep_both")
+    if v1_path is None:
+        raise HTTPException(status_code=500, detail="无法写入转录文件")
+    v1_path.write_text(final_md, encoding="utf-8")
+    v1_rel = v1_path.relative_to(root).as_posix()
+
+    latest_path = transcript_dir / "transcript-latest.md"
+    latest_path.write_text(final_md, encoding="utf-8")
+    latest_rel = latest_path.relative_to(root).as_posix()
+
+    # Record WorkspaceFile metadata
+    _upsert_workspace_file(db, workspace_id, user.id, media_rel,
+                           filename, file.content_type or "application/octet-stream", len(content_bytes), media_path)
+    _upsert_workspace_file(db, workspace_id, user.id, v1_rel,
+                           "transcript-v1.md", "text/markdown", len(final_md.encode("utf-8")), v1_path)
+    _upsert_workspace_file(db, workspace_id, user.id, latest_rel,
+                           "transcript-latest.md", "text/markdown", len(final_md.encode("utf-8")), latest_path)
+
+    _write_workspace_audit(db, user.id, "meeting_media_transcribe",
+                           _audit_detail(workspace_id, folder_path, actor_id=user.id,
+                                         media_file=media_rel,
+                                         transcript=v1_rel,
+                                         status=transcription_status,
+                                         segments=segment_count,
+                                         gbrain_ingest=False))
+    agent_run = _write_workspace_file_agent_run(
+        db, user_id=user.id, workspace=workspace,
+        source_type="meeting_media_transcribe",
+        title="会议音视频转录",
+        path=folder_path,
+        detail=f"转录：{filename}（{segment_count}段，{transcription_status}）",
+    )
+    db.commit()
+    return MediaTranscribeResponse(
+        ok=True,
+        meeting_folder_path=folder_path,
+        media_path=media_rel,
+        transcript_v1_path=v1_rel,
+        transcript_latest_path=latest_rel,
+        transcription_status=transcription_status,
+        segment_count=segment_count,
+        warnings=warnings_list,
+        gbrain_ingest=False,
+        agent_run=serialize_agent_run(db, agent_run),
+        token_cost=token_cost,
+    )
+
+
+# ── Step 6: GBrain meeting ingest ────────────────────────────────────────
+
+class MeetingIngestRequest(BaseModel):
+    folder_path: str
+    recursive: bool = True
+
+
+class MeetingIngestResponse(BaseModel):
+    ok: bool
+    meeting_folder_path: str
+    gbrain_ready_path: str
+    source_id: str
+    source_scope: str
+    ingested_files: list[str]
+    skipped_files: list[str]
+    gbrain_ingest: bool = True
+    agent_run: AgentRunResponse | None = None
+
+
+def _gbrain_ready_compose(meeting_folder_name: str, minutes_md: str, transcript_md: str, actions_md: str = "") -> str:
+    """Compose a GBrain-ready combined page from meeting output files."""
+    lines = [
+        f"# {meeting_folder_name}",
+        "",
+        "> 本页面由 Project_R 自动编译生成。来源：会议文件夹中的 latest 版本。",
+        "",
+        "---",
+        "",
+        "## 会议纪要",
+        "",
+        minutes_md.lstrip("# ").strip() if minutes_md else "（无纪要内容）",
+        "",
+        "## 转录文本",
+        "",
+        transcript_md.lstrip("# ").strip() if transcript_md else "（无转录）",
+    ]
+    if actions_md:
+        lines.extend(["", "---", "", "## 行动项（辅助参考）", "", actions_md.lstrip("# ").strip()])
+    lines.append("")
+    return "\n\n".join(lines)
+
+
+@router.post("/{workspace_id}/meetings/ingest", response_model=MeetingIngestResponse)
+def ingest_meeting_to_gbrain(
+    workspace_id: int,
+    req: MeetingIngestRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Compile meeting outputs into a GBrain-ready page and ingest to the workspace source."""
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    _ensure_member(db, user.id, workspace_id)
+    _validate_meeting_folder(workspace, req.folder_path)
+
+    member = db.query(WorkspaceMember).filter(
+        WorkspaceMember.workspace_id == workspace_id, WorkspaceMember.user_id == user.id).first()
+    is_admin = member and member.role == "admin"
+    is_system_admin = user.role == "admin"
+
+    # Permission check
+    if workspace.workspace_kind == "customer":
+        if not (is_admin or is_system_admin):
+            raise HTTPException(status_code=403, detail="仅客户工作区管理员可录入会议资料")
+    elif workspace.workspace_kind == "project":
+        if not (is_admin or is_system_admin):
+            raise HTTPException(status_code=403, detail="仅项目管理员可录入会议文件夹")
+
+    root = _workspace_file_root(workspace)
+    folder_dir = _resolve_workspace_child(root, _safe_relative_path(req.folder_path))
+
+    # Determine source scope
+    if workspace.workspace_kind == "project":
+        from core.gbrain import project_source_id_for_workspace, project_source_paths_for_workspace
+        source_id = project_source_id_for_workspace(workspace)
+        paths = project_source_paths_for_workspace(workspace)
+        source_scope = "project"
+    else:
+        from core.gbrain import customer_source_id_for_workspace, customer_source_paths_for_workspace
+        source_id = customer_source_id_for_workspace(workspace)
+        paths = customer_source_paths_for_workspace(workspace)
+        source_scope = "customer"
+
+    gbrain_ready_dir = paths.get("gbrain_ready", Path(""))
+    if isinstance(gbrain_ready_dir, str):
+        gbrain_ready_dir = Path(gbrain_ready_dir)
+    gbrain_ready_dir.mkdir(parents=True, exist_ok=True)
+
+    # Collect latest versions and identify superseded
+    # Read *-latest.md for content, use vN numbering only for old version detection
+    ingested: list[str] = []
+    skipped: list[str] = []
+
+    sections = {
+        "04-会议纪要": "minutes",
+        "02-转录文本": "transcript",
+        "05-行动项": "actions",
+    }
+    collected: dict[str, str] = {}
+    for subdir, prefix in sections.items():
+        dir_p = folder_dir / subdir
+        if not dir_p.exists():
+            continue
+        latest_path = dir_p / f"{prefix}-latest.md"
+        if not latest_path.exists():
+            continue
+        lr = latest_path.relative_to(root).as_posix()
+        ingested.append(lr)
+        collected[subdir] = latest_path.read_text(encoding="utf-8")
+
+        # Mark vN files (other than latest reference) as superseded
+        vn_pattern = re.compile(rf"^{re.escape(prefix)}-v(\d+)\.md$", re.IGNORECASE)
+        for child in dir_p.iterdir():
+            if not child.is_file():
+                continue
+            if child.name == f"{prefix}-latest.md":
+                continue
+            if vn_pattern.match(child.name):
+                sr = child.relative_to(root).as_posix()
+                skipped.append(sr)
+                sp_meta = db.query(WorkspaceFile).filter(
+                    WorkspaceFile.workspace_id == workspace_id,
+                    WorkspaceFile.relative_path == sr).first()
+                if sp_meta:
+                    sp_meta.rag_status = "skipped_superseded_version"
+
+    if not collected:
+        raise HTTPException(status_code=400, detail="没有可录入的会议文件。请先生成纪要和转录。")
+
+    # Compose GBrain-ready page
+    meeting_name = folder_dir.name
+    gb_md = _gbrain_ready_compose(
+        meeting_name,
+        collected.get("04-会议纪要", ""),
+        collected.get("02-转录文本", ""),
+        collected.get("05-行动项", ""),
+    )
+    gb_path = _resolve_conflict_path(gbrain_ready_dir, f"{_safe_name(meeting_name)}.md", "keep_both")
+    if gb_path is None:
+        raise HTTPException(status_code=500, detail="无法写入 GBrain-ready 文件")
+    gb_path.write_text(gb_md, encoding="utf-8")
+
+    # Update ingested files' statuses — gbrain_ready (not synced until GBrain sync succeeds)
+    for ipath in ingested:
+        imeta = db.query(WorkspaceFile).filter(
+            WorkspaceFile.workspace_id == workspace_id,
+            WorkspaceFile.relative_path == ipath).first()
+        if imeta:
+            imeta.rag_status = "gbrain_ready"
+
+    _write_workspace_audit(db, user.id, "meeting_gbrain_ingest",
+                           _audit_detail(workspace_id, req.folder_path, actor_id=user.id,
+                                         source_id=source_id, source_scope=source_scope,
+                                         ingested=ingested, skipped=skipped,
+                                         gbrain_ready_path=str(gb_path.resolve()),
+                                         gbrain_ready_generated=True,
+                                         gbrain_synced=False))
+    agent_run = _write_workspace_file_agent_run(
+        db, user_id=user.id, workspace=workspace,
+        source_type="meeting_gbrain_ingest",
+        title="会议资料录入 GBrain",
+        path=req.folder_path,
+        detail=f"已生成 {len(ingested)} 个 GBrain-ready 文件，跳过 {len(skipped)} 个旧版本",
+    )
+    db.commit()
+    return MeetingIngestResponse(
+        ok=True,
+        meeting_folder_path=req.folder_path,
+        gbrain_ready_path=str(gb_path.resolve()),
+        source_id=source_id,
+        source_scope=source_scope,
+        ingested_files=ingested,
+        skipped_files=skipped,
+        gbrain_ingest=True,
+        agent_run=serialize_agent_run(db, agent_run),
+    )
+
+
+# ── End meeting endpoints ────────────────────────────────────────────────
 
 
 @router.delete("/{workspace_id}/files", response_model=WorkspaceFileMutationResponse)

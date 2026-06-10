@@ -350,6 +350,89 @@ export type WorkspaceTrashClearResponse = {
   agent_run?: AgentRunResponse | null;
 };
 
+export type MeetingFolderResponse = {
+  ok: boolean;
+  meeting_folder_path: string;
+  created_dirs: string[];
+  created_files: string[];
+  gbrain_ingest: boolean;
+  agent_run?: AgentRunResponse | null;
+};
+
+export type SaveMeetingTranscriptResponse = {
+  ok: boolean;
+  meeting_folder_path: string;
+  transcript_v1_path: string;
+  transcript_latest_path: string;
+  gbrain_ingest: boolean;
+  agent_run?: AgentRunResponse | null;
+};
+
+export type MeetingGenerateResponse = {
+  ok: boolean;
+  meeting_folder_path: string;
+  minutes_v_path: string;
+  minutes_latest_path: string;
+  actions_v_path: string;
+  actions_latest_path: string;
+  gbrain_ingest: boolean;
+  agent_run?: AgentRunResponse | null;
+  model_used: string;
+  token_cost: number;
+};
+
+export type DetectedSpeaker = {
+  speaker_id: string;
+  display_name: string;
+  ratio: string;
+  duration: string;
+};
+
+export type MeetingSpeakersResponse = {
+  ok: boolean;
+  detected_speakers: DetectedSpeaker[];
+};
+
+export type SpeakerMapResponse = {
+  ok: boolean;
+  meeting_folder_path: string;
+  speaker_map_path: string;
+  gbrain_ingest: boolean;
+};
+
+export type TermCorrectionsResponse = {
+  ok: boolean;
+  meeting_folder_path: string;
+  corrections_path: string;
+  gbrain_ingest: boolean;
+};
+
+export type MediaTranscribeResponse = {
+  ok: boolean;
+  meeting_folder_path: string;
+  media_path: string;
+  transcript_v1_path: string;
+  transcript_latest_path: string;
+  transcription_status: string;
+  segment_count: number;
+  warnings: string[];
+  gbrain_ingest: boolean;
+  agent_run?: AgentRunResponse | null;
+  token_cost: number;
+};
+
+export type MeetingIngestResponse = {
+  ok: boolean;
+  meeting_folder_path: string;
+  gbrain_ready_path: string;
+  source_id: string;
+  source_scope: string;
+  ingested_files: string[];
+  skipped_files: string[];
+  gbrain_ingest: boolean;
+  agent_run?: AgentRunResponse | null;
+};
+
 export type WorkspaceKnowledgeRefreshResponse = {
   ok: boolean;
   workspace_id: number;

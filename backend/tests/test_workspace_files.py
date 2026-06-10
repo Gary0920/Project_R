@@ -68,7 +68,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
 
         root = self.workspace_root(workspace)
         self.assertTrue(root.exists())
-        for dirname in workspaces_api.DEFAULT_WORKSPACE_DIRS:
+        for dirname in workspaces_api.DEFAULT_PROJECT_WORKSPACE_TEMPLATE_DIRS:
             self.assertTrue((root / dirname).is_dir())
         self.assertTrue((root / ".trash").is_dir())
 
@@ -1850,6 +1850,323 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         self.db.refresh(meta)
         self.assertEqual(meta.rag_status, "synced")
 
+    def test_meeting_transcript_rejects_non_meeting_folder(self):
+        """普通目录调用 transcript 应 400 — 没有完整的 5 个子目录"""
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 非会议目录", brand="BFI"),
+            self.user,
+            self.db,
+        )
+        # Create a plain directory that is NOT a meeting folder
+        plain_dir = self.workspace_root(workspace) / "99-未归档文件" / "some-folder"
+        plain_dir.mkdir(parents=True, exist_ok=True)
+        plain_rel = plain_dir.relative_to(self.workspace_root(workspace)).as_posix()
+
+        with self.assertRaises(HTTPException) as ctx:
+            workspaces_api.save_meeting_transcript(
+                workspace.id,
+                workspaces_api.SaveMeetingTranscriptRequest(
+                    folder_path=plain_rel,
+                    content="Some meeting notes.",
+                ),
+                self.user,
+                self.db,
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("转录文本", ctx.exception.detail)
+
+    def test_meeting_transcript_saves_to_meeting_root(self):
+        """会议根目录调用 transcript 应成功生成两个 md 文件"""
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 会议转录测试", brand="BFI"),
+            self.user,
+            self.db,
+        )
+        # Create meeting folder via the API
+        resp = workspaces_api.create_meeting_folder(
+            workspace.id,
+            workspaces_api.CreateMeetingFolderRequest(topic="启动会", meeting_time="2026-06-15T09:30"),
+            self.user,
+            self.db,
+        )
+        self.assertTrue(resp.ok)
+        self.assertTrue(len(resp.created_dirs) >= 6)  # root + 5 subdirs
+
+        # Save transcript
+        transcript_resp = workspaces_api.save_meeting_transcript(
+            workspace.id,
+            workspaces_api.SaveMeetingTranscriptRequest(
+                folder_path=resp.meeting_folder_path,
+                content="张三: 今天讨论项目进度。\n李四: 第一阶段已完成。",
+            ),
+            self.user,
+            self.db,
+        )
+        self.assertTrue(transcript_resp.ok)
+        self.assertTrue(transcript_resp.transcript_v1_path.endswith("transcript-v1.md"))
+        self.assertTrue(transcript_resp.transcript_latest_path.endswith("transcript-latest.md"))
+
+        # Verify files on disk
+        root = self.workspace_root(workspace)
+        v1_disk = root / transcript_resp.transcript_v1_path
+        latest_disk = root / transcript_resp.transcript_latest_path
+        self.assertTrue(v1_disk.exists())
+        self.assertTrue(latest_disk.exists())
+        content = latest_disk.read_text(encoding="utf-8")
+        self.assertIn("张三", content)
+        self.assertIn("会议转录文本", content)
+
+        # Verify WorkspaceFile DB records exist
+        from models.workspace import WorkspaceFile as WF
+        metas = (
+            self.db.query(WF)
+            .filter(WF.workspace_id == workspace.id, WF.relative_path.in_([
+                transcript_resp.transcript_v1_path,
+                transcript_resp.transcript_latest_path,
+            ]))
+            .all()
+        )
+        self.assertEqual(len(metas), 2)
+
+        # Verify audit records
+        audits = (
+            self.db.query(AuditLog)
+            .filter(AuditLog.action == "meeting_transcript_save")
+            .all()
+        )
+        self.assertGreaterEqual(len(audits), 1)
+
+    def test_meeting_transcript_rejects_wrong_parent_path(self):
+        """会议文件夹放在 99-未归档文件 下即使有5子目录也应 400"""
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 错误父路径", brand="BFI"),
+            self.user,
+            self.db,
+        )
+        root = self.workspace_root(workspace)
+        # Create a meeting-like folder under 99-未归档文件 instead of 20-会议与沟通
+        bad_dir = root / "99-未归档文件" / "20260615-0930-fake-meeting"
+        bad_dir.mkdir(parents=True, exist_ok=True)
+        for sub in workspaces_api.MEETING_SUBDIRS:
+            (bad_dir / sub).mkdir(parents=True, exist_ok=True)
+        bad_rel = bad_dir.relative_to(root).as_posix()
+
+        with self.assertRaises(HTTPException) as ctx:
+            workspaces_api.save_meeting_transcript(
+                workspace.id,
+                workspaces_api.SaveMeetingTranscriptRequest(
+                    folder_path=bad_rel,
+                    content="Test content",
+                ),
+                self.user,
+                self.db,
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_meeting_transcript_template_has_no_fake_timestamps(self):
+        """五段模板不得伪造时间点——无原始时间戳时时间点应为 '—'"""
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 无假时间", brand="BFI"),
+            self.user,
+            self.db,
+        )
+        resp = workspaces_api.create_meeting_folder(
+            workspace.id,
+            workspaces_api.CreateMeetingFolderRequest(topic="模板测试"),
+            self.user,
+            self.db,
+        )
+        transcript_resp = workspaces_api.save_meeting_transcript(
+            workspace.id,
+            workspaces_api.SaveMeetingTranscriptRequest(
+                folder_path=resp.meeting_folder_path,
+                content="张三：大家好\n李四：开始吧",
+            ),
+            self.user,
+            self.db,
+        )
+        root = self.workspace_root(workspace)
+        content = (root / transcript_resp.transcript_latest_path).read_text(encoding="utf-8")
+
+        # Must have all 5 sections
+        self.assertIn("## 基本信息", content)
+        self.assertIn("## 说话人概览", content)
+        self.assertIn("## 说话人时间轴", content)
+        self.assertIn("## 疑似术语纠错", content)
+        self.assertIn("## 完整转录", content)
+
+        # Must have 行号 column
+        self.assertIn("行号", content)
+
+        # Check only TRANSCRIPT TABLE rows (after "完整转录") for fake MM:SS timestamps.
+        # The "基本信息" section legitimately shows "转录时间 | 2026-06-09 14:36 UTC",
+        # so we must NOT do a full-document regex check.
+        lines = content.split("\n")
+        transcript_table_lines: list[str] = []
+        in_transcript = False
+        for line in lines:
+            if "完整转录" in line and "##" in line:
+                in_transcript = True
+                continue
+            if in_transcript and line.startswith("---"):
+                break
+            if in_transcript and line.startswith("|") and "---" not in line:
+                # Skip header row — only collect data rows
+                if line.lstrip().startswith("| 行号"):
+                    continue
+                transcript_table_lines.append(line)
+
+        self.assertGreater(len(transcript_table_lines), 0,
+                           "应在完整转录表格中至少有一行")
+        for row in transcript_table_lines:
+            # Time column should be "—"
+            self.assertIn("| — |", row,
+                          f"转录表行不应含伪时间点: {row}")
+            # No \d{2}:\d{2} pattern in any table cell
+            import re
+            self.assertNotRegex(row, r"\b\d{2}:\d{2}\b",
+                                f"转录表行不应含伪时间点: {row}")
+
+        # Also verify timeline table rows
+        timeline_lines: list[str] = []
+        in_timeline = False
+        for line in lines:
+            if "说话人时间轴" in line and "##" in line:
+                in_timeline = True
+                continue
+            if in_timeline and "## 疑似" in line:
+                break
+            if in_timeline and line.startswith("|") and "---" not in line:
+                # Skip header row — only collect data rows
+                if line.lstrip().startswith("| 行号"):
+                    continue
+                timeline_lines.append(line)
+
+        for row in timeline_lines:
+            # Should have "—" in the time column (2nd column)
+            parts = [p.strip() for p in row.split("|") if p.strip()]
+            if len(parts) >= 2:
+                self.assertEqual(parts[1], "—",
+                                 f"时间轴行不应含伪时间点: {row}")
+
+    def _call_meeting_transcript_file(self, workspace_id, folder_path, filename, content_bytes):
+        """Helper to call the async save_meeting_transcript_from_file endpoint synchronously."""
+        import asyncio
+        import io
+        from fastapi import UploadFile
+        async def _run():
+            f = UploadFile(filename=filename, file=io.BytesIO(content_bytes))
+            return await workspaces_api.save_meeting_transcript_from_file(
+                workspace_id,
+                folder_path=folder_path,
+                file=f,
+                user=self.user,
+                db=self.db,
+            )
+        return asyncio.run(_run())
+
+    def test_upload_endpoint_rejects_unsupported_file_type(self):
+        """上传不支持的文件类型（.pdf）应 400"""
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 不支持类型", brand="BFI"),
+            self.user,
+            self.db,
+        )
+        resp = workspaces_api.create_meeting_folder(
+            workspace.id,
+            workspaces_api.CreateMeetingFolderRequest(topic="类型测试"),
+            self.user,
+            self.db,
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            self._call_meeting_transcript_file(
+                workspace.id,
+                resp.meeting_folder_path,
+                "meeting.pdf",
+                b"%PDF-1.4 fake pdf content",
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_upload_endpoint_accepts_txt_file(self):
+        """上传 TXT 文件应成功转录"""
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 TXT上传", brand="BFI"),
+            self.user,
+            self.db,
+        )
+        resp = workspaces_api.create_meeting_folder(
+            workspace.id,
+            workspaces_api.CreateMeetingFolderRequest(topic="TXT上传测试"),
+            self.user,
+            self.db,
+        )
+        transcript_resp = self._call_meeting_transcript_file(
+            workspace.id,
+            resp.meeting_folder_path,
+            "transcript.txt",
+            "张三：大家好\n李四：开始吧".encode("utf-8"),
+        )
+        self.assertTrue(transcript_resp.ok)
+        self.assertTrue(transcript_resp.transcript_latest_path.endswith("transcript-latest.md"))
+
+        # Verify content on disk
+        root = self.workspace_root(workspace)
+        content = (root / transcript_resp.transcript_latest_path).read_text(encoding="utf-8")
+        self.assertIn("张三", content)
+        self.assertIn("## 完整转录", content)
+        self.assertIn("TXT 上传", content)
+
+    def test_upload_endpoint_accepts_docx_file(self):
+        """上传 DOCX 文件应成功转录"""
+        import io, zipfile
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 DOCX上传", brand="BFI"),
+            self.user,
+            self.db,
+        )
+        resp = workspaces_api.create_meeting_folder(
+            workspace.id,
+            workspaces_api.CreateMeetingFolderRequest(topic="DOCX上传测试"),
+            self.user,
+            self.db,
+        )
+        # Build minimal .docx
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("[Content_Types].xml",
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                '<Default Extension="xml" ContentType="application/xml"/>'
+                '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+                '</Types>')
+            zf.writestr("_rels/.rels",
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+                '</Relationships>')
+            zf.writestr("word/document.xml",
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                '<w:body><w:p><w:r><w:t>Hello DOCX</w:t></w:r></w:p>'
+                '<w:p><w:r><w:t>Second para</w:t></w:r></w:p></w:body>'
+                '</w:document>')
+        docx_bytes = buf.getvalue()
+
+        transcript_resp = self._call_meeting_transcript_file(
+            workspace.id,
+            resp.meeting_folder_path,
+            "meeting.docx",
+            docx_bytes,
+        )
+        self.assertTrue(transcript_resp.ok)
+        self.assertTrue(transcript_resp.transcript_latest_path.endswith("transcript-latest.md"))
+        root = self.workspace_root(workspace)
+        content = (root / transcript_resp.transcript_latest_path).read_text(encoding="utf-8")
+        self.assertIn("Hello DOCX", content)
+        self.assertIn("Second para", content)
+        self.assertIn("DOCX 上传", content)
+
     def test_deleted_synced_file_is_marked_source_deleted_without_removing_ready_markdown(self):
         workspace = workspaces_api.create_workspace(
             workspaces_api.CreateWorkspaceRequest(name="项目 Source Deleted"),
@@ -1879,6 +2196,1005 @@ class WorkspaceFileTreeTests(unittest.TestCase):
 
         self.assertEqual(deleted.rag_status, "source_deleted")
         self.assertTrue(ready_file.exists())
+
+
+    # ── Step 3: Meeting generate tests ─────────────────────────────────────
+
+    def _create_meeting_with_transcript(self) -> tuple:
+        """Helper: create a meeting folder + transcript; returns (workspace, meeting_folder_path)."""
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 生成测试", brand="BFI"),
+            self.user,
+            self.db,
+        )
+        folder_resp = workspaces_api.create_meeting_folder(
+            workspace.id,
+            workspaces_api.CreateMeetingFolderRequest(topic="生成测试会议"),
+            self.user,
+            self.db,
+        )
+        workspaces_api.save_meeting_transcript(
+            workspace.id,
+            workspaces_api.SaveMeetingTranscriptRequest(
+                folder_path=folder_resp.meeting_folder_path,
+                content="张三：今天讨论项目进度。\n李四：第一阶段已完成，准备进入第二阶段。\n王五：预算需要调整。",
+            ),
+            self.user,
+            self.db,
+        )
+        return workspace, folder_resp.meeting_folder_path
+
+    def test_generate_rejects_no_transcript(self):
+        """无 transcript-latest.md 时返回 400"""
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 无转录", brand="BFI"),
+            self.user,
+            self.db,
+        )
+        folder_resp = workspaces_api.create_meeting_folder(
+            workspace.id,
+            workspaces_api.CreateMeetingFolderRequest(topic="无转录测试"),
+            self.user,
+            self.db,
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id,
+                workspaces_api.MeetingGenerateRequest(folder_path=folder_resp.meeting_folder_path),
+                self.user,
+                self.db,
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("转录文件", ctx.exception.detail)
+
+    def test_generate_rejects_no_transcript_when_missing_file(self):
+        """文件夹有 02-转录文本/ 但里面无 transcript-latest.md 仍 400"""
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 缺转录文件", brand="BFI"),
+            self.user,
+            self.db,
+        )
+        folder_resp = workspaces_api.create_meeting_folder(
+            workspace.id,
+            workspaces_api.CreateMeetingFolderRequest(topic="缺文件测试"),
+            self.user,
+            self.db,
+        )
+        # Create an empty transcript dir — no files inside
+        root = self.workspace_root(workspace)
+        transcript_dir = root / folder_resp.meeting_folder_path / "02-转录文本"
+        (transcript_dir / "other.md").write_text("not the right file", encoding="utf-8")
+        # transcript-latest.md does NOT exist
+        with self.assertRaises(HTTPException) as ctx:
+            workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id,
+                workspaces_api.MeetingGenerateRequest(folder_path=folder_resp.meeting_folder_path),
+                self.user,
+                self.db,
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_generate_success_with_mock_llm(self):
+        """LLM 成功时生成 4 个文件 + 4 条 WorkspaceFile + audit"""
+        from unittest.mock import patch, MagicMock
+
+        # Build a realistic mock LLM response
+        mock_response = MagicMock()
+        mock_response.text = (
+            "# 会议纪要\n\n"
+            "## 会议基本信息\n\n"
+            "| 字段 | 值 |\n"
+            "|---|---|\n"
+            "| 会议主题 | 进度讨论 |\n"
+            "| 会议时间 | 待确认 |\n\n"
+            "## 一句话结论\n\n项目第一阶段已完成。\n\n"
+            "## 会议摘要\n\n待确认\n\n"
+            "## 关键决策\n\n| ID | 决策 | ... |\n| D1 | 继续第二阶段 | ... |\n"
+            "## 风险与问题\n\n| ID | 风险 | ... |\n| R1 | 预算不足 | ... |\n"
+            "## 待确认事项\n\n| ID | 事项 | ... |\n| Q1 | 预算调整 | ... |\n"
+            "## 可沉淀知识候选\n\n无\n"
+            "## 生成说明\n\n- 模型：mock\n"
+        )
+        mock_response.usage = {"input_tokens": 50, "output_tokens": 100}
+        mock_response.model = "mock"
+        mock_response.provider = "mock"
+        mock_response.key_index = None
+        mock_response.token_cost = 0
+
+        mock_client = MagicMock()
+        mock_client.complete.return_value = mock_response
+
+        workspace, folder_path = self._create_meeting_with_transcript()
+
+        with patch("core.llm.get_llm_client", return_value=mock_client):
+            resp = workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id,
+                workspaces_api.MeetingGenerateRequest(folder_path=folder_path),
+                self.user,
+                self.db,
+            )
+
+        self.assertTrue(resp.ok)
+        self.assertEqual(resp.model_used, "deepseek-flash")
+
+        # Check 4 files on disk
+        root = self.workspace_root(workspace)
+        self.assertTrue((root / resp.minutes_v_path).exists())
+        self.assertTrue((root / resp.minutes_latest_path).exists())
+        self.assertTrue((root / resp.actions_v_path).exists())
+        self.assertTrue((root / resp.actions_latest_path).exists())
+        self.assertIn("minutes-v1.md", resp.minutes_v_path)
+        self.assertIn("minutes-latest.md", resp.minutes_latest_path)
+        self.assertIn("actions-v1.md", resp.actions_v_path)
+        self.assertIn("actions-latest.md", resp.actions_latest_path)
+
+        # Verify content written
+        content = (root / resp.minutes_latest_path).read_text(encoding="utf-8")
+        self.assertIn("会议纪要", content)
+
+        # Check 4 WorkspaceFile records
+        metas = (
+            self.db.query(WorkspaceFile)
+            .filter(
+                WorkspaceFile.workspace_id == workspace.id,
+                WorkspaceFile.relative_path.in_([
+                    resp.minutes_v_path,
+                    resp.minutes_latest_path,
+                    resp.actions_v_path,
+                    resp.actions_latest_path,
+                ]),
+            )
+            .all()
+        )
+        self.assertEqual(len(metas), 4)
+
+        # Check audit has gbrain_ingest=false
+        audits = (
+            self.db.query(AuditLog)
+            .filter(AuditLog.action == "meeting_minutes_generate")
+            .all()
+        )
+        self.assertGreaterEqual(len(audits), 1)
+        import json
+        detail = json.loads(audits[-1].detail)
+        self.assertIn("gbrain_ingest", detail)
+        self.assertFalse(detail["gbrain_ingest"])
+
+    def test_generate_409_when_exists_and_not_regenerate(self):
+        """已存在 latest 且 regenerate=False 时返回 409"""
+        from unittest.mock import patch, MagicMock
+
+        mock_response = MagicMock()
+        mock_response.text = "# 会议纪要\n\n## 一句话结论\n\n测试\n"
+        mock_response.usage = {"input_tokens": 10, "output_tokens": 10}
+        mock_response.model = "mock"
+        mock_client = MagicMock()
+        mock_client.complete.return_value = mock_response
+
+        workspace, folder_path = self._create_meeting_with_transcript()
+        with patch("core.llm.get_llm_client", return_value=mock_client):
+            workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id,
+                workspaces_api.MeetingGenerateRequest(folder_path=folder_path),
+                self.user,
+                self.db,
+            )
+
+        # Second call without regenerate → 409
+        with self.assertRaises(HTTPException) as ctx:
+            workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id,
+                workspaces_api.MeetingGenerateRequest(folder_path=folder_path, regenerate=False),
+                self.user,
+                self.db,
+            )
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_generate_regenerate_true_produces_v2(self):
+        """regenerate=True 时生成 v2 并覆盖 latest"""
+        from unittest.mock import patch, MagicMock
+
+        mock_response_v1 = MagicMock()
+        mock_response_v1.text = "# 会议纪要\n\nv1 content\n"
+        mock_response_v1.usage = {"input_tokens": 5, "output_tokens": 10}
+        mock_response_v1.model = "mock"
+
+        mock_response_v2 = MagicMock()
+        mock_response_v2.text = "# 会议纪要\n\nv2 content\n"
+        mock_response_v2.usage = {"input_tokens": 5, "output_tokens": 10}
+        mock_response_v2.model = "mock"
+
+        mock_client = MagicMock()
+        mock_client.complete.return_value = mock_response_v1
+
+        workspace, folder_path = self._create_meeting_with_transcript()
+        root = self.workspace_root(workspace)
+
+        # First generate → v1
+        with patch("core.llm.get_llm_client", return_value=mock_client):
+            resp1 = workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id,
+                workspaces_api.MeetingGenerateRequest(folder_path=folder_path),
+                self.user,
+                self.db,
+            )
+        self.assertIn("minutes-v1.md", resp1.minutes_v_path)
+        self.assertIn("actions-v1.md", resp1.actions_v_path)
+
+        # Second generate with regenerate=True → v2
+        mock_client.complete.return_value = mock_response_v2
+        with patch("core.llm.get_llm_client", return_value=mock_client):
+            resp2 = workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id,
+                workspaces_api.MeetingGenerateRequest(folder_path=folder_path, regenerate=True),
+                self.user,
+                self.db,
+            )
+        self.assertIn("minutes-v2.md", resp2.minutes_v_path)
+        self.assertIn("actions-v2.md", resp2.actions_v_path)
+
+        # latest should be overwritten with v2 content
+        latest_minutes = (root / resp2.minutes_latest_path).read_text(encoding="utf-8")
+        self.assertIn("v2 content", latest_minutes)
+        # v1 should still exist unchanged
+        v1_minutes = (root / resp1.minutes_v_path).read_text(encoding="utf-8")
+        self.assertIn("v1 content", v1_minutes)
+
+    def test_generate_fallback_on_llm_error(self):
+        """LLM 抛异常时走 template-fallback，仍保存文件，model_used=template-fallback"""
+        from unittest.mock import patch
+
+        def _raise_error(*args, **kwargs):
+            raise RuntimeError("Mock LLM connection error")
+
+        workspace, folder_path = self._create_meeting_with_transcript()
+        root = self.workspace_root(workspace)
+
+        with patch("core.llm.get_llm_client", side_effect=_raise_error):
+            resp = workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id,
+                workspaces_api.MeetingGenerateRequest(folder_path=folder_path),
+                self.user,
+                self.db,
+            )
+
+        self.assertTrue(resp.ok)
+        self.assertEqual(resp.model_used, "template-fallback")
+
+        # Files should exist with fallback content
+        content = (root / resp.minutes_latest_path).read_text(encoding="utf-8")
+        self.assertIn("LLM 暂不可用", content)
+
+    def test_generate_rejects_wrong_parent_path(self):
+        """错误父路径的会议文件夹生成纪要应 400"""
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 错误父路径生成", brand="BFI"),
+            self.user,
+            self.db,
+        )
+        root = self.workspace_root(workspace)
+        bad_dir = root / "99-未归档文件" / "20260615-0930-bad-meeting"
+        bad_dir.mkdir(parents=True, exist_ok=True)
+        for sub in workspaces_api.MEETING_SUBDIRS:
+            (bad_dir / sub).mkdir(parents=True, exist_ok=True)
+        (bad_dir / "02-转录文本" / "transcript-latest.md").write_text("test", encoding="utf-8")
+        bad_rel = bad_dir.relative_to(root).as_posix()
+
+        with self.assertRaises(HTTPException) as ctx:
+            workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id,
+                workspaces_api.MeetingGenerateRequest(folder_path=bad_rel),
+                self.user,
+                self.db,
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_generate_rejects_non_meeting_folder(self):
+        """缺少 5 个子目录的文件夹生成纪要应 400"""
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 非会议生成", brand="BFI"),
+            self.user,
+            self.db,
+        )
+        folder_resp = workspaces_api.create_meeting_folder(
+            workspace.id,
+            workspaces_api.CreateMeetingFolderRequest(topic="完整会议"),
+            self.user,
+            self.db,
+        )
+        # Make a directory under the same parent that is NOT a meeting folder
+        root = self.workspace_root(workspace)
+        parent = root / "20-会议与沟通"
+        bad_folder = parent / "20260615-0930-incomplete"
+        bad_folder.mkdir(parents=True, exist_ok=True)
+        # Only 3 subdirs instead of 5
+        for sub in ["01-原始资料", "02-转录文本", "03-辅助总结"]:
+            (bad_folder / sub).mkdir(parents=True, exist_ok=True)
+        (bad_folder / "02-转录文本" / "transcript-latest.md").write_text("test", encoding="utf-8")
+        bad_rel = bad_folder.relative_to(root).as_posix()
+
+        with self.assertRaises(HTTPException) as ctx:
+            workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id,
+                workspaces_api.MeetingGenerateRequest(folder_path=bad_rel),
+                self.user,
+                self.db,
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+
+
+    # ── Step 4: Speaker map & term corrections tests ────────────────────────
+
+    def test_get_speakers_parses_transcript(self):
+        """GET /speakers 正确解析说话人概览"""
+        workspace, folder_path = self._create_meeting_with_transcript()
+        resp = workspaces_api.get_meeting_speakers(
+            workspace.id, folder_path, self.user, self.db,
+        )
+        self.assertTrue(resp.ok)
+        # Our test transcript has "张三", "李四", "王五"
+        self.assertGreaterEqual(len(resp.detected_speakers), 2)
+
+    def test_get_speakers_rejects_wrong_parent(self):
+        """GET /speakers 在非会议目录应 400"""
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 Speaker 错误父", brand="BFI"),
+            self.user, self.db,
+        )
+        root = self.workspace_root(workspace)
+        bad_dir = root / "99-未归档文件" / "20260615-0930-speaker-test"
+        bad_dir.mkdir(parents=True, exist_ok=True)
+        for sub in workspaces_api.MEETING_SUBDIRS:
+            (bad_dir / sub).mkdir(parents=True, exist_ok=True)
+        (bad_dir / "02-转录文本" / "transcript-latest.md").write_text(
+            "# test\n## 说话人概览\n| Speaker 1 | Speaker 1 | ... |", encoding="utf-8")
+        bad_rel = bad_dir.relative_to(root).as_posix()
+
+        with self.assertRaises(HTTPException) as ctx:
+            workspaces_api.get_meeting_speakers(
+                workspace.id, bad_rel, self.user, self.db,
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_save_speaker_map_writes_files_and_db(self):
+        """保存 speaker-map 应写 v1 + latest + WorkspaceFile + audit"""
+        workspace, folder_path = self._create_meeting_with_transcript()
+        resp = workspaces_api.save_meeting_speaker_map(
+            workspace.id,
+            workspaces_api.SaveSpeakerMapRequest(
+                folder_path=folder_path,
+                speakers=[
+                    workspaces_api.SpeakerMapItem(speaker_id="Speaker 1", display_name="张三"),
+                    workspaces_api.SpeakerMapItem(speaker_id="Speaker 2", display_name="李四"),
+                ],
+            ),
+            self.user,
+            self.db,
+        )
+        self.assertTrue(resp.ok)
+        self.assertTrue(resp.speaker_map_path.endswith("speaker-map-latest.md"))
+        self.assertFalse(resp.gbrain_ingest)
+
+        root = self.workspace_root(workspace)
+        latest_path = root / resp.speaker_map_path
+        self.assertTrue(latest_path.exists())
+        content = latest_path.read_text(encoding="utf-8")
+        self.assertIn("张三", content)
+        self.assertIn("李四", content)
+
+        # Check WorkspaceFile records
+        metas = (
+            self.db.query(WorkspaceFile)
+            .filter(WorkspaceFile.workspace_id == workspace.id,
+                    WorkspaceFile.relative_path.like("%speaker-map%"))
+            .all()
+        )
+        self.assertGreaterEqual(len(metas), 2)
+
+        # Check audit
+        audits = (
+            self.db.query(AuditLog)
+            .filter(AuditLog.action == "meeting_speaker_map_save")
+            .all()
+        )
+        self.assertGreaterEqual(len(audits), 1)
+
+    def test_speaker_map_v2_does_not_overwrite_v1(self):
+        """第二次保存 speaker-map 生产 v2，v1 不受影响"""
+        workspace, folder_path = self._create_meeting_with_transcript()
+        root = self.workspace_root(workspace)
+        # Save v1
+        workspaces_api.save_meeting_speaker_map(
+            workspace.id,
+            workspaces_api.SaveSpeakerMapRequest(
+                folder_path=folder_path,
+                speakers=[workspaces_api.SpeakerMapItem(speaker_id="Speaker 1", display_name="V1Name")],
+            ),
+            self.user, self.db,
+        )
+        # Save v2
+        workspaces_api.save_meeting_speaker_map(
+            workspace.id,
+            workspaces_api.SaveSpeakerMapRequest(
+                folder_path=folder_path,
+                speakers=[workspaces_api.SpeakerMapItem(speaker_id="Speaker 1", display_name="V2Name")],
+            ),
+            self.user, self.db,
+        )
+        v1 = root / folder_path / "02-转录文本" / "speaker-map-v1.md"
+        v2 = root / folder_path / "02-转录文本" / "speaker-map-v2.md"
+        latest = root / folder_path / "02-转录文本" / "speaker-map-latest.md"
+        self.assertTrue(v1.exists())
+        self.assertTrue(v2.exists())
+        self.assertTrue(latest.exists())
+        self.assertIn("V1Name", v1.read_text(encoding="utf-8"))
+        self.assertIn("V2Name", v2.read_text(encoding="utf-8"))
+        self.assertIn("V2Name", latest.read_text(encoding="utf-8"))
+
+    def test_save_term_corrections_writes_files_and_db(self):
+        """保存 term-corrections 应写 v1 + latest + WorkspaceFile + audit"""
+        workspace, folder_path = self._create_meeting_with_transcript()
+        resp = workspaces_api.save_meeting_term_corrections(
+            workspace.id,
+            workspaces_api.SaveTermCorrectionsRequest(
+                folder_path=folder_path,
+                corrections=[
+                    workspaces_api.TermCorrectionItem(
+                        original="projet", corrected="project", type="typo", confidence="高"),
+                ],
+            ),
+            self.user,
+            self.db,
+        )
+        self.assertTrue(resp.ok)
+        self.assertTrue(resp.corrections_path.endswith("term-corrections-latest.md"))
+        self.assertFalse(resp.gbrain_ingest)
+
+        root = self.workspace_root(workspace)
+        latest_path = root / resp.corrections_path
+        self.assertTrue(latest_path.exists())
+        content = latest_path.read_text(encoding="utf-8")
+        self.assertIn("projet", content)
+        self.assertIn("project", content)
+
+        metas = (
+            self.db.query(WorkspaceFile)
+            .filter(WorkspaceFile.workspace_id == workspace.id,
+                    WorkspaceFile.relative_path.like("%term-corrections%"))
+            .all()
+        )
+        self.assertGreaterEqual(len(metas), 2)
+
+    def test_generate_reads_speaker_map_and_terms(self):
+        """Generate 端点读 speaker-map 和 term-corrections，传入 LLM prompt"""
+        from unittest.mock import patch, MagicMock
+        workspace, folder_path = self._create_meeting_with_transcript()
+        root = self.workspace_root(workspace)
+
+        # Save speaker map and term corrections
+        workspaces_api.save_meeting_speaker_map(
+            workspace.id,
+            workspaces_api.SaveSpeakerMapRequest(
+                folder_path=folder_path,
+                speakers=[workspaces_api.SpeakerMapItem(speaker_id="Speaker 1", display_name="Gary")],
+            ),
+            self.user, self.db,
+        )
+        workspaces_api.save_meeting_term_corrections(
+            workspace.id,
+            workspaces_api.SaveTermCorrectionsRequest(
+                folder_path=folder_path,
+                corrections=[workspaces_api.TermCorrectionItem(
+                    original="budjet", corrected="budget", type="typo", confidence="高")],
+            ),
+            self.user, self.db,
+        )
+
+        mock_response = MagicMock()
+        mock_response.text = "# 纪要\n\nv1\n"
+        mock_response.usage = {"input_tokens": 10, "output_tokens": 10}
+        mock_client = MagicMock()
+        mock_client.complete.return_value = mock_response
+
+        with patch("core.llm.get_llm_client", return_value=mock_client):
+            workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id,
+                workspaces_api.MeetingGenerateRequest(folder_path=folder_path),
+                self.user, self.db,
+            )
+
+        # Collect all prompt texts sent to LLM
+        all_prompts = ""
+        for call in mock_client.complete.call_args_list:
+            args, kwargs = call
+            messages = args[0]
+            for msg in messages:
+                all_prompts += msg.get("content", "") + "\n"
+
+        self.assertIn("Gary", all_prompts)
+        self.assertIn("budjet", all_prompts)
+
+
+    # ── Step 5: Media transcription tests ───────────────────────────────────
+
+    def _call_transcribe_media(self, workspace_id, folder_path, filename, content_bytes, content_type="audio/mpeg", user=None):
+        """Helper to call the async transcribe_meeting_media endpoint synchronously."""
+        import asyncio, io
+        from fastapi import UploadFile
+        u = user or self.user
+        async def _run():
+            f = UploadFile(filename=filename, file=io.BytesIO(content_bytes), headers={"content-type": content_type})
+            return await workspaces_api.transcribe_meeting_media(
+                workspace_id, folder_path=folder_path, file=f, user=u, db=self.db,
+            )
+        return asyncio.run(_run())
+
+    def test_transcribe_rejects_unsupported_extension(self):
+        """非音视频扩展名应 400"""
+        workspace, folder_path = self._create_meeting_with_transcript()
+        with self.assertRaises(HTTPException) as ctx:
+            self._call_transcribe_media(workspace.id, folder_path, "meeting.pdf", b"%PDF-1.4 fake")
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_transcribe_rejects_wrong_parent(self):
+        """非会议父路径应 400"""
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 转录错误父", brand="BFI"), self.user, self.db)
+        root = self.workspace_root(workspace)
+        bad_dir = root / "99-未归档文件" / "20260615-0930-bad-media"
+        bad_dir.mkdir(parents=True, exist_ok=True)
+        for sub in workspaces_api.MEETING_SUBDIRS:
+            (bad_dir / sub).mkdir(parents=True, exist_ok=True)
+        bad_rel = bad_dir.relative_to(root).as_posix()
+        with self.assertRaises(HTTPException) as ctx:
+            self._call_transcribe_media(workspace.id, bad_rel, "test.mp3", b"fake audio")
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_transcribe_success_saves_media_and_transcript(self):
+        """Mock 转录成功：媒体入 01-原始资料，转录入 02-转录文本，3 WorkspaceFile + audit"""
+        from unittest.mock import patch, MagicMock
+        from core import media_transcription as mt
+        workspace, folder_path = self._create_meeting_with_transcript()
+
+        mock_result = MagicMock()
+        mock_result.transcript_text = "[00:00] Speaker 1: 测试转录内容。"
+        mock_result.transcription_status = "auto_transcribed"
+        mock_result.segment_count = 1
+        mock_result.warnings = []
+        mock_result.token_usage = {"input_tokens": 50, "output_tokens": 100}
+        mock_result.refinement_token_usage = {"input_tokens": 10, "output_tokens": 20}
+
+        with patch.object(mt, "transcribe_media_to_markdown", return_value=mock_result):
+            resp = self._call_transcribe_media(workspace.id, folder_path,
+                                               "meeting.mp3", b"fake audio data")
+
+        self.assertTrue(resp.ok)
+        self.assertEqual(resp.transcription_status, "auto_transcribed")
+        self.assertEqual(resp.segment_count, 1)
+        self.assertEqual(resp.token_cost, 180)
+
+        root = self.workspace_root(workspace)
+        # Media in 01-原始资料
+        self.assertTrue((root / resp.media_path).exists())
+        self.assertIn("01-原始资料", resp.media_path)
+        # Transcript in 02-转录文本
+        self.assertTrue((root / resp.transcript_v1_path).exists())
+        self.assertTrue((root / resp.transcript_latest_path).exists())
+        self.assertIn("02-转录文本", resp.transcript_v1_path)
+        content = (root / resp.transcript_latest_path).read_text(encoding="utf-8")
+        self.assertIn("测试转录内容", content)
+        self.assertIn("| 转录来源 | 音视频自动转录（meeting.mp3） |", content)
+        self.assertNotIn("| 转录来源 | 用户粘贴文本 |", content)
+
+        # 3 WorkspaceFile records
+        metas = (
+            self.db.query(WorkspaceFile)
+            .filter(WorkspaceFile.workspace_id == workspace.id,
+                    WorkspaceFile.relative_path.in_([
+                        resp.media_path, resp.transcript_v1_path, resp.transcript_latest_path]))
+            .all()
+        )
+        self.assertEqual(len(metas), 3)
+
+        # Audit
+        audits = self.db.query(AuditLog).filter(AuditLog.action == "meeting_media_transcribe").all()
+        self.assertGreaterEqual(len(audits), 1)
+        import json
+        self.assertFalse(json.loads(audits[-1].detail).get("gbrain_ingest"))
+
+    def test_transcribe_handles_exception_as_failed(self):
+        """Mock 转写异常 → transcription_status=failed, ok=True, 保存失败说明"""
+        from unittest.mock import patch
+        from core import media_transcription as mt
+        workspace, folder_path = self._create_meeting_with_transcript()
+
+        with patch.object(mt, "transcribe_media_to_markdown", side_effect=RuntimeError("Mock ASR failure")):
+            resp = self._call_transcribe_media(workspace.id, folder_path,
+                                               "meeting.wav", b"fake wav data")
+
+        self.assertTrue(resp.ok)
+        self.assertEqual(resp.transcription_status, "failed")
+        self.assertGreater(len(resp.warnings), 0)
+        self.assertIn("Mock ASR failure", resp.warnings[0])
+
+        root = self.workspace_root(workspace)
+        content = (root / resp.transcript_latest_path).read_text(encoding="utf-8")
+        self.assertIn("转录失败", content)
+
+    def test_transcribe_keeps_both_on_name_conflict(self):
+        """同名媒体文件冲突时追加 (1) 不覆盖旧文件"""
+        from unittest.mock import patch, MagicMock
+        from core import media_transcription as mt
+        workspace, folder_path = self._create_meeting_with_transcript()
+
+        mock_result = MagicMock()
+        mock_result.transcript_text = "content"
+        mock_result.transcription_status = "auto_transcribed"
+        mock_result.segment_count = 1
+        mock_result.warnings = []
+        mock_result.token_usage = {}
+        mock_result.refinement_token_usage = {}
+
+        with patch.object(mt, "transcribe_media_to_markdown", return_value=mock_result):
+            resp1 = self._call_transcribe_media(workspace.id, folder_path, "meeting.mp3", b"data1")
+            resp2 = self._call_transcribe_media(workspace.id, folder_path, "meeting.mp3", b"data2")
+
+        self.assertNotEqual(resp1.media_path, resp2.media_path)
+        root = self.workspace_root(workspace)
+        self.assertTrue((root / resp1.media_path).exists())
+        self.assertTrue((root / resp2.media_path).exists())
+
+
+    # ── Step 6: Meeting GBrain ingest tests ─────────────────────────────────
+
+    def _create_meeting_with_all_outputs(self) -> tuple:
+        """Create workspace + meeting folder with transcript, minutes, and actions."""
+        from unittest.mock import patch, MagicMock
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 Ingest测试", brand="BFI"),
+            self.user, self.db,
+        )
+        folder_resp = workspaces_api.create_meeting_folder(
+            workspace.id,
+            workspaces_api.CreateMeetingFolderRequest(topic="IngestTest"),
+            self.user, self.db,
+        )
+        fp = folder_resp.meeting_folder_path
+
+        workspaces_api.save_meeting_transcript(
+            workspace.id,
+            workspaces_api.SaveMeetingTranscriptRequest(folder_path=fp, content="transcript content"),
+            self.user, self.db,
+        )
+
+        mock_resp = MagicMock()
+        mock_resp.text = "# minutes content\n## 一句话结论\nDone"
+        mock_resp.usage = {"input_tokens": 1, "output_tokens": 1}
+        mock_client = MagicMock()
+        mock_client.complete.return_value = mock_resp
+        with patch("core.llm.get_llm_client", return_value=mock_client):
+            workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id,
+                workspaces_api.MeetingGenerateRequest(folder_path=fp),
+                self.user, self.db,
+            )
+        return workspace, fp
+
+    def test_ingest_rejects_non_admin_project_member(self):
+        """非项目管理员调用 ingest 返回 403"""
+        workspace, fp = self._create_meeting_with_all_outputs()
+        # Add self.other as non-admin member
+        workspaces_api.upsert_workspace_member(workspace.id, workspaces_api.UpsertWorkspaceMemberRequest(
+            user_id=self.other.id, role="member"), self.user, self.db)
+        with self.assertRaises(HTTPException) as ctx:
+            workspaces_api.ingest_meeting_to_gbrain(
+                workspace.id,
+                workspaces_api.MeetingIngestRequest(folder_path=fp),
+                self.other, self.db,
+            )
+        self.assertEqual(ctx.exception.status_code, 403)
+
+    def test_ingest_rejects_non_admin_customer_member(self):
+        """非客户管理员调用 CRM ingest 返回 403"""
+        workspace = workspaces_api._ensure_crm_workspace(self.db, self.user, add_member=True)
+        workspaces_api.upsert_workspace_member(workspace.id, workspaces_api.UpsertWorkspaceMemberRequest(
+            user_id=self.other.id, role="member"), self.user, self.db)
+        # Create meeting folder in CRM raw dir
+        root = self.workspace_root(workspace)
+        parent = root / "raw" / "会议记录"
+        parent.mkdir(parents=True, exist_ok=True)
+        meeting_dir = parent / "20260615-0930-CRMTest"
+        meeting_dir.mkdir(parents=True, exist_ok=True)
+        for sub in workspaces_api.MEETING_SUBDIRS:
+            (meeting_dir / sub).mkdir(parents=True, exist_ok=True)
+        (meeting_dir / "02-转录文本" / "transcript-latest.md").write_text("# test", encoding="utf-8")
+        (meeting_dir / "04-会议纪要" / "minutes-latest.md").write_text("# minutes", encoding="utf-8")
+        fp = meeting_dir.relative_to(root).as_posix()
+
+        with self.assertRaises(HTTPException) as ctx:
+            workspaces_api.ingest_meeting_to_gbrain(
+                workspace.id,
+                workspaces_api.MeetingIngestRequest(folder_path=fp),
+                self.other, self.db,
+            )
+        self.assertEqual(ctx.exception.status_code, 403)
+
+    def test_ingest_project_admin_writes_gbrain_ready(self):
+        """项目管理员 ingest 写入 _preprocessed/project/.../gbrain-ready/"""
+        workspace, fp = self._create_meeting_with_all_outputs()
+        resp = workspaces_api.ingest_meeting_to_gbrain(
+            workspace.id,
+            workspaces_api.MeetingIngestRequest(folder_path=fp),
+            self.user, self.db,
+        )
+        self.assertTrue(resp.ok)
+        self.assertIn("project", resp.gbrain_ready_path.replace("\\", "/"))
+        self.assertIn("gbrain-ready", resp.gbrain_ready_path)
+        self.assertIn("IngestTest", resp.gbrain_ready_path)
+        self.assertEqual(resp.source_scope, "project")
+        self.assertGreater(len(resp.ingested_files), 0)
+
+        # Verify GBrain-ready file exists
+        gb_path = Path(resp.gbrain_ready_path)
+        self.assertTrue(gb_path.exists())
+        content = gb_path.read_text(encoding="utf-8")
+        self.assertIn("transcript content", content)
+        self.assertIn("minutes content", content)
+
+    def test_ingest_marks_latest_as_gbrain_ready_not_synced(self):
+        """ingested 的 latest 文件 rag_status=gbrain_ready 不是 synced"""
+        workspace, fp = self._create_meeting_with_all_outputs()
+        resp = workspaces_api.ingest_meeting_to_gbrain(
+            workspace.id,
+            workspaces_api.MeetingIngestRequest(folder_path=fp),
+            self.user, self.db,
+        )
+        for ipath in resp.ingested_files:
+            meta = self.db.query(WorkspaceFile).filter(
+                WorkspaceFile.workspace_id == workspace.id,
+                WorkspaceFile.relative_path == ipath).first()
+            self.assertIsNotNone(meta)
+            self.assertEqual(meta.rag_status, "gbrain_ready")
+
+    def test_ingest_marks_old_versions_as_skipped_superseded(self):
+        """旧 vN 版本标记为 skipped_superseded_version"""
+        from unittest.mock import patch, MagicMock
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 vN测试", brand="BFI"), self.user, self.db)
+        folder_resp = workspaces_api.create_meeting_folder(
+            workspace.id, workspaces_api.CreateMeetingFolderRequest(topic="vN"), self.user, self.db)
+        fp = folder_resp.meeting_folder_path
+        workspaces_api.save_meeting_transcript(
+            workspace.id,
+            workspaces_api.SaveMeetingTranscriptRequest(folder_path=fp, content="t1"),
+            self.user, self.db,
+        )
+
+        # Generate twice to create v1 and v2
+        mock_resp = MagicMock(); mock_resp.text = "# v1"; mock_resp.usage = {"input_tokens": 1, "output_tokens": 1}
+        mock_client = MagicMock(); mock_client.complete.return_value = mock_resp
+        with patch("core.llm.get_llm_client", return_value=mock_client):
+            workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id, workspaces_api.MeetingGenerateRequest(folder_path=fp), self.user, self.db)
+            mock_resp.text = "# v2"
+            workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id, workspaces_api.MeetingGenerateRequest(folder_path=fp, regenerate=True), self.user, self.db)
+
+        resp = workspaces_api.ingest_meeting_to_gbrain(
+            workspace.id, workspaces_api.MeetingIngestRequest(folder_path=fp), self.user, self.db)
+        self.assertGreater(len(resp.skipped_files), 0)
+        for spath in resp.skipped_files:
+            meta = self.db.query(WorkspaceFile).filter(
+                WorkspaceFile.workspace_id == workspace.id,
+                WorkspaceFile.relative_path == spath).first()
+            self.assertIsNotNone(meta)
+            self.assertEqual(meta.rag_status, "skipped_superseded_version",
+                             f"应标记 skipped_superseded_version: {spath}")
+
+    def test_ingest_audit_has_gbrain_ready_fields(self):
+        """ingest audit 记录 gbrain_ready_generated=true, gbrain_synced=false"""
+        workspace, fp = self._create_meeting_with_all_outputs()
+        workspaces_api.ingest_meeting_to_gbrain(
+            workspace.id,
+            workspaces_api.MeetingIngestRequest(folder_path=fp),
+            self.user, self.db,
+        )
+        audits = self.db.query(AuditLog).filter(AuditLog.action == "meeting_gbrain_ingest").all()
+        self.assertGreaterEqual(len(audits), 1)
+        import json
+        detail = json.loads(audits[-1].detail)
+        self.assertTrue(detail.get("gbrain_ready_generated"))
+        self.assertFalse(detail.get("gbrain_synced", True))
+
+    def test_generate_sets_needs_reingest_on_gbrain_ready_files(self):
+        """重跑纪要后，已 gbrain_ready 的旧产物变成 needs_reingest"""
+        from unittest.mock import patch, MagicMock
+        workspace, fp = self._create_meeting_with_all_outputs()
+
+        # First ingest
+        workspaces_api.ingest_meeting_to_gbrain(
+            workspace.id,
+            workspaces_api.MeetingIngestRequest(folder_path=fp),
+            self.user, self.db,
+        )
+
+        # Verify ingested files are gbrain_ready
+        root = self.workspace_root(workspace)
+        minutes_meta = self.db.query(WorkspaceFile).filter(
+            WorkspaceFile.workspace_id == workspace.id,
+            WorkspaceFile.relative_path.like(f"{fp}/04-会议纪要/minutes-latest.md")
+        ).first()
+        self.assertEqual(minutes_meta.rag_status, "gbrain_ready")
+
+        # Regenerate
+        mock_resp = MagicMock(); mock_resp.text = "# v2"; mock_resp.usage = {"input_tokens": 1, "output_tokens": 1}
+        mock_client = MagicMock(); mock_client.complete.return_value = mock_resp
+        with patch("core.llm.get_llm_client", return_value=mock_client):
+            workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id,
+                workspaces_api.MeetingGenerateRequest(folder_path=fp, regenerate=True),
+                self.user, self.db,
+            )
+
+        # Check the old latest (now a vN file) is needs_reingest
+        self.db.refresh(minutes_meta)
+        # The old minutes-latest got replaced; find it as minutes-v1.md now
+        minutes_v1 = self.db.query(WorkspaceFile).filter(
+            WorkspaceFile.workspace_id == workspace.id,
+            WorkspaceFile.relative_path.like(f"{fp}/04-会议纪要/minutes-v1.md")
+        ).first()
+        if minutes_v1:
+            self.assertIn(minutes_v1.rag_status, ("needs_reingest", "skipped_superseded_version"))
+
+
+    # ── Step 7: End-to-end meeting workflow test ────────────────────────────
+
+    def test_e2e_full_meeting_workflow(self):
+        """完整会议工作流：创建→转录→说话人→生成→重跑→录入→状态→审计"""
+        from unittest.mock import patch, MagicMock
+        import json
+
+        # 1. Create workspace and meeting folder
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 E2E", brand="BFI"),
+            self.user, self.db,
+        )
+        folder_resp = workspaces_api.create_meeting_folder(
+            workspace.id,
+            workspaces_api.CreateMeetingFolderRequest(topic="E2E验收", meeting_time="2026-06-15T09:30"),
+            self.user, self.db,
+        )
+        fp = folder_resp.meeting_folder_path
+        self.assertTrue(folder_resp.ok)
+        self.assertIn("20-会议与沟通", fp)
+        self.assertGreater(len(folder_resp.created_dirs), 0)
+        self.assertFalse(folder_resp.gbrain_ingest)
+
+        # 2. Save transcript
+        tx_resp = workspaces_api.save_meeting_transcript(
+            workspace.id,
+            workspaces_api.SaveMeetingTranscriptRequest(folder_path=fp, content="张三：项目进度汇报。\n李四：第一阶段已完成。"),
+            self.user, self.db,
+        )
+        self.assertTrue(tx_resp.ok)
+        self.assertFalse(tx_resp.gbrain_ingest)
+        root = self.workspace_root(workspace)
+        self.assertTrue((root / tx_resp.transcript_latest_path).exists())
+        tx_content = (root / tx_resp.transcript_latest_path).read_text(encoding="utf-8")
+        self.assertIn("张三", tx_content)
+        self.assertIn("行号", tx_content)
+
+        # 3. Verify speakers
+        speakers_resp = workspaces_api.get_meeting_speakers(workspace.id, fp, self.user, self.db)
+        self.assertTrue(speakers_resp.ok)
+        self.assertGreaterEqual(len(speakers_resp.detected_speakers), 2)
+
+        # 4. Save speaker map
+        workspaces_api.save_meeting_speaker_map(
+            workspace.id,
+            workspaces_api.SaveSpeakerMapRequest(folder_path=fp, speakers=[
+                workspaces_api.SpeakerMapItem(speaker_id="Speaker 1", display_name="张三"),
+                workspaces_api.SpeakerMapItem(speaker_id="Speaker 2", display_name="李四"),
+            ]),
+            self.user, self.db,
+        )
+
+        # 5. Save term corrections
+        workspaces_api.save_meeting_term_corrections(
+            workspace.id,
+            workspaces_api.SaveTermCorrectionsRequest(folder_path=fp, corrections=[
+                workspaces_api.TermCorrectionItem(original="projet", corrected="project", type="typo"),
+            ]),
+            self.user, self.db,
+        )
+
+        # 6. Generate minutes and actions
+        mock_resp = MagicMock()
+        mock_resp.text = "# 会议纪要\n\n## 一句话结论\n\nE2E 验收通过。\n\n## 关键决策\n\n| D1 | 继续推进 | ... | ... |\n"
+        mock_resp.usage = {"input_tokens": 10, "output_tokens": 20}
+        mock_client = MagicMock()
+        mock_client.complete.return_value = mock_resp
+        with patch("core.llm.get_llm_client", return_value=mock_client):
+            gen_resp = workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id,
+                workspaces_api.MeetingGenerateRequest(folder_path=fp),
+                self.user, self.db,
+            )
+        self.assertTrue(gen_resp.ok)
+        self.assertIn("minutes-v1.md", gen_resp.minutes_v_path)
+        self.assertIn("actions-v1.md", gen_resp.actions_v_path)
+        self.assertFalse(gen_resp.gbrain_ingest)
+        self.assertTrue((root / gen_resp.minutes_latest_path).exists())
+
+        # 7. Re-run → v2
+        mock_resp.text = "# 会议纪要\n\n## 一句话结论\n\nE2E v2。\n"
+        with patch("core.llm.get_llm_client", return_value=mock_client):
+            gen2_resp = workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id,
+                workspaces_api.MeetingGenerateRequest(folder_path=fp, regenerate=True),
+                self.user, self.db,
+            )
+        self.assertIn("minutes-v2.md", gen2_resp.minutes_v_path)
+        self.assertIn("actions-v2.md", gen2_resp.actions_v_path)
+        # latest should be v2 content
+        latest_content = (root / gen2_resp.minutes_latest_path).read_text(encoding="utf-8")
+        self.assertIn("v2", latest_content)
+        # v1 still exists
+        self.assertTrue((root / gen_resp.minutes_v_path).exists())
+
+        # 8. Ingest to GBrain
+        ingest_resp = workspaces_api.ingest_meeting_to_gbrain(
+            workspace.id,
+            workspaces_api.MeetingIngestRequest(folder_path=fp),
+            self.user, self.db,
+        )
+        self.assertTrue(ingest_resp.ok)
+        self.assertGreater(len(ingest_resp.ingested_files), 0)
+        self.assertGreater(len(ingest_resp.skipped_files), 0)
+
+        gb_path = Path(ingest_resp.gbrain_ready_path)
+        self.assertTrue(gb_path.exists())
+        gb_md = gb_path.read_text(encoding="utf-8")
+        self.assertIn("E2E", gb_md)
+
+        # 9. Verify file statuses
+        for ipath in ingest_resp.ingested_files:
+            meta = self.db.query(WorkspaceFile).filter(
+                WorkspaceFile.workspace_id == workspace.id,
+                WorkspaceFile.relative_path == ipath).first()
+            self.assertIsNotNone(meta)
+            self.assertIn(meta.rag_status, ("gbrain_ready", "new"),
+                          f"{ipath} 状态应为 gbrain_ready 或 new，实际 {meta.rag_status}")
+
+        for spath in ingest_resp.skipped_files:
+            meta = self.db.query(WorkspaceFile).filter(
+                WorkspaceFile.workspace_id == workspace.id,
+                WorkspaceFile.relative_path == spath).first()
+            if meta:
+                self.assertEqual(meta.rag_status, "skipped_superseded_version",
+                                 f"{spath} 应标记 skipped_superseded_version")
+
+        # 10. Audit for gbrain_ingest=false on non-ingest operations
+        transcript_audits = self.db.query(AuditLog).filter(
+            AuditLog.action == "meeting_transcript_save").all()
+        self.assertGreaterEqual(len(transcript_audits), 1)
+        t_detail = json.loads(transcript_audits[-1].detail)
+        self.assertFalse(t_detail.get("gbrain_ingest", True))
+
+        # 11. Verify CRM workspace rejection for regular member
+        with self.assertRaises(HTTPException) as ctx:
+            workspace2 = workspaces_api.create_workspace(
+                workspaces_api.CreateWorkspaceRequest(name="项目 权限测试", brand="BFI"),
+                self.user, self.db,
+            )
+            workspaces_api.upsert_workspace_member(workspace2.id, workspaces_api.UpsertWorkspaceMemberRequest(
+                user_id=self.other.id, role="member"), self.user, self.db)
+            workspaces_api.ingest_meeting_to_gbrain(
+                workspace2.id,
+                workspaces_api.MeetingIngestRequest(folder_path=fp),
+                self.other, self.db,
+            )
+        # Should fail — either 403 or the folder won't match
 
 
 if __name__ == "__main__":

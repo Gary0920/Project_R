@@ -1,7 +1,15 @@
 import { ApiError, apiRequest, type ApiClientOptions } from "./client";
 import type {
   DistillationSuggestionResponse,
+  MeetingFolderResponse,
+  MeetingGenerateResponse,
   NotificationsListResponse,
+  SaveMeetingTranscriptResponse,
+  MeetingSpeakersResponse,
+  MeetingIngestResponse,
+  MediaTranscribeResponse,
+  SpeakerMapResponse,
+  TermCorrectionsResponse,
   WorkspaceResponse,
   WorkspaceDetailResponse,
   WorkspaceFilesResponse,
@@ -359,6 +367,112 @@ export function joinWorkspace(options: ApiClientOptions, workspaceId: number) {
 export function deleteWorkspace(options: ApiClientOptions, workspaceId: number) {
   return apiRequest<{ ok: boolean }>(options, `/workspaces/${workspaceId}`, {
     method: "DELETE",
+  });
+}
+
+// ── Meetings ──────────────────────────────────────────────────────────────
+
+export function createMeetingFolder(
+  options: ApiClientOptions,
+  workspaceId: number,
+  data: { topic: string; meeting_time?: string },
+) {
+  return apiRequest<MeetingFolderResponse>(options, `/workspaces/${workspaceId}/meetings/folder`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function saveMeetingTranscript(
+  options: ApiClientOptions,
+  workspaceId: number,
+  data: { folder_path: string; content: string; input_type?: string; original_filename?: string },
+) {
+  return apiRequest<SaveMeetingTranscriptResponse>(options, `/workspaces/${workspaceId}/meetings/transcript`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function saveMeetingTranscriptFromFile(
+  options: ApiClientOptions,
+  workspaceId: number,
+  folderPath: string,
+  file: File,
+) {
+  const form = new FormData();
+  form.append("folder_path", folderPath);
+  form.append("file", file);
+  return apiRequest<SaveMeetingTranscriptResponse>(options, `/workspaces/${workspaceId}/meetings/transcript/file`, {
+    method: "POST",
+    body: form,
+  });
+}
+
+export function generateMeetingMinutesAndActions(
+  options: ApiClientOptions,
+  workspaceId: number,
+  data: { folder_path: string; regenerate?: boolean },
+) {
+  return apiRequest<MeetingGenerateResponse>(options, `/workspaces/${workspaceId}/meetings/generate`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function getMeetingSpeakers(
+  options: ApiClientOptions,
+  workspaceId: number,
+  folderPath: string,
+) {
+  return apiRequest<MeetingSpeakersResponse>(options, `/workspaces/${workspaceId}/meetings/speakers?folder_path=${encodeURIComponent(folderPath)}`);
+}
+
+export function saveMeetingSpeakerMap(
+  options: ApiClientOptions,
+  workspaceId: number,
+  data: { folder_path: string; speakers: Array<{ speaker_id: string; display_name: string }> },
+) {
+  return apiRequest<SpeakerMapResponse>(options, `/workspaces/${workspaceId}/meetings/speaker-map`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function saveMeetingTermCorrections(
+  options: ApiClientOptions,
+  workspaceId: number,
+  data: { folder_path: string; corrections: Array<{ original: string; corrected: string; type?: string; confidence?: string }> },
+) {
+  return apiRequest<TermCorrectionsResponse>(options, `/workspaces/${workspaceId}/meetings/term-corrections`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function transcribeMeetingMedia(
+  options: ApiClientOptions,
+  workspaceId: number,
+  folderPath: string,
+  file: File,
+) {
+  const form = new FormData();
+  form.append("folder_path", folderPath);
+  form.append("file", file);
+  return apiRequest<MediaTranscribeResponse>(options, `/workspaces/${workspaceId}/meetings/transcribe/media`, {
+    method: "POST",
+    body: form,
+  });
+}
+
+export function ingestMeetingToGBrain(
+  options: ApiClientOptions,
+  workspaceId: number,
+  data: { folder_path: string; recursive?: boolean },
+) {
+  return apiRequest<MeetingIngestResponse>(options, `/workspaces/${workspaceId}/meetings/ingest`, {
+    method: "POST",
+    body: JSON.stringify(data),
   });
 }
 

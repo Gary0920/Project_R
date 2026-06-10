@@ -4,6 +4,7 @@ import {
   clearWorkspaceTrash,
   applyWorkspaceEntityMergeCandidateAction,
   copyWorkspacePath,
+  createMeetingFolder,
   createWorkspaceFolder,
   deleteWorkspaceFile,
   deleteWorkspaceFolder,
@@ -19,10 +20,18 @@ import {
   renameWorkspacePath,
   restoreWorkspaceFile,
   listWorkspaceFiles,
+  generateMeetingMinutesAndActions,
+  getMeetingSpeakers,
+  ingestMeetingToGBrain,
+  saveMeetingSpeakerMap,
+  saveMeetingTermCorrections,
+  saveMeetingTranscript,
+  transcribeMeetingMedia,
+  saveMeetingTranscriptFromFile,
   uploadWorkspaceFiles,
 } from "../api/workspaces";
 import type { ApiClientOptions } from "../api/client";
-import type { AgentRunResponse, GBrainEntityMergeCandidate, GBrainEntityMergePreviewResponse, WorkspaceEntityMergeCandidatesResponse, WorkspaceFileItemResponse, WorkspaceKnowledgeGraphResponse, WorkspaceNativeGraphContextResponse } from "../api/types";
+import type { AgentRunResponse, DetectedSpeaker, GBrainEntityMergeCandidate, GBrainEntityMergePreviewResponse, MeetingFolderResponse, MeetingGenerateResponse, SaveMeetingTranscriptResponse, WorkspaceEntityMergeCandidatesResponse, WorkspaceFileItemResponse, WorkspaceKnowledgeGraphResponse, WorkspaceNativeGraphContextResponse } from "../api/types";
 import { parseApiDate } from "../utils/time";
 import {
   AgentIcon,
@@ -53,6 +62,7 @@ export type WorkspaceFilePanelProps = {
   defaultPath?: string;
   onReferenceFile?: (item: WorkspaceFileItemResponse) => void | Promise<void>;
   onPreviewOpen?: () => void;
+  onPreviewClose?: () => void;
   standaloneCustomerIntelligence?: boolean;
   onCustomerIntelligenceClose?: () => void;
 };
@@ -94,6 +104,15 @@ type WorkspaceClipboardItem = {
   action: "copy" | "cut";
   item: WorkspaceFileItemResponse;
 };
+
+const MEETING_ROOT_PATH = "20-会议与沟通";
+const MEETING_WORKFLOW_DIRS = [
+  "01-原始资料",
+  "02-转录文本",
+  "03-辅助总结",
+  "04-会议纪要",
+  "05-行动项",
+];
 
 const TRASH_DIRECTORY = ".trash";
 const SYSTEM_WORKSPACE_DIRECTORIES = new Set([".git", "derived", "manifests", ".pending_review"]);
@@ -167,6 +186,8 @@ function getRagStatusMeta(status: string | null | undefined) {
   if (status === "pending_transcription") return { label: "待转写", tone: "processing", title: "音视频文件等待转写处理" };
   if (status === "ignored") return { label: "已忽略", tone: "muted", title: "该文件已被用户忽略，不参与默认录入" };
   if (status === "skipped") return { label: "暂不入库", tone: "muted", title: "当前文件暂不进入知识库" };
+  if (status === "skipped_superseded_version") return { label: "已取代", tone: "muted", title: "旧版本，已有更新版本录入" };
+  if (status === "needs_reingest") return { label: "需重录", tone: "processing", title: "会议已重跑，GBrain 知识需重新录入" };
   return { label: "未入库", tone: "empty", title: "尚未录入当前工作区知识库" };
 }
 
@@ -729,6 +750,7 @@ export function WorkspaceFilePanel({
   defaultPath = "",
   onReferenceFile,
   onPreviewOpen,
+  onPreviewClose,
   standaloneCustomerIntelligence = false,
   onCustomerIntelligenceClose,
 }: WorkspaceFilePanelProps) {
@@ -774,6 +796,28 @@ export function WorkspaceFilePanel({
   const [textPrompt, setTextPrompt] = useState<WorkspaceTextPrompt | null>(null);
   const [textPromptValue, setTextPromptValue] = useState("");
   const [textPromptBusy, setTextPromptBusy] = useState(false);
+  const [meetingFolderForm, setMeetingFolderForm] = useState<{
+    open: boolean;
+    topic: string;
+    meetingTime: string;
+    busy: boolean;
+  }>({ open: false, topic: "", meetingTime: "", busy: false });
+  const [meetingTranscriptForm, setMeetingTranscriptForm] = useState<{
+    open: boolean;
+    folderPath: string;
+    content: string;
+    selectedFile: File | null;
+    busy: boolean;
+  }>({ open: false, folderPath: "", content: "", selectedFile: null, busy: false });
+  const [speakerMapOpen, setSpeakerMapOpen] = useState(false);
+  const [detectedSpeakers, setDetectedSpeakers] = useState<DetectedSpeaker[]>([]);
+  const [speakerMapLoading, setSpeakerMapLoading] = useState(false);
+  const [speakerMapNames, setSpeakerMapNames] = useState<Record<string, string>>({});
+  const [termCorrectionsOpen, setTermCorrectionsOpen] = useState(false);
+  const [termCorrections, setTermCorrections] = useState<Array<{original:string;corrected:string}>>([]);
+  const [termCorrectionsBusy, setTermCorrectionsBusy] = useState(false);
+  const [termEditOriginal, setTermEditOriginal] = useState("");
+  const [termEditCorrected, setTermEditCorrected] = useState("");
   const [clipboardItem, setClipboardItem] = useState<WorkspaceClipboardItem | null>(null);
   const [draggedItem, setDraggedItem] = useState<WorkspaceFileItemResponse | null>(null);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
@@ -787,10 +831,53 @@ export function WorkspaceFilePanel({
   const previewObjectUrlRef = useRef<string | null>(null);
   const graphCanvasPanRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
 
+  const MEETING_AUDIO_EXTENSIONS = new Set(["mp3","wav","m4a","ogg","flac","mp4","mov","avi","wmv","mkv","webm"]);
+  const MEETING_TRANSCRIPT_EXTENSIONS = new Set(["txt","md","markdown","docx"]);
+
+  function isMeetingAudioFile(name: string): boolean {
+    const ext = name.split(".").pop()?.toLowerCase() ?? "";
+    return MEETING_AUDIO_EXTENSIONS.has(ext);
+  }
+
+  function isMeetingTranscriptFile(name: string): boolean {
+    const ext = name.split(".").pop()?.toLowerCase() ?? "";
+    return MEETING_TRANSCRIPT_EXTENSIONS.has(ext);
+  }
+
+  function isInMeetingWorkflowPath(filePath: string): boolean {
+    return filePath === MEETING_ROOT_PATH || filePath.startsWith(`${MEETING_ROOT_PATH}/`);
+  }
+
+  function isMeetingWorkflowSubdirName(name: string): boolean {
+    return MEETING_WORKFLOW_DIRS.includes(name);
+  }
+
+  function isMeetingFolderPath(path: string): boolean {
+    const parts = path.split("/");
+    return parts[0] === MEETING_ROOT_PATH;
+  }
+
+  function inferMeetingFolder(filePath: string): string | null {
+    const parts = filePath.split("/");
+    if (parts[0] !== MEETING_ROOT_PATH) return null;
+    return MEETING_ROOT_PATH;
+  }
+
   const displayItems = useMemo(() => filterSystemWorkspaceItems(items), [items]);
   const visibleItems = useMemo(() => viewMode === "trash" ? items : getItemsAtPath(displayItems, currentPath), [currentPath, displayItems, items, viewMode]);
   const breadcrumb = useMemo(() => makeBreadcrumb(currentPath), [currentPath]);
   const pendingIngestCount = useMemo(() => countPendingIngestFiles(visibleItems), [visibleItems]);
+  const isInMeetingFolder = useMemo(
+    () => visibleItems.some((child) => child.type === "directory" && child.name === "02-转录文本"),
+    [visibleItems],
+  );
+  const isMeetingRoot = currentPath === MEETING_ROOT_PATH || currentPath.startsWith(`${MEETING_ROOT_PATH}/`);
+  const hasMeetingWorkflowDirs = MEETING_WORKFLOW_DIRS.some((name) =>
+    visibleItems.some((item) => item.type === "directory" && item.name === name),
+  );
+  const showMeetingWorkflowToolbar = workspaceKind !== "user" && viewMode === "files" && (isMeetingRoot || hasMeetingWorkflowDirs);
+  const isLegitimateMeetingFolder = isMeetingFolderPath(currentPath);
+  const activeMeetingFolderPath = isLegitimateMeetingFolder ? MEETING_ROOT_PATH : currentPath;
 
   function navigateTo(path: string) {
     if (path === currentPath) return;
@@ -1081,6 +1168,326 @@ export function WorkspaceFilePanel({
     });
   }
 
+  // ── Meeting operations ──────────────────────────────────────────────────
+
+  function openMeetingFolderForm() {
+    if (!workspaceId) return;
+    if (workspaceKind === "user") return;
+    setMeetingFolderForm({ open: true, topic: "", meetingTime: "", busy: false });
+    setContextMenu(null);
+  }
+
+  async function handleMeetingFolderCreate() {
+    if (!workspaceId || meetingFolderForm.busy) return;
+    const topic = meetingFolderForm.topic.trim();
+    if (!topic) return;
+    setMeetingFolderForm((prev) => ({ ...prev, busy: true }));
+    setError(null);
+    try {
+      const data: { topic: string; meeting_time?: string } = { topic };
+      if (meetingFolderForm.meetingTime.trim()) {
+        data.meeting_time = meetingFolderForm.meetingTime.trim();
+      }
+      const response: MeetingFolderResponse = await createMeetingFolder(apiOptions, workspaceId, data);
+      if (response.agent_run) setLatestAgentRun(response.agent_run);
+      setNotice(`已创建会议文件夹：${response.meeting_folder_path}`);
+      setMeetingFolderForm({ open: false, topic: "", meetingTime: "", busy: false });
+      await refresh();
+      // Navigate into the new folder
+      navigateTo(response.meeting_folder_path);
+    } catch (folderError: unknown) {
+      setError(folderError instanceof Error ? folderError.message : "创建会议文件夹失败");
+    } finally {
+      setMeetingFolderForm((prev) => ({ ...prev, busy: false }));
+    }
+  }
+
+  function openMeetingTranscriptForm(folderPath?: string) {
+    if (!workspaceId) return;
+    if (workspaceKind === "user") return;
+    setMeetingTranscriptForm({
+      open: true,
+      folderPath: folderPath ?? activeMeetingFolderPath,
+      content: "",
+      selectedFile: null,
+      busy: false,
+    });
+    setContextMenu(null);
+  }
+
+  function handleTranscriptFileSelect(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const lower = file.name.toLowerCase();
+    if (!lower.endsWith(".txt") && !lower.endsWith(".md") && !lower.endsWith(".markdown") && !lower.endsWith(".docx")) {
+      setError("仅支持 TXT / MD / DOCX 格式");
+      return;
+    }
+    setMeetingTranscriptForm((prev) => ({ ...prev, selectedFile: file, content: "" }));
+    // For TXT/MD, read content client-side to preview
+    if (!lower.endsWith(".docx")) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setMeetingTranscriptForm((prev) => ({
+          ...prev,
+          content: typeof reader.result === "string" ? reader.result : "",
+        }));
+      };
+      reader.readAsText(file);
+    }
+  }
+
+  async function handleMeetingTranscriptSave() {
+    if (!workspaceId || meetingTranscriptForm.busy) return;
+    const folderPath = meetingTranscriptForm.folderPath.trim();
+    if (!folderPath) return;
+
+    const hasFile = meetingTranscriptForm.selectedFile !== null;
+    const content = meetingTranscriptForm.content.trim();
+    if (!hasFile && !content) return;
+
+    setMeetingTranscriptForm((prev) => ({ ...prev, busy: true }));
+    setError(null);
+    try {
+      let response: SaveMeetingTranscriptResponse;
+
+      if (hasFile && meetingTranscriptForm.selectedFile!.name.toLowerCase().endsWith(".docx")) {
+        // DOCX: server-side extraction via file upload endpoint
+        response = await saveMeetingTranscriptFromFile(
+          apiOptions, workspaceId, folderPath, meetingTranscriptForm.selectedFile!,
+        );
+      } else if (hasFile) {
+        // TXT/MD: already read client-side, submit as content
+        const filename = meetingTranscriptForm.selectedFile!.name;
+        const inputType = filename.toLowerCase().endsWith(".md") ? "md" : "txt";
+        response = await saveMeetingTranscript(apiOptions, workspaceId, {
+          folder_path: folderPath,
+          content,
+          input_type: inputType,
+          original_filename: filename,
+        });
+      } else {
+        // Paste
+        response = await saveMeetingTranscript(apiOptions, workspaceId, {
+          folder_path: folderPath,
+          content,
+          input_type: "paste",
+        });
+      }
+
+      if (response.agent_run) setLatestAgentRun(response.agent_run);
+      setNotice(`转录已保存：${response.transcript_latest_path}`);
+      setMeetingTranscriptForm({ open: false, folderPath: "", content: "", selectedFile: null, busy: false });
+      await refresh();
+    } catch (transcriptError: unknown) {
+      setError(transcriptError instanceof Error ? transcriptError.message : "保存转录失败");
+    } finally {
+      setMeetingTranscriptForm((prev) => ({ ...prev, busy: false }));
+    }
+  }
+
+  async function handleGenerateMinutes(regenerate = false) {
+    if (!workspaceId || !currentPath) return;
+    if (workspaceKind === "user") return;
+    const folderPath = activeMeetingFolderPath;
+    setNotice("正在生成纪要与行动项...");
+    setError(null);
+    setRefreshingKnowledge(true);
+    try {
+      const response: MeetingGenerateResponse = await generateMeetingMinutesAndActions(
+        apiOptions,
+        workspaceId,
+        { folder_path: folderPath, regenerate },
+      );
+      if (response.agent_run) setLatestAgentRun(response.agent_run);
+      if (response.model_used === "template-fallback") {
+        setNotice(`纪要与行动项已保存（LLM 暂不可用，使用模板占位）。模型：${response.model_used}`);
+      } else {
+        setNotice(`纪要与行动项已保存（模型：${response.model_used}，token：${response.token_cost}）`);
+      }
+      await refresh();
+    } catch (genError: unknown) {
+      if (genError instanceof Error && genError.message.includes("已存在纪要与行动项")) {
+        // Offer to regenerate
+        setActionMenuOpen(false);
+        setPendingConfirmation({
+          title: "已存在纪要与行动项",
+          detail: "当前会议已有纪要与行动项。重新生成将创建新版本（v2/v3…）并更新 latest。是否继续？",
+          confirmLabel: "重新生成",
+          tone: "warning",
+          onConfirm: async () => {
+            await handleGenerateMinutes(true);
+          },
+        });
+        return;
+      }
+      setError(genError instanceof Error ? genError.message : "生成纪要与行动项失败");
+    } finally {
+      setRefreshingKnowledge(false);
+    }
+  }
+
+  async function handleOpenSpeakerMap() {
+    if (!workspaceId || !currentPath) return;
+    setSpeakerMapOpen(true);
+    setSpeakerMapLoading(true);
+    setDetectedSpeakers([]);
+    setError(null);
+    try {
+      const response = await getMeetingSpeakers(apiOptions, workspaceId, activeMeetingFolderPath);
+      const speakers = response.detected_speakers ?? [];
+      setDetectedSpeakers(speakers);
+      // Initialize name map with detected display names
+      const nameMap: Record<string, string> = {};
+      for (const sp of speakers) {
+        nameMap[sp.speaker_id] = sp.display_name;
+      }
+      setSpeakerMapNames(nameMap);
+    } catch (speakerError: unknown) {
+      setError(speakerError instanceof Error ? speakerError.message : "获取说话人信息失败");
+      setSpeakerMapOpen(false);
+    } finally {
+      setSpeakerMapLoading(false);
+    }
+  }
+
+  async function handleSaveSpeakerMap() {
+    if (!workspaceId || !currentPath) return;
+    setSpeakerMapLoading(true);
+    setError(null);
+    try {
+      const speakers = detectedSpeakers.map((sp) => ({
+        speaker_id: sp.speaker_id,
+        display_name: speakerMapNames[sp.speaker_id] ?? sp.display_name,
+      }));
+      await saveMeetingSpeakerMap(apiOptions, workspaceId, {
+        folder_path: activeMeetingFolderPath,
+        speakers,
+      });
+      setNotice("说话人映射已保存。点击「应用修正并重跑纪要」可更新纪要。");
+      setSpeakerMapOpen(false);
+      await refresh();
+    } catch (mapError: unknown) {
+      setError(mapError instanceof Error ? mapError.message : "保存说话人映射失败");
+    } finally {
+      setSpeakerMapLoading(false);
+    }
+  }
+
+  async function handleSaveTermCorrections() {
+    if (!workspaceId || !currentPath) return;
+    setTermCorrectionsBusy(true);
+    setError(null);
+    try {
+      await saveMeetingTermCorrections(apiOptions, workspaceId, {
+        folder_path: activeMeetingFolderPath,
+        corrections: termCorrections,
+      });
+      setNotice("术语纠错已保存。");
+      setTermCorrectionsOpen(false);
+      setTermCorrections([]);
+      await refresh();
+    } catch (termErr: unknown) {
+      setError(termErr instanceof Error ? termErr.message : "保存术语纠错失败");
+    } finally {
+      setTermCorrectionsBusy(false);
+    }
+  }
+
+  async function handleIngestMeeting() {
+    if (!workspaceId || !currentPath) return;
+    const sourceScope = workspaceKind === "customer" ? "CRM 客户情报" : "项目知识库";
+    setPendingConfirmation({
+      title: "录入此会议",
+      detail: [
+        `当前工作区：${workspaceName ?? workspaceKind}`,
+        `目标 source：${sourceScope}`,
+        `路径：${activeMeetingFolderPath}`,
+        "将取 latest 版本组合成 GBrain-ready 页面，旧版本标记为已取代。",
+        "生成后需在 GBrain 管理端同步（本操作不自动触发 sync）。",
+        "原始音视频不直接录入。",
+        "仅工作区管理员可操作。",
+      ].join("\\n"),
+      confirmLabel: "确认录入",
+      tone: "warning",
+      onConfirm: async () => {
+        setRefreshingKnowledge(true);
+        setError(null);
+        try {
+          const resp = await ingestMeetingToGBrain(apiOptions, workspaceId!, { folder_path: activeMeetingFolderPath });
+          const msgs = [`已录入 ${resp.ingested_files.length} 个文件`];
+          if (resp.skipped_files.length > 0) {
+            msgs.push(`跳过 ${resp.skipped_files.length} 个旧版本`);
+          }
+          msgs.push(`source：${resp.source_id}`);
+          setNotice(msgs.join("，"));
+          if (resp.agent_run) setLatestAgentRun(resp.agent_run);
+          await refresh();
+        } catch (ingestErr: unknown) {
+          setError(ingestErr instanceof Error ? ingestErr.message : "录入失败");
+        } finally {
+          setRefreshingKnowledge(false);
+        }
+      },
+    });
+  }
+
+  function handleMediaTranscribe() {
+    if (!workspaceId || !currentPath) return;
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".mp3,.wav,.m4a,.ogg,.flac,.mp4,.mov,.avi,.wmv,.mkv,.webm";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const sizeMB = file.size / (1024 * 1024);
+      const detail = [
+        `文件：${file.name}`,
+        `大小：${sizeMB.toFixed(1)} MB`,
+        "转录将调用 MiMo V2.5 模型，长视频可能自动分段处理。",
+        "转写时间取决于文件长度，请耐心等待。",
+        "转录完成后将在文件面板中显示。",
+      ].join("\\n");
+      setPendingConfirmation({
+        title: "上传会议音视频并转录",
+        detail,
+        confirmLabel: "确认转录",
+        tone: "warning",
+        onConfirm: async () => {
+          const folderPath = activeMeetingFolderPath;
+          setNotice("正在转录音视频…");
+          setRefreshingKnowledge(true);
+          setError(null);
+          try {
+            const resp = await transcribeMeetingMedia(apiOptions, workspaceId!, folderPath, file);
+            if (resp.agent_run) setLatestAgentRun(resp.agent_run);
+            const notices: string[] = [];
+            if (resp.transcription_status === "failed") {
+              notices.push("转录失败");
+            } else if (resp.transcription_status === "partial") {
+              notices.push(`部分转录完成（${resp.segment_count}段）`);
+            } else {
+              notices.push(`转录完成（${resp.segment_count}段）`);
+            }
+            if (resp.warnings.length > 0) {
+              notices.push(`${resp.warnings.length} 条警告`);
+            }
+            if (resp.token_cost > 0) {
+              notices.push(`token：${resp.token_cost}`);
+            }
+            setNotice(notices.join("，") + ` → ${resp.transcript_latest_path}`);
+            await refresh();
+          } catch (txErr: unknown) {
+            setError(txErr instanceof Error ? txErr.message : "转录失败");
+          } finally {
+            setRefreshingKnowledge(false);
+          }
+        },
+      });
+    };
+    input.click();
+  }
+
   function handleRename(item: WorkspaceFileItemResponse) {
     if (!workspaceId) return;
     if (!canModifyWorkspaceItem(item)) {
@@ -1317,6 +1724,7 @@ export function WorkspaceFilePanel({
       previewObjectUrlRef.current = null;
     }
     setFilePreview(null);
+    onPreviewClose?.();
   }
 
   async function openFilePreview(item: WorkspaceFileItemResponse) {
@@ -1972,6 +2380,27 @@ export function WorkspaceFilePanel({
                   <div className="workspace-file-action-menu">
                     <button disabled={loading} onClick={() => { setActionMenuOpen(false); void refresh(); }} type="button"><RefreshIcon />刷新目录</button>
                     <button disabled={!canPasteInto(currentPath)} onClick={() => { setActionMenuOpen(false); void handlePaste(currentPath); }} type="button"><CopyIcon />粘贴到当前文件夹</button>
+                    {isInMeetingFolder && workspaceKind !== "user" && !showMeetingWorkflowToolbar ? (
+                      <button onClick={() => { setActionMenuOpen(false); openMeetingTranscriptForm(); }} type="button"><RefreshIcon />保存转录文本</button>
+                    ) : null}
+                    {isInMeetingFolder && workspaceKind !== "user" && !showMeetingWorkflowToolbar ? (
+                      <button onClick={() => { setActionMenuOpen(false); void handleGenerateMinutes(); }} type="button"><NoteIcon />生成纪要与行动项</button>
+                    ) : null}
+                    {isInMeetingFolder && workspaceKind !== "user" && !showMeetingWorkflowToolbar ? (
+                      <button onClick={() => { setActionMenuOpen(false); void handleOpenSpeakerMap(); }} type="button"><AgentIcon />说话人映射</button>
+                    ) : null}
+                    {isInMeetingFolder && workspaceKind !== "user" && !showMeetingWorkflowToolbar ? (
+                      <button onClick={() => { setActionMenuOpen(false); void handleGenerateMinutes(true); }} type="button"><RefreshIcon />应用修正并重跑纪要</button>
+                    ) : null}
+                    {isInMeetingFolder && workspaceKind !== "user" && !showMeetingWorkflowToolbar ? (
+                      <button onClick={() => { setActionMenuOpen(false); setTermCorrectionsOpen(true); }} type="button"><EditIcon />术语纠错</button>
+                    ) : null}
+                    {isInMeetingFolder && workspaceKind !== "user" && !showMeetingWorkflowToolbar ? (
+                      <button onClick={() => { setActionMenuOpen(false); void handleMediaTranscribe(); }} type="button"><PlusIcon />上传会议音视频</button>
+                    ) : null}
+                    {isInMeetingFolder && workspaceKind !== "user" && !showMeetingWorkflowToolbar ? (
+                      <button onClick={() => { setActionMenuOpen(false); void handleIngestMeeting(); }} type="button"><BrainIcon />录入此会议</button>
+                    ) : null}
                     {canShowKnowledgeIngest ? (
                       <button disabled={refreshingKnowledge || pendingIngestCount === 0} onClick={() => { setActionMenuOpen(false); handleRefreshKnowledge(currentPath, true); }} type="button"><RefreshIcon />{refreshingKnowledge ? "正在录入..." : `录入当前文件夹${pendingIngestCount > 0 ? ` (${pendingIngestCount})` : ""}`}</button>
                     ) : null}
@@ -2080,6 +2509,71 @@ export function WorkspaceFilePanel({
             )}
           </div>
         </nav>
+      ) : null}
+
+      {showMeetingWorkflowToolbar ? (
+        <div className="workspace-meeting-toolbar">
+          <span className="workspace-meeting-toolbar-label">会议工作流</span>
+          <div className="workspace-meeting-toolbar-actions">
+            <button
+              className="workspace-file-primary-action"
+              onClick={() => handleMediaTranscribe()}
+              title="上传会议音文件到当前文件夹并自动转录"
+              type="button"
+            >
+              <PlusIcon /><span>上传/转写录音</span>
+            </button>
+            <button
+              className="workspace-file-primary-action"
+              onClick={() => openMeetingTranscriptForm()}
+              title="将已有的会议转录文本保存到当前文件夹"
+              type="button"
+            >
+              <NoteIcon /><span>保存转录文本</span>
+            </button>
+            <button
+              className="workspace-file-primary-action"
+              disabled={!isLegitimateMeetingFolder}
+              onClick={() => void handleOpenSpeakerMap()}
+              title={!isLegitimateMeetingFolder ? "请在具体会议文件夹中使用此功能。" : "为当前会议的检测说话人设置显示名称"}
+              type="button"
+            >
+              <AgentIcon /><span>说话人映射</span>
+            </button>
+            <button
+              className="workspace-file-primary-action"
+              disabled={!isLegitimateMeetingFolder}
+              onClick={() => setTermCorrectionsOpen(true)}
+              title={!isLegitimateMeetingFolder ? "请在具体会议文件夹中使用此功能。" : "添加需要纠正的术语"}
+              type="button"
+            >
+              <EditIcon /><span>术语纠错</span>
+            </button>
+            <button
+              className="workspace-file-primary-action"
+              disabled={!isLegitimateMeetingFolder}
+              onClick={() => void handleGenerateMinutes()}
+              title={!isLegitimateMeetingFolder ? "请在具体会议文件夹中使用此功能。" : "从当前会议的转录文本生成纪要与行动项"}
+              type="button"
+            >
+              <NoteIcon /><span>生成纪要与行动项</span>
+            </button>
+            <button
+              className="workspace-file-primary-action"
+              disabled={!isLegitimateMeetingFolder}
+              onClick={() => void handleIngestMeeting()}
+              title={!isLegitimateMeetingFolder ? "请在具体会议文件夹中使用此功能。" : "将当前会议组合成 GBrain-ready 页面"}
+              type="button"
+            >
+              <BrainIcon /><span>录入此会议</span>
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {showMeetingWorkflowToolbar && isMeetingRoot && currentPath === MEETING_ROOT_PATH && !hasMeetingWorkflowDirs ? (
+        <p className="agent-file-panel-note" style={{ margin: "8px 12px" }}>
+          会议资料请放入 20-会议与沟通；可先上传会议音视频或保存已有转录文本。
+        </p>
       ) : null}
 
       {uploadProgress.active ? (
@@ -2229,6 +2723,114 @@ export function WorkspaceFilePanel({
                   <RefreshIcon />录入此文件
                 </button>
               ) : null}
+              {/* Meeting file context actions — only when a valid meeting folder can be inferred */}
+              {contextMenu.item && !isTrashWorkspaceItem(contextMenu.item) && inferMeetingFolder(contextMenu.item.path) !== null && (
+                <>
+                  {isMeetingAudioFile(contextMenu.item.name) ? (
+                    <button
+                      disabled={refreshingKnowledge}
+                      onClick={() => runContextAction(async () => {
+                        if (!workspaceId) return;
+                        const item = contextMenu.item!;
+                        const meetingFolder = inferMeetingFolder(item.path)!;
+                        setNotice("正在读取文件并转录...");
+                        setRefreshingKnowledge(true);
+                        try {
+                          const blob = await fetchWorkspaceFileBlob(apiOptions, workspaceId, item.path);
+                          const file = new File([blob], item.name, { type: blob.type });
+                          const resp = await transcribeMeetingMedia(apiOptions, workspaceId, meetingFolder, file);
+                          if (resp.agent_run) setLatestAgentRun(resp.agent_run);
+                          const parts: string[] = [];
+                          if (resp.transcription_status === "failed") parts.push("转录失败");
+                          else if (resp.transcription_status === "partial") parts.push(`部分转录完成（${resp.segment_count}段）`);
+                          else parts.push(`转录完成（${resp.segment_count}段）`);
+                          if (resp.warnings.length > 0) parts.push(`${resp.warnings.length} 条警告`);
+                          if (resp.token_cost > 0) parts.push(`token：${resp.token_cost}`);
+                          setNotice(parts.join("，"));
+                          await refresh();
+                        } catch (txErr: unknown) {
+                          setError(txErr instanceof Error ? txErr.message : "转录失败");
+                        } finally {
+                          setRefreshingKnowledge(false);
+                        }
+                      })}
+                      type="button"
+                    >
+                      <NoteIcon />转录此音视频
+                    </button>
+                  ) : null}
+                  {isMeetingTranscriptFile(contextMenu.item.name) ? (
+                    <button
+                      disabled={refreshingKnowledge}
+                      onClick={() => runContextAction(async () => {
+                        if (!workspaceId) return;
+                        const item = contextMenu.item!;
+                        const meetingFolder = inferMeetingFolder(item.path)!;
+                        setNotice("正在保存转录文本并生成纪要...");
+                        setRefreshingKnowledge(true);
+                        try {
+                          const blob = await fetchWorkspaceFileBlob(apiOptions, workspaceId, item.path);
+                          const lower = item.name.toLowerCase();
+                          if (lower.endsWith(".docx")) {
+                            const file = new File([blob], item.name, { type: blob.type });
+                            await saveMeetingTranscriptFromFile(apiOptions, workspaceId, meetingFolder, file);
+                          } else {
+                            const text = await blob.text();
+                            await saveMeetingTranscript(apiOptions, workspaceId, {
+                              folder_path: meetingFolder,
+                              content: text,
+                              input_type: lower.endsWith(".md") ? "md" : "txt",
+                              original_filename: item.name,
+                            });
+                          }
+                          const genResp = await generateMeetingMinutesAndActions(apiOptions, workspaceId, { folder_path: meetingFolder });
+                          if (genResp.agent_run) setLatestAgentRun(genResp.agent_run);
+                          setNotice(`纪要已生成（模型：${genResp.model_used}）`);
+                          await refresh();
+                        } catch (genErr: unknown) {
+                          if (genErr instanceof Error && genErr.message.includes("已存在纪要与行动项")) {
+                            setPendingConfirmation({
+                              title: "已存在纪要与行动项",
+                              detail: "当前会议已有纪要与行动项。重新生成将创建新版本（v2/v3…）并更新 latest。是否继续？",
+                              confirmLabel: "重新生成",
+                              tone: "warning",
+                              onConfirm: async () => {
+                                if (!workspaceId || !meetingFolder) return;
+                                setRefreshingKnowledge(true);
+                                try {
+                                  const reBlob = await fetchWorkspaceFileBlob(apiOptions, workspaceId, item.path);
+                                  const reLower = item.name.toLowerCase();
+                                  if (reLower.endsWith(".docx")) {
+                                    await saveMeetingTranscriptFromFile(apiOptions, workspaceId, meetingFolder, new File([reBlob], item.name, { type: reBlob.type }));
+                                  } else {
+                                    const reText = await reBlob.text();
+                                    await saveMeetingTranscript(apiOptions, workspaceId, { folder_path: meetingFolder, content: reText, input_type: reLower.endsWith(".md") ? "md" : "txt", original_filename: item.name });
+                                  }
+                                  const reGenResp = await generateMeetingMinutesAndActions(apiOptions, workspaceId, { folder_path: meetingFolder, regenerate: true });
+                                  if (reGenResp.agent_run) setLatestAgentRun(reGenResp.agent_run);
+                                  setNotice(`纪要已重新生成（模型：${reGenResp.model_used}）`);
+                                  await refresh();
+                                } catch (reErr: unknown) {
+                                  setError(reErr instanceof Error ? reErr.message : "重新生成失败");
+                                } finally {
+                                  setRefreshingKnowledge(false);
+                                }
+                              },
+                            });
+                            return;
+                          }
+                          setError(genErr instanceof Error ? genErr.message : "生成纪要失败");
+                        } finally {
+                          setRefreshingKnowledge(false);
+                        }
+                      })}
+                      type="button"
+                    >
+                      <NoteIcon />用此转录生成纪要
+                    </button>
+                  ) : null}
+                </>
+              )}
               <button disabled={!canModifyWorkspaceItem(contextMenu.item)} onClick={() => runContextAction(() => handleRename(contextMenu.item!))} type="button"><EditIcon />重命名</button>
               <button disabled={!canModifyWorkspaceItem(contextMenu.item)} onClick={() => runContextAction(() => void handleDelete(contextMenu.item!))} type="button"><TrashIcon />删除</button>
               <button onClick={() => runContextAction(() => void onReferenceFile?.(contextMenu.item!))} type="button"><NoteIcon />引用文件</button>
@@ -2268,6 +2870,248 @@ export function WorkspaceFilePanel({
               <button disabled={textPromptBusy || !textPromptValue.trim()} type="submit">{textPrompt.confirmLabel}</button>
             </div>
           </form>
+        </div>
+      ) : null}
+      {meetingFolderForm.open ? (
+        <div className="workspace-text-prompt-overlay" onClick={() => !meetingFolderForm.busy && setMeetingFolderForm((prev) => ({ ...prev, open: false }))}>
+          <form
+            className="workspace-text-prompt"
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleMeetingFolderCreate();
+            }}
+          >
+            <header>
+              <strong>新建会议文件夹</strong>
+              <button disabled={meetingFolderForm.busy} onClick={() => setMeetingFolderForm((prev) => ({ ...prev, open: false }))} type="button">×</button>
+            </header>
+            <label>
+              <span>会议主题</span>
+              <input
+                autoFocus
+                disabled={meetingFolderForm.busy}
+                onChange={(event) => setMeetingFolderForm((prev) => ({ ...prev, topic: event.target.value }))}
+                onKeyDown={(event) => { if (event.key === "Escape") setMeetingFolderForm((prev) => ({ ...prev, open: false })); }}
+                placeholder="例如：项目启动会"
+                value={meetingFolderForm.topic}
+              />
+            </label>
+            <label>
+              <span>会议时间（可选）</span>
+              <input
+                disabled={meetingFolderForm.busy}
+                onChange={(event) => setMeetingFolderForm((prev) => ({ ...prev, meetingTime: event.target.value }))}
+                onKeyDown={(event) => { if (event.key === "Escape") setMeetingFolderForm((prev) => ({ ...prev, open: false })); }}
+                placeholder="ISO-8601，例如 2026-06-15T09:30"
+                value={meetingFolderForm.meetingTime}
+              />
+            </label>
+            <div>
+              <button disabled={meetingFolderForm.busy} onClick={() => setMeetingFolderForm((prev) => ({ ...prev, open: false }))} type="button">取消</button>
+              <button disabled={meetingFolderForm.busy || !meetingFolderForm.topic.trim()} type="submit">创建</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+      {meetingTranscriptForm.open ? (
+        <div className="workspace-text-prompt-overlay" onClick={() => !meetingTranscriptForm.busy && setMeetingTranscriptForm((prev) => ({ ...prev, open: false }))}>
+          <form
+            className="workspace-text-prompt"
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleMeetingTranscriptSave();
+            }}
+          >
+            <header>
+              <strong>保存会议转录文本</strong>
+              <button disabled={meetingTranscriptForm.busy} onClick={() => setMeetingTranscriptForm((prev) => ({ ...prev, open: false }))} type="button">×</button>
+            </header>
+            <label>
+              <span>会议文件夹路径</span>
+              <input
+                disabled={meetingTranscriptForm.busy}
+                onChange={(event) => setMeetingTranscriptForm((prev) => ({ ...prev, folderPath: event.target.value }))}
+                onKeyDown={(event) => { if (event.key === "Escape") setMeetingTranscriptForm((prev) => ({ ...prev, open: false })); }}
+                placeholder="例如：20-会议与沟通/20260615-0930-项目启动会"
+                value={meetingTranscriptForm.folderPath}
+              />
+            </label>
+            <label>
+              <span>转录来源</span>
+              <div className="workspace-transcript-source">
+                <label className="workspace-file-upload-button">
+                  <input
+                    accept=".txt,.md,.markdown,.docx"
+                    disabled={meetingTranscriptForm.busy}
+                    onChange={handleTranscriptFileSelect}
+                    type="file"
+                  />
+                  选择文件 (TXT / MD / DOCX)
+                </label>
+                {meetingTranscriptForm.selectedFile ? (
+                  <span className="workspace-transcript-file-name">
+                    {meetingTranscriptForm.selectedFile.name}
+                    <button
+                      className="workspace-file-action"
+                      disabled={meetingTranscriptForm.busy}
+                      onClick={() => setMeetingTranscriptForm((prev) => ({ ...prev, selectedFile: null, content: "" }))}
+                      type="button"
+                      title="清除文件"
+                    >×</button>
+                  </span>
+                ) : null}
+              </div>
+            </label>
+            <label>
+              <span>转录内容{meetingTranscriptForm.selectedFile ? "（预览）" : ""}</span>
+              <textarea
+                autoFocus
+                disabled={meetingTranscriptForm.busy || (meetingTranscriptForm.selectedFile !== null && meetingTranscriptForm.selectedFile.name.toLowerCase().endsWith(".docx"))}
+                onChange={(event) => setMeetingTranscriptForm((prev) => ({ ...prev, content: event.target.value }))}
+                onKeyDown={(event) => { if (event.key === "Escape") setMeetingTranscriptForm((prev) => ({ ...prev, open: false })); }}
+                placeholder={meetingTranscriptForm.selectedFile?.name.toLowerCase().endsWith(".docx") ? "DOCX 文件将由服务器解析..." : "在此粘贴会议转录文本，或选择文件自动填充..."}
+                rows={10}
+                value={meetingTranscriptForm.content}
+              />
+            </label>
+            <div>
+              <button disabled={meetingTranscriptForm.busy} onClick={() => setMeetingTranscriptForm((prev) => ({ ...prev, open: false }))} type="button">取消</button>
+              <button
+                disabled={
+                  meetingTranscriptForm.busy
+                  || !meetingTranscriptForm.folderPath.trim()
+                  || (!meetingTranscriptForm.content.trim() && !meetingTranscriptForm.selectedFile)
+                }
+                type="submit"
+              >保存</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+      {termCorrectionsOpen ? (
+        <div className="workspace-text-prompt-overlay" onClick={() => !termCorrectionsBusy && setTermCorrectionsOpen(false)}>
+          <div
+            className="workspace-text-prompt"
+            onClick={(event) => event.stopPropagation()}
+            style={{ maxWidth: 500 }}
+          >
+            <header>
+              <strong>术语纠错</strong>
+              <button disabled={termCorrectionsBusy} onClick={() => setTermCorrectionsOpen(false)} type="button">×</button>
+            </header>
+            <p style={{ opacity: 0.7, marginBottom: 8 }}>
+              添加需要纠正的术语。已保存的术语会在下次生成纪要时被使用。
+            </p>
+            {termCorrections.length > 0 ? (
+              <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 12 }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: "left", padding: "4px 8px", borderBottom: "1px solid #ccc" }}>原识别</th>
+                    <th style={{ textAlign: "left", padding: "4px 8px", borderBottom: "1px solid #ccc" }}>建议修正</th>
+                    <th style={{ width: 60, borderBottom: "1px solid #ccc" }} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {termCorrections.map((tc, idx) => (
+                    <tr key={idx}>
+                      <td style={{ padding: "4px 8px" }}>{tc.original}</td>
+                      <td style={{ padding: "4px 8px" }}>{tc.corrected}</td>
+                      <td style={{ padding: "4px 8px" }}>
+                        <button
+                          disabled={termCorrectionsBusy}
+                          onClick={() => setTermCorrections((prev) => prev.filter((_, i) => i !== idx))}
+                          type="button"
+                          style={{ background: "none", border: "none", color: "#d00", cursor: "pointer" }}
+                        >×</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : null}
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <input
+                disabled={termCorrectionsBusy}
+                onChange={(e) => setTermEditOriginal(e.target.value)}
+                placeholder="原识别"
+                style={{ flex: 1 }}
+                value={termEditOriginal}
+              />
+              <input
+                disabled={termCorrectionsBusy}
+                onChange={(e) => setTermEditCorrected(e.target.value)}
+                placeholder="建议修正"
+                style={{ flex: 1 }}
+                value={termEditCorrected}
+              />
+              <button
+                disabled={termCorrectionsBusy || !termEditOriginal.trim() || !termEditCorrected.trim()}
+                onClick={() => {
+                  setTermCorrections((prev) => [...prev, { original: termEditOriginal.trim(), corrected: termEditCorrected.trim() }]);
+                  setTermEditOriginal("");
+                  setTermEditCorrected("");
+                }}
+                type="button"
+              >添加</button>
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button disabled={termCorrectionsBusy} onClick={() => setTermCorrectionsOpen(false)} type="button">跳过</button>
+              <button disabled={termCorrectionsBusy || termCorrections.length === 0} onClick={() => void handleSaveTermCorrections()} type="button">保存</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {speakerMapOpen ? (
+        <div className="workspace-text-prompt-overlay" onClick={() => !speakerMapLoading && setSpeakerMapOpen(false)}>
+          <div
+            className="workspace-text-prompt"
+            onClick={(event) => event.stopPropagation()}
+            style={{ maxWidth: 500 }}
+          >
+            <header>
+              <strong>说话人映射</strong>
+              <button disabled={speakerMapLoading} onClick={() => setSpeakerMapOpen(false)} type="button">×</button>
+            </header>
+            {speakerMapLoading ? (
+              <p>正在读取说话人信息...</p>
+            ) : detectedSpeakers.length === 0 ? (
+              <p>未检测到说话人。可以跳过此步骤。</p>
+            ) : (
+              <div>
+                <p style={{ opacity: 0.7, marginBottom: 8 }}>为以下检测到的说话人设置显示名称：</p>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left", padding: "4px 8px", borderBottom: "1px solid #ccc" }}>说话人ID</th>
+                      <th style={{ textAlign: "left", padding: "4px 8px", borderBottom: "1px solid #ccc" }}>显示名称</th>
+                      <th style={{ textAlign: "left", padding: "4px 8px", borderBottom: "1px solid #ccc" }}>发言占比</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detectedSpeakers.map((sp) => (
+                      <tr key={sp.speaker_id}>
+                        <td style={{ padding: "4px 8px" }}>{sp.speaker_id}</td>
+                        <td style={{ padding: "4px 8px" }}>
+                          <input
+                            style={{ width: "100%", boxSizing: "border-box" }}
+                            value={speakerMapNames[sp.speaker_id] ?? sp.display_name}
+                            onChange={(e) => setSpeakerMapNames((prev) => ({ ...prev, [sp.speaker_id]: e.target.value }))}
+                          />
+                        </td>
+                        <td style={{ padding: "4px 8px" }}>{sp.ratio}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div style={{ marginTop: 12, display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button disabled={speakerMapLoading} onClick={() => setSpeakerMapOpen(false)} type="button">跳过</button>
+              <button disabled={speakerMapLoading || detectedSpeakers.length === 0} onClick={() => void handleSaveSpeakerMap()} type="button">保存映射</button>
+            </div>
+          </div>
         </div>
       ) : null}
       {dragOver ? <div className="workspace-drop-hint">松开后上传到当前文件夹</div> : null}

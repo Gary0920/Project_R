@@ -47,7 +47,7 @@ from models.message import ChatMessage
 from models.session import ChatSession
 from models.skill_run import SkillRun
 from models.user import User
-from models.workspace import WorkspaceMember
+from models.workspace import Workspace, WorkspaceGroupAccess, WorkspaceMember
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 HISTORY_LIMIT = 20
@@ -311,7 +311,7 @@ def create_session(
     db: Session = Depends(get_db),
 ):
     if req.workspace_id is not None:
-        _ensure_workspace_member(db, user.id, req.workspace_id)
+        _ensure_workspace_access(db, user, req.workspace_id)
     session = ChatSession(user_id=user.id, title=req.title, workspace_id=req.workspace_id)
     db.add(session)
     db.commit()
@@ -948,7 +948,7 @@ def update_session(
             raise HTTPException(status_code=400, detail="会话标题不能为空")
         session.title = title[:256]
     if req.workspace_id is not None:
-        _ensure_workspace_member(db, user.id, req.workspace_id)
+        _ensure_workspace_access(db, user, req.workspace_id)
         session.workspace_id = req.workspace_id
     if req.is_pinned is not None:
         session.is_pinned = req.is_pinned
@@ -1151,6 +1151,26 @@ def send_message(
             query_content,
         )
 
+    selected_image_attachments = [attachment for attachment in selected_attachments if _is_image_attachment(attachment)]
+    selected_audio_video_attachments = [
+        attachment for attachment in selected_attachments if _is_audio_video_attachment(attachment)
+    ]
+    if selected_audio_video_attachments and not req.selected_skill:
+        matched_skill = SkillRunner.get().match_skill(content)
+        if matched_skill and matched_skill["skill"]["name"] == "audio-transcription":
+            chat_text_response = _run_chat_text_skill_by_name(
+                db,
+                user,
+                session,
+                user_message.id,
+                content,
+                req,
+                IntentType.SKILL_TRIGGER,
+                "audio-transcription",
+            )
+            if chat_text_response:
+                return chat_text_response
+
     try:
         llm_client = get_llm_client(requested_model)
     except LLMConfigurationError as exc:
@@ -1158,10 +1178,6 @@ def send_message(
         _write_chat_audit(db, user.id, session_id, llm_user_content, False, str(exc))
         raise HTTPException(status_code=503, detail="AI 服务暂时不可用，请稍后重试") from exc
 
-    selected_image_attachments = [attachment for attachment in selected_attachments if _is_image_attachment(attachment)]
-    selected_audio_video_attachments = [
-        attachment for attachment in selected_attachments if _is_audio_video_attachment(attachment)
-    ]
     supports_vision = bool(getattr(getattr(llm_client, "settings", None), "supports_vision", False))
     if selected_image_attachments and not supports_vision:
         detail = "当前模型不支持图片理解，请切换到支持图像输入的 MiMo 模型后再发送。"
@@ -1461,8 +1477,8 @@ def _get_user_session(db: Session, user_id: int, session_id: int) -> ChatSession
     return session
 
 
-def _ensure_workspace_member(db: Session, user_id: int, workspace_id: int) -> None:
-    member = (
+def _workspace_membership(db: Session, user_id: int, workspace_id: int) -> WorkspaceMember | None:
+    return (
         db.query(WorkspaceMember)
         .filter(
             WorkspaceMember.workspace_id == workspace_id,
@@ -1470,7 +1486,46 @@ def _ensure_workspace_member(db: Session, user_id: int, workspace_id: int) -> No
         )
         .first()
     )
-    if not member:
+
+
+def _has_workspace_group_access(db: Session, user: User, workspace_id: int) -> bool:
+    group_name = (getattr(user, "work_group", "") or "").strip().lower()
+    if not group_name:
+        return False
+    return bool(
+        db.query(WorkspaceGroupAccess)
+        .filter(
+            WorkspaceGroupAccess.workspace_id == workspace_id,
+            WorkspaceGroupAccess.group_name == group_name,
+        )
+        .first()
+    )
+
+
+def _ensure_workspace_access(db: Session, user: User, workspace_id: int) -> None:
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id, Workspace.is_archived == False).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="工作区不存在")
+    member = _workspace_membership(db, user.id, workspace_id)
+    if workspace.workspace_kind == "user":
+        if member:
+            return
+        raise HTTPException(status_code=403, detail="你尚未加入该项目")
+    if user.role == "admin":
+        return
+    if workspace.workspace_kind == "customer":
+        if member or _has_workspace_group_access(db, user, workspace_id):
+            return
+        raise HTTPException(status_code=403, detail="你尚未加入该项目")
+    if not workspace.is_hidden:
+        return
+    if member or _has_workspace_group_access(db, user, workspace_id):
+        return
+    raise HTTPException(status_code=403, detail="你尚未加入该项目")
+
+
+def _ensure_workspace_member(db: Session, user_id: int, workspace_id: int) -> None:
+    if not _workspace_membership(db, user_id, workspace_id):
         raise HTTPException(status_code=403, detail="你尚未加入该项目")
 
 
@@ -2521,12 +2576,15 @@ def _write_skill_agent_run(
         )
     missing_inputs = skill_run.get("missing_inputs") or []
     if missing_inputs:
+        skill_name = skill_run.get("skill_name") or ""
+        field_detail = _missing_input_instruction(str(skill_name), missing_inputs)
+
         add_agent_event(
             db,
             run,
             event_type="input_request",
-            title="等待用户补充参数",
-            detail=f"还需要 {len(missing_inputs)} 个字段",
+            title=f"等待用户补充参数（还需要 {len(missing_inputs)} 个字段）",
+            detail=field_detail or f"还需要 {len(missing_inputs)} 个字段",
             status="waiting",
             payload={"missing_inputs": missing_inputs},
         )
@@ -2709,8 +2767,13 @@ def _start_skill_run_by_name(db: Session, user_id: int, session_id: int, skill_n
     run = runner.start_run(db, skill.name, user_id=user_id, session_id=session_id)
     missing = run_to_dict(run, skill)["missing_inputs"]
     if missing:
-        fields = "\n".join(f"- {item.get('label') or item.get('name')}" for item in missing)
-        reply = f"已识别到业务 Skill：{skill.display_name}。\n\n请补充以下信息：\n{fields}"
+        instruction = _missing_input_instruction(skill.name, missing)
+        fields = _missing_input_fields_text(missing)
+        reply = (
+            f"已识别到业务 Skill：{skill.display_name}，但还不能开始执行。\n\n"
+            f"请补充以下信息：\n{fields}\n\n"
+            f"下一步操作：\n```text\n{instruction}\n```"
+        )
     else:
         reply = f"已识别到业务 Skill：{skill.display_name}，信息已齐全，可以继续执行。"
     return {
@@ -2740,9 +2803,14 @@ def _continue_active_skill_run(db: Session, user_id: int, session_id: int, conte
     current = run_to_dict(run, skill)
     extracted = _extract_skill_inputs(content, current["missing_inputs"])
     if not extracted:
-        fields = "\n".join(f"- {item.get('label') or item.get('name')}" for item in current["missing_inputs"])
+        fields = _missing_input_fields_text(current["missing_inputs"])
+        instruction = _missing_input_instruction(run.skill_name, current["missing_inputs"])
         return {
-            "reply": f"我还没有识别到可写入 {skill.display_name} 的字段。\n\n请按下面字段补充：\n{fields}",
+            "reply": (
+                f"我还没有识别到可写入 {skill.display_name} 的字段。\n\n"
+                f"请按下面字段补充：\n{fields}\n\n"
+                f"下一步操作：\n```text\n{instruction}\n```"
+            ),
             "skill_run": current,
             "generated_file": generated_file_payload(db, run.generated_file_id),
         }
@@ -2753,8 +2821,12 @@ def _continue_active_skill_run(db: Session, user_id: int, session_id: int, conte
     if run.status == "completed":
         reply = f"{skill.display_name} 已生成完成，可以下载结果文件。"
     else:
-        fields = "\n".join(f"- {item.get('label') or item.get('name')}" for item in payload["missing_inputs"])
-        reply = f"已记录补充信息，还需要：\n{fields}"
+        fields = _missing_input_fields_text(payload["missing_inputs"])
+        instruction = _missing_input_instruction(run.skill_name, payload["missing_inputs"])
+        reply = (
+            f"已记录补充信息，还需要：\n{fields}\n\n"
+            f"下一步操作：\n```text\n{instruction}\n```"
+        )
     return {
         "reply": reply,
         "skill_run": payload,
@@ -2783,6 +2855,37 @@ def _extract_skill_inputs(content: str, missing_inputs: list[dict]) -> dict:
             extracted.setdefault("template_file", "default-template")
 
     return extracted
+
+
+def _missing_input_fields_text(missing_inputs: list[dict]) -> str:
+    fields = [
+        f"- {item.get('label') or item.get('name') or '待补充字段'}"
+        for item in missing_inputs
+    ]
+    return "\n".join(fields)
+
+
+def _missing_input_instruction(skill_name: str, missing_inputs: list[dict]) -> str:
+    normalized_skill = str(skill_name or "").strip()
+    missing_names = {str(item.get("name") or "").strip() for item in missing_inputs}
+    missing_labels = {str(item.get("label") or "").strip() for item in missing_inputs}
+    if normalized_skill == "audio-transcription" or "audio_source" in missing_names or "音频或视频文件" in missing_labels:
+        return "请先在当前会话上传或从项目文件中引用一个音频/视频文件，然后重新发送“将这段录音转录成文字”。支持 MP3、WAV、M4A、OGG、FLAC、MP4、MOV 等格式。"
+    if normalized_skill in ("term-correction", "术语纠错") or "term_corrections" in missing_names:
+        return "请提供术语纠正规则，每行一条，例如：LAM Wiki -> LLM Wiki。"
+    fields = "、".join(item.get("label") or item.get("name") or "待补充字段" for item in missing_inputs)
+    return f"请补充：{fields}。"
+
+
+def _format_audio_transcription_reply(transcript_text: str, *, reply_extra: str = "") -> str:
+    text = (transcript_text or "").strip()
+    if not text:
+        text = "未识别到可用的转写文本。"
+    return (
+        "已完成录音转文字。转写内容如下，可直接复制：\n\n"
+        f"```text\n{text}\n```"
+        f"{reply_extra}"
+    )
 
 
 def _find_labeled_value(lines: list[str], name: str, label: str) -> str | None:
@@ -2950,6 +3053,20 @@ def _run_gbrain_think_response(
     }
 
 
+_AUDIO_VIDEO_EXTS: set[str] = {
+    ".mp3", ".wav", ".m4a", ".ogg", ".flac",
+    ".mp4", ".mov", ".avi", ".wmv", ".mkv", ".webm",
+}
+
+
+def _find_audio_attachments(attachments: list[SessionAttachment]) -> list[SessionAttachment]:
+    """Filter attachments to only audio/video files."""
+    return [
+        a for a in attachments
+        if a.stored_path and Path(a.stored_path).suffix.lower() in _AUDIO_VIDEO_EXTS
+    ]
+
+
 def _run_chat_text_skill_by_name(
     db: Session,
     user: User,
@@ -2971,6 +3088,90 @@ def _run_chat_text_skill_by_name(
     run.status = "completed"
     db.commit()
     db.refresh(run)
+
+    # ── Audio transcription special path ────────────────────────────
+    if skill_name == "audio-transcription":
+        from core.tools.media_transcription_tool import (
+            run_media_transcription_tool,
+            MediaTranscriptionToolInput,
+        )
+
+        selected_attachments = _load_selected_session_attachments(db, user.id, session.id, req.files)
+        audio_attachments = _find_audio_attachments(selected_attachments)
+
+        if not audio_attachments:
+            instruction = _missing_input_instruction(
+                "audio-transcription",
+                [{"name": "audio_source", "label": "音频或视频文件"}],
+            )
+            skill_response = {
+                "reply": (
+                    "还不能开始录音转文字，因为当前消息没有可处理的音频/视频附件。\n\n"
+                    f"下一步操作：\n```text\n{instruction}\n```"
+                ),
+                "skill_run": run_to_dict(run, skill),
+                "generated_file": None,
+            }
+            return _write_skill_assistant_response(
+                db,
+                user.id,
+                session,
+                user_message_id,
+                content,
+                skill_response,
+                context_trace=_build_context_trace(
+                    session=session,
+                    req=req,
+                    attachments=selected_attachments,
+                    sources=[],
+                    intent=IntentType.SKILL_TRIGGER,
+                    provider="project_r",
+                    model="audio-transcription",
+                    requested_model=req.model_profile or req.provider,
+                    extra=_skill_context_extra(skill_response),
+                ),
+            )
+
+        audio_path = Path(audio_attachments[0].stored_path)
+        if len(audio_attachments) > 1:
+            reply_extra = "\n\n> 注意：检测到多个音频文件，只处理第一个。"
+        else:
+            reply_extra = ""
+
+        try:
+            tool_result = run_media_transcription_tool(
+                MediaTranscriptionToolInput(media_path=audio_path)
+            )
+            reply = _format_audio_transcription_reply(tool_result.text, reply_extra=reply_extra)
+        except Exception as exc:
+            reply = f"转录失败：{exc}\n\n请检查音频文件是否有效。"
+
+        skill_response = {
+            "reply": reply,
+            "skill_run": run_to_dict(run, skill),
+            "generated_file": None,
+        }
+        return _write_skill_assistant_response(
+            db,
+            user.id,
+            session,
+            user_message_id,
+            content,
+            skill_response,
+            context_trace=_build_context_trace(
+                session=session,
+                req=req,
+                attachments=selected_attachments,
+                sources=[],
+                intent=IntentType.SKILL_TRIGGER,
+                provider="project_r",
+                model="audio-transcription",
+                requested_model=req.model_profile or req.provider,
+                extra=_skill_context_extra(skill_response),
+            ),
+        )
+
+    # ── End audio transcription special path ─────────────────────────
 
     reduce_knowledge_context = _should_reduce_knowledge_context(req.selected_prompt_id, False)
     knowledge_sources = _search_knowledge_sources(

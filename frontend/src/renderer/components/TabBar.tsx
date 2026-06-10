@@ -1,6 +1,5 @@
 import type { Tab } from "../atoms/tab-atoms";
 import { ChatIcon, NoteIcon, PlusIcon, XmarkIcon } from "./LineIcons";
-import { WindowControls } from "./WindowControls";
 
 export type TabBarProps = {
   tabs: Tab[];
@@ -58,7 +57,6 @@ export function TabBar({ tabs, activeTabId, scratchOpen, onSelectTab, onCloseTab
         </button>
       </div>
       <div className="tab-drag-spacer" aria-hidden="true" />
-      <WindowControls />
     </div>
   );
 }

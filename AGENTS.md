@@ -1,12 +1,13 @@
 # AGENTS.md — Project_R Agent 工作规则
 
-Project_R 是公司内部 AI 智能办公辅助系统，也是 Gary 用来实验和掌握 AI Agent 工程技能的长期项目。任何 Agent 接手本项目时，都必须遵守本文件；历史 Claude Code 规则不再作为必需的同步维护对象。
+Project_R 是公司内部 AI 智能办公辅助系统，也是 Gary 用来实验和掌握 AI Agent 工程技能的长期项目。任何 Agent 接手本项目时，都必须遵守本文件；`CLAUDE.md` 已重新启用为 Claude Code 工作规则镜像，必须与本文件保持对齐。若两者冲突，以 `AGENTS.md` 为准。
 
 ## 文档分工
 
 | 文件 | 职责 |
 |---|---|
 | `AGENTS.md` | Codex / 通用 Agent 工作规则，本文件 |
+| `CLAUDE.md` | Claude Code 工作规则镜像；必须与 `AGENTS.md` 对齐，冲突时以 `AGENTS.md` 为准 |
 | `Project_R PRD.md` | 产品范围、目标用户、长期能力边界 |
 | `Project_R 开发流程.md` | 阶段顺序、任务清单、完成标志、实现状态，checklist 的唯一维护处 |
 | `Project_R V3.0 修改方案.md`（如存在） | V3.0 Proma shell 重构分阶段方案与已确认设计决策 |
@@ -17,7 +18,7 @@ Project_R 是公司内部 AI 智能办公辅助系统，也是 Gary 用来实验
 | `docs/gbrain-ingest-workflow.md` | Project_R 原始资料进入 GBrain source 的导入、提炼、审核和索引流程 |
 | `docs/gbrain-adaptation-progress.md` | Project_R 对 GBrain 的适配进度、未闭环项和下一步顺序 |
 
-当前仓库核心文档以根目录版本为准，不再按 `references/Project_R ...` 查找 PRD、开发流程和业务工作流清单。当代理工作规则发生变化时，更新 `AGENTS.md`；当产品范围或阶段任务变化时，同步更新 PRD 或开发流程。涉及前端视觉、控件状态、颜色、圆角、阴影、输入区或设置页的改动，必须先查看 `docs/ui-design-language.md` 并复用既有 token；除非同步更新该文档，否则不得临时新增一套 active / hover 视觉语言。
+当前仓库核心文档以根目录版本为准，不再按 `references/Project_R ...` 查找 PRD、开发流程和业务工作流清单。当代理工作规则发生变化时，必须同步更新 `AGENTS.md` 与 `CLAUDE.md`；当产品范围或阶段任务变化时，同步更新 PRD 或开发流程。涉及前端视觉、控件状态、颜色、圆角、阴影、输入区或设置页的改动，必须先查看 `docs/ui-design-language.md` 并复用既有 token；除非同步更新该文档，否则不得临时新增一套 active / hover 视觉语言。
 
 ## 真实数据与测试隔离规则
 

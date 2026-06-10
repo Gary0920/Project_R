@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.NamedTemporaryFile(delete=False).name}"
@@ -13,6 +14,7 @@ from core.llm import LLMProviderError, LLMResponse
 from core.web_search import WebSearchResponse, WebSearchResult
 from fastapi import HTTPException
 from models import Base, SessionLocal, engine
+from models.attachment import SessionAttachment
 from models.audit_log import AuditLog
 from models.knowledge_review import KnowledgeReview
 from models.message import ChatMessage
@@ -1215,17 +1217,93 @@ class ChatPhase6Tests(unittest.TestCase):
 
         self.assertEqual(session.workspace_id, workspace.id)
 
-    def test_update_session_blocks_workspace_for_non_member(self):
-        workspace = Workspace(name="Locked", slug="locked", created_by=self.user.id)
+    def test_create_session_allows_open_project_for_non_member_employee(self):
+        employee = User(username="employee-open-project", password_hash="hash", role="employee", nickname="Employee")
+        workspace = Workspace(name="Open", slug="open", created_by=self.user.id, workspace_kind="project", is_hidden=False)
+        self.db.add_all([employee, workspace])
+        self.db.commit()
+        self.db.refresh(employee)
+        self.db.refresh(workspace)
+
+        session = chat_api.create_session(
+            chat_api.CreateSessionRequest(title="Open project chat", workspace_id=workspace.id),
+            employee,
+            self.db,
+        )
+
+        self.assertEqual(session.workspace_id, workspace.id)
+
+    def test_audio_transcription_skill_processes_audio_attachment(self):
+        audio_path = Path(self.generated_root.name) / "sample.mp3"
+        audio_path.write_bytes(b"fake mp3 bytes")
+        attachment = SessionAttachment(
+            session_id=self.session.id,
+            user_id=self.user.id,
+            original_name="sample.mp3",
+            stored_path=str(audio_path),
+            content_type="audio/mpeg",
+            size=audio_path.stat().st_size,
+            source_scope="project",
+            source_label="项目资料引用",
+            authorization_status="uploaded",
+        )
+        self.db.add(attachment)
+        self.db.commit()
+        self.db.refresh(attachment)
+        transcription_result = SimpleNamespace(text="这是模拟转录文本。")
+
+        with patch("core.tools.media_transcription_tool.run_media_transcription_tool", return_value=transcription_result):
+            response = chat_api.send_message(
+                self.session.id,
+                chat_api.SendMessageRequest(
+                    content="将这段录音转录成文字",
+                    files=[str(attachment.id)],
+                    selected_skill="audio-transcription",
+                ),
+                self.user,
+                self.db,
+            )
+
+        self.assertEqual(response["intent"], "skill_trigger")
+        self.assertIn("已完成录音转文字", response["reply"])
+        self.assertIn("```text", response["reply"])
+        self.assertIn("这是模拟转录文本。", response["reply"])
+        self.assertEqual(response["skill_run"]["skill_name"], "audio-transcription")
+
+    def test_audio_transcription_skill_without_audio_gives_actionable_instruction(self):
+        response = chat_api.send_message(
+            self.session.id,
+            chat_api.SendMessageRequest(
+                content="将这段录音转录成文字",
+                selected_skill="audio-transcription",
+            ),
+            self.user,
+            self.db,
+        )
+
+        self.assertEqual(response["intent"], "skill_trigger")
+        self.assertIn("请先在当前会话上传或从项目文件中引用一个音频/视频文件", response["reply"])
+        self.assertIn("```text", response["reply"])
+        self.assertEqual(response["skill_run"]["skill_name"], "audio-transcription")
+
+    def test_update_session_blocks_hidden_workspace_for_non_member(self):
+        employee = User(username="employee-hidden-project", password_hash="hash", role="employee", nickname="Employee")
+        workspace = Workspace(name="Locked", slug="locked", created_by=self.user.id, workspace_kind="project", is_hidden=True)
+        self.db.add(employee)
         self.db.add(workspace)
         self.db.commit()
+        self.db.refresh(employee)
         self.db.refresh(workspace)
+        session = ChatSession(user_id=employee.id, title="Employee session")
+        self.db.add(session)
+        self.db.commit()
+        self.db.refresh(session)
 
         with self.assertRaises(HTTPException) as exc:
             chat_api.update_session(
-                self.session.id,
+                session.id,
                 chat_api.UpdateSessionRequest(workspace_id=workspace.id),
-                self.user,
+                employee,
                 self.db,
             )
 

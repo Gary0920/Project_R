@@ -10,6 +10,7 @@ import { SettingsModal } from "../SettingsModal";
 import { TabBar } from "../TabBar";
 import { WorkspaceFilePanel } from "../WorkspaceFilePanel";
 import { WorkspaceSelector } from "../WorkspaceSelector";
+import { WindowControls } from "../WindowControls";
 import { renderMessageContent } from "./ChatMessageList";
 import {
   AgentIcon,
@@ -86,6 +87,7 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     handleSidebarResizeStart,
     handleUndoDeleteMessages,
     handleWorkspaceChanged,
+    handleWorkspaceFilePreviewClose,
     handleWorkspaceFilePreviewOpen,
     handleWorkspacePanelResizeStart,
     isLoading,
@@ -384,6 +386,7 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
           <WorkspaceFilePanel
             apiOptions={apiOptions}
             onPreviewOpen={handleWorkspaceFilePreviewOpen}
+            onPreviewClose={handleWorkspaceFilePreviewClose}
             workspaceId={activeWorkspaceId}
             workspaceName={activeWorkspace?.name}
             workspaceKind={activeWorkspace?.workspace_kind}
@@ -867,6 +870,7 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
             </button>
             <button className="icon-button" onClick={() => { setSettingsInitialAdminTab(null); setShowSettings(true); }} title="设置" type="button"><SettingsIcon /></button>
             <button className="icon-button" onClick={handleLogout} title="登出" type="button"><LogoutIcon /></button>
+            <WindowControls />
           </div>
         </header>
         <TabBar

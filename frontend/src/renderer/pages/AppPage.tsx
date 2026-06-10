@@ -300,6 +300,10 @@ function isAudioVideoAttachment(attachment: PendingSessionAttachment) {
   return contentType.startsWith("audio/") || contentType.startsWith("video/");
 }
 
+function isAudioTranscriptionRequest(content: string) {
+  return /录音转文字|音频转录|音频转文字|语音转文字|录音转录|转录成文字|转成文字|transcribe audio|audio transcription/i.test(content);
+}
+
 function formatClockTime(value: string) {
   return new Intl.DateTimeFormat("zh-CN", {
     hour: "2-digit",
@@ -557,7 +561,7 @@ const SIDEBAR_DEFAULT_WIDTH = 268;
 const SIDEBAR_MAX_WIDTH = 420;
 const WORKSPACE_PANEL_WIDTH_KEY = "project-r:workspace-panel-width";
 const WORKSPACE_PANEL_MIN_WIDTH = 320;
-const WORKSPACE_PANEL_DEFAULT_WIDTH = 640;
+const WORKSPACE_PANEL_DEFAULT_WIDTH = 480;
 const WORKSPACE_PANEL_PREVIEW_WIDTH = 720;
 const WORKSPACE_PANEL_MAX_WIDTH = 880;
 const AUXILIARY_PANEL_WIDTH_KEY = "project-r:auxiliary-side-panel-width";
@@ -891,7 +895,9 @@ export function AppPage() {
   const [workspacePanelResizing, setWorkspacePanelResizing] = useState(false);
   const [auxiliaryPanelWidth, setAuxiliaryPanelWidth] = useState(readAuxiliaryPanelWidth);
   const [auxiliaryPanelResizing, setAuxiliaryPanelResizing] = useState(false);
+  const workspacePanelWidthBeforePreviewRef = useRef<number | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const isNearBottomRef = useRef(true);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const titleInputRef = useRef<HTMLInputElement | null>(null);
@@ -911,6 +917,7 @@ export function AppPage() {
   const notificationToastIdsRef = useRef<Set<number>>(new Set());
   const notificationToastTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const updateCheckStartedRef = useRef(false);
+  const previousWorkspaceIdRef = useRef<number | null | undefined>(undefined);
   const sendAbortControllersRef = useRef<Map<number, AbortController>>(new Map());
   const typingTimersRef = useRef<Map<number, ReturnType<typeof window.setInterval>>>(new Map());
 
@@ -1297,8 +1304,21 @@ export function AppPage() {
   }
 
   function handleWorkspaceFilePreviewOpen() {
+    if (workspacePanelWidthBeforePreviewRef.current === null) {
+      workspacePanelWidthBeforePreviewRef.current = workspacePanelWidth;
+    }
     const previewPanelWidth = clampWorkspacePanelWidth(WORKSPACE_PANEL_PREVIEW_WIDTH);
     setWorkspacePanelWidth((width) => Math.max(width, previewPanelWidth));
+  }
+
+  function handleWorkspaceFilePreviewClose() {
+    const savedWidth = workspacePanelWidthBeforePreviewRef.current;
+    workspacePanelWidthBeforePreviewRef.current = null;
+    if (savedWidth !== null) {
+      setWorkspacePanelWidth(clampWorkspacePanelWidth(savedWidth));
+    } else {
+      setWorkspacePanelWidth(clampWorkspacePanelWidth(WORKSPACE_PANEL_DEFAULT_WIDTH));
+    }
   }
 
   useEffect(() => {
@@ -1402,7 +1422,23 @@ export function AppPage() {
   }, [auxiliaryPanelResizing]);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    };
+    onScroll();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [scrollRef.current, activeSplitPane, splitPaneSessionIds]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    // Follow bottom only if user was already near bottom BEFORE this update
+    if (isNearBottomRef.current) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
+    }
   }, [activeMessages]);
 
   useEffect(() => {
@@ -1543,6 +1579,17 @@ export function AppPage() {
       return next;
     });
   }, [activeSessionId]);
+
+  useEffect(() => {
+    const previousWorkspaceId = previousWorkspaceIdRef.current;
+    previousWorkspaceIdRef.current = activeWorkspaceId;
+    if (previousWorkspaceId === undefined || previousWorkspaceId === activeWorkspaceId) return;
+    setPendingAttachments((current) => {
+      if (!current.length) return current;
+      revokeAttachmentPreviews(current);
+      return [];
+    });
+  }, [activeWorkspaceId]);
 
   useEffect(() => {
     setTabs((current) => {
@@ -2360,7 +2407,10 @@ export function AppPage() {
       if (unauthorizedLocalAttachments.length) {
         throw new Error("请先确认本机选择文件的本次发送授权。");
       }
-      if (attachmentsForSend.some(isAudioVideoAttachment)) {
+      const audioVideoAttachments = attachmentsForSend.filter(isAudioVideoAttachment);
+      const canHandleAudioVideo =
+        selectedSkill?.name === "audio-transcription" || (audioVideoAttachments.length > 0 && isAudioTranscriptionRequest(content));
+      if (audioVideoAttachments.length > 0 && !canHandleAudioVideo) {
         throw new Error("当前版本暂未接入视频/音频附件理解，请先改用图片或可提取文本的附件。");
       }
       if (attachmentsForSend.some((attachment) => attachment.kind === "image") && !selectedModelOption?.supportsVision) {
@@ -2413,7 +2463,7 @@ export function AppPage() {
         attachmentIds,
         selectedModelOption?.provider ?? null,
         selectedModelOption?.profile ?? null,
-        selectedSkill?.name ?? null,
+        selectedSkill?.name ?? (audioVideoAttachments.length > 0 && isAudioTranscriptionRequest(content) ? "audio-transcription" : null),
         selectedPromptId,
         forceKnowledgeQuery,
         thinkingEnabled,
@@ -2495,7 +2545,7 @@ export function AppPage() {
         window.location.hash = "#/login";
         return;
       }
-      setError(sendError instanceof ApiError ? sendError.message : "消息发送失败，请稍后重试。");
+      setError(sendError instanceof Error ? sendError.message : "消息发送失败，请稍后重试。");
     } finally {
       if (requestSessionId != null) {
         sendAbortControllersRef.current.delete(requestSessionId);
@@ -3094,8 +3144,9 @@ export function AppPage() {
         handleSubmitFeedback,
         handleSidebarResizeStart,
         handleUndoDeleteMessages,
-        handleWorkspaceChanged,
-        handleWorkspaceFilePreviewOpen,
+    handleWorkspaceChanged,
+    handleWorkspaceFilePreviewClose,
+    handleWorkspaceFilePreviewOpen,
         handleWorkspacePanelResizeStart,
         isLoading,
         messageActionBusyId,

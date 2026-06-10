@@ -600,10 +600,10 @@ a {
   flex: 0 0 var(--workbench-topbar-height);
   height: var(--workbench-topbar-height);
   display: grid;
-  grid-template-columns: minmax(0, max-content) auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  padding: 0 12px;
+  padding: 0 0 0 12px;
   border-bottom: 1px solid hsl(var(--border));
   background: hsl(var(--card) / 0.92);
   -webkit-app-region: drag;
@@ -647,6 +647,7 @@ a {
 
 .workbench-system-tools {
   justify-self: end;
+  align-self: stretch;
 }
 
 .business-tool-button {
@@ -3815,6 +3816,30 @@ h1, h2 { margin: 0; line-height: 1.2; }
 
 .window-control-btn .iconoir-mask {
   font-size: 13px;
+}
+
+.workbench-system-tools .window-controls {
+  align-self: center;
+  height: 32px;
+  margin-left: 4px;
+  padding-left: 6px;
+  border-left: 1px solid hsl(var(--border));
+}
+
+.workbench-system-tools .window-control-btn {
+  width: 32px;
+  height: 30px;
+  border-radius: 7px;
+  color: hsl(var(--muted-foreground));
+}
+
+.workbench-system-tools .window-control-close {
+  margin-right: 4px;
+}
+
+.workbench-system-tools .window-control-btn .iconoir-mask {
+  width: 15px;
+  height: 15px;
 }
 
 /* ============================================================
@@ -9419,6 +9444,51 @@ button:hover .profile-name-edit-icon {
   background: transparent;
   color: hsl(var(--muted-foreground));
 }
+
+/* ── Meeting workflow toolbar ────────────────────────────── */
+
+.workspace-meeting-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid hsl(var(--border) / 0.5);
+  flex-wrap: wrap;
+}
+
+.workspace-meeting-toolbar-label {
+  font-size: 11px;
+  font-weight: 650;
+  color: hsl(var(--muted-foreground));
+  text-transform: uppercase;
+  letter-spacing: 0;
+  white-space: nowrap;
+  margin-right: 2px;
+}
+
+.workspace-meeting-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.workspace-meeting-toolbar-actions .workspace-file-primary-action {
+  font-size: 11px;
+  height: 26px;
+  padding: 0 8px;
+}
+
+.workspace-meeting-toolbar-actions .workspace-file-primary-action .iconoir-mask {
+  width: 12px;
+  height: 12px;
+}
+
+:root[data-theme="dark"] .workspace-meeting-toolbar {
+  border-bottom-color: hsl(var(--border) / 0.32);
+}
+
+/* ── End meeting workflow toolbar ────────────────────────── */
 
 :root[data-theme="dark"] .workspace-file-breadcrumb {
   background: hsl(var(--muted) / 0.12);

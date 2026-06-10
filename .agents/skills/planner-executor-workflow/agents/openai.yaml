@@ -1,0 +1,4 @@
+interface:
+  display_name: "Planner Executor Workflow"
+  short_description: "Coordinate planner and executor LLMs for software work."
+  default_prompt: "Use this skill to create an executor task packet or review executor results in a planner-led development workflow."
