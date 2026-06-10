@@ -10,6 +10,7 @@ Project_R 是公司内部 AI 智能办公辅助系统，也是 Gary 用来实验
 | `CLAUDE.md` | Claude Code 工作规则镜像；必须与 `AGENTS.md` 对齐，冲突时以 `AGENTS.md` 为准 |
 | `Project_R PRD.md` | 产品范围、目标用户、长期能力边界 |
 | `Project_R 开发流程.md` | 阶段顺序、任务清单、完成标志、实现状态，checklist 的唯一维护处 |
+| `Project_R 开发流程V2.0.md` | 下一阶段产品基座精修主计划：Chat、知识库查询、检索与基础 Agent |
 | `Project_R V3.0 修改方案.md`（如存在） | V3.0 Proma shell 重构分阶段方案与已确认设计决策 |
 | `Project_R 业务工作流清单.md` | 企业业务 Skill 候选清单与实现状态 |
 | `docs/ui-design-language.md` | Project_R 前端视觉语言、选中态、控件尺寸和 UI 修改约束 |

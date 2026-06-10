@@ -41,6 +41,16 @@ from core.notification_service import (
     notify_workspace_bulk_delete_risk,
     notify_workspace_joined,
 )
+from core.workspace_ingest_run import (
+    WORKSPACE_INGEST_RUN_STATUSES,
+    derive_workspace_ingest_run_status as _derive_workspace_ingest_run_status,
+    finalize_workspace_ingest_manifest as _finalize_workspace_ingest_manifest,
+    workspace_ingest_result_payload as _workspace_ingest_result_payload,
+    workspace_ingest_run_payload as _workspace_ingest_run_payload,
+    workspace_ingest_run_status_label as _workspace_ingest_run_status_label,
+    workspace_ingest_status_event as _workspace_ingest_status_event,
+    workspace_ingest_summary_text as _workspace_ingest_summary_text,
+)
 from core.workspace_files import (
     DEFAULT_UNFILED_DIR,
     DEFAULT_PROJECT_WORKSPACE_TEMPLATE_DIRS,
@@ -204,9 +214,22 @@ class CreateWorkspaceFolderRequest(BaseModel):
     name: str
 
 
+MEETING_TYPES = [
+    "项目统筹会",
+    "客户沟通会",
+    "技术交底",
+    "现场协调",
+    "内部复盘",
+    "培训分享",
+    "其他",
+]
+MEETING_TYPE_META_FILENAME = ".meeting-meta.json"
+
+
 class CreateMeetingFolderRequest(BaseModel):
     topic: str
     meeting_time: str | None = None  # ISO-8601 datetime string, optional
+    meeting_type: str = "其他"  # one of MEETING_TYPES
 
 
 class SaveMeetingTranscriptRequest(BaseModel):
@@ -1780,6 +1803,8 @@ def create_meeting_folder(
 
     if workspace.workspace_kind == "user":
         raise HTTPException(status_code=400, detail="个人工作台不支持创建会议文件夹")
+    if req.meeting_type not in MEETING_TYPES:
+        raise HTTPException(status_code=400, detail=f"会议类型不合法，可选值：{', '.join(MEETING_TYPES)}")
 
     root = _workspace_file_root(workspace)
 
@@ -1810,6 +1835,14 @@ def create_meeting_folder(
 
     meeting_rel = meeting_dir.relative_to(root).as_posix()
     created_dirs.insert(0, meeting_rel)
+
+    # Write meeting metadata
+    _write_meeting_meta(
+        meeting_dir,
+        topic=req.topic,
+        meeting_time=req.meeting_time,
+        meeting_type=req.meeting_type,
+    )
 
     _write_workspace_audit(
         db,
@@ -2049,11 +2082,19 @@ def _transcript_source_label(input_type: str, original_filename: str = "") -> st
     return f"{normalized.upper()} 输入{suffix}" if normalized else f"文件输入{suffix}"
 
 
+def _transcript_metadata_value(transcript_text: str, field_name: str) -> str:
+    pattern = re.compile(rf"^\|\s*{re.escape(field_name)}\s*\|\s*(.*?)\s*\|\s*$", re.MULTILINE)
+    match = pattern.search(transcript_text or "")
+    return match.group(1).strip() if match else ""
+
+
 def _build_transcript_markdown(
     raw_text: str,
     now: datetime,
     input_type: str = "paste",
     original_filename: str = "",
+    transcription_status: str = "completed",
+    warnings: list[str] | None = None,
 ) -> str:
     """Build the formal five-section transcript template."""
     ts = now.strftime("%Y-%m-%d %H:%M UTC")
@@ -2101,6 +2142,8 @@ def _build_transcript_markdown(
         f"| 转录来源 | {source_label} |\n"
         f"| 输入类型 | {input_type} |\n"
         f"| 原始文件名 | {original_filename or '—'} |\n"
+        f"| 转录状态 | {transcription_status or 'completed'} |\n"
+        f"| 缺失片段 | {_escape_pipe('; '.join(warnings or []) if transcription_status == 'partial' else '—')} |\n"
         f"| 检测说话人数 | {speaker_count} |\n"
         "\n"
         "## 说话人概览\n\n"
@@ -2213,11 +2256,40 @@ def _detect_speakers(text: str) -> tuple[list[dict], list[dict]]:
     return speakers, segments
 
 
+def _read_meeting_meta(folder_dir: Path) -> dict[str, str]:
+    """Read meeting metadata from .meeting-meta.json in the meeting folder root.
+    Returns a dict with keys like 'meeting_type', 'topic', 'meeting_time'.
+    Defaults to empty values if the file doesn't exist."""
+    meta_path = folder_dir / MEETING_TYPE_META_FILENAME
+    if not meta_path.exists():
+        return {}
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return {k: str(v) for k, v in data.items()}
+    except (json.JSONDecodeError, OSError):
+        pass
+    return {}
+
+
+def _write_meeting_meta(folder_dir: Path, *, topic: str, meeting_time: str | None, meeting_type: str) -> None:
+    """Write meeting metadata to .meeting-meta.json in the meeting folder root."""
+    meta_path = folder_dir / MEETING_TYPE_META_FILENAME
+    data: dict[str, str] = {
+        "topic": topic,
+        "meeting_type": meeting_type,
+    }
+    if meeting_time:
+        data["meeting_time"] = meeting_time
+    meta_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 # ── Step 3: Meeting minutes & actions generation ─────────────────────────
 
 class MeetingGenerateRequest(BaseModel):
     folder_path: str
     regenerate: bool = False  # if True, create a new version even if already generated
+    allow_partial: bool = True
 
 
 class MeetingGenerateResponse(BaseModel):
@@ -2255,15 +2327,19 @@ _MEETING_SYSTEM_PROMPT = """你是 Project_R 的企业会议纪要助手。你�
 3. 没有明确截止时间的行动项，截止时间写「待确认」。
 4. 没有明确依据的决策、风险、问题，标记为「待确认」。
 5. 使用中文输出，专业、简洁、可操作。
-6. 输出格式为标准的 Markdown，严格按照用户要求的模板分段。"""
+6. 辅助总结只能作为整理参考；与一手转录冲突时，以一手转录为准，并把辅助总结独有信息标记为待确认或注明来源。
+7. 输出格式为标准的 Markdown，严格按照用户要求的模板分段。"""
 
 
 def _build_minutes_prompt(
     transcript_text: str,
     speaker_map_text: str | None = None,
     term_corrections_text: str | None = None,
+    auxiliary_summaries_text: str | None = None,
+    meeting_type: str | None = None,
 ) -> str:
     """Build the user prompt for minutes generation from transcript."""
+    transcript_source = _transcript_metadata_value(transcript_text, "转录来源") or "从转录文本基本信息读取，无法判断写「待确认」"
     sections = [
         "# 会议纪要生成",
         "",
@@ -2274,9 +2350,16 @@ def _build_minutes_prompt(
         sections.append("\n## 说话人映射参考\n\n" + speaker_map_text)
     if term_corrections_text:
         sections.append("\n## 术语纠错参考\n\n" + term_corrections_text)
+    if auxiliary_summaries_text:
+        sections.append(
+            "\n## 辅助总结参考\n\n"
+            "以下材料来自同一会议资料目录的辅助总结，只能作为二级参考；"
+            "关键结论必须优先回到一手转录文本，辅助总结独有内容需标注来源或待确认。\n\n"
+            + auxiliary_summaries_text
+        )
     sections.append("\n## 会议转录文本\n\n" + transcript_text)
     sections.append(
-        """
+        f"""
 
 ## 输出模板
 
@@ -2288,8 +2371,8 @@ def _build_minutes_prompt(
 | 会议主题 | （从内容推断，如无法推断写「待确认」） |
 | 会议时间 | （从内容或文件名推断，如无法推断写「待确认」） |
 | 参会人 | （列出检测到的说话人，如无法推断写「待确认」） |
-| 会议类型 | 项目统筹会 / 客户沟通会 / 技术交底 / 现场协调 / 内部复盘 / 培训分享 / 其他 |
-| 转录来源 | 用户粘贴文本 |
+| 会议类型 | {meeting_type or '其他'} |
+| 转录来源 | {transcript_source} |
 
 ### 一句话结论
 （用一句话概括会议最核心的结论或决定）
@@ -2298,19 +2381,29 @@ def _build_minutes_prompt(
 （按议题或话题组织，每个议题包含：议题名称、讨论内容、结论）
 
 ### 关键决策
-| ID | 决策 | 决策背景 | 影响范围 | 来源依据 | 置信度 | 待确认 |
-|---|---|---|---|---|---|---|
-| D1 | ... | ... | ... | transcript | 高/中/低 | 是/否 |
+| ID | 决策 | 决策背景 | 影响范围 | 来源时间点 | 依据摘录 | 置信度 | 待确认 |
+|---|---|---|---|---|---|---|---|
+| D1 | ... | ... | ... | 00:00:00/待确认 | ... | 高/中/低 | 是/否 |
+
+### 行动项
+| ID | 行动项 | 负责人 | 协作人 | 截止时间 | 优先级 | 状态 | 来源时间点 | 待确认 |
+|---|---|---|---|---|---|---|---|---|
+| A1 | ... | ...（无则写待确认） | ...（无则写—） | ...（无则写待确认） | 高/中/低 | 待确认/待执行/已完成/已取消 | 00:00:00/待确认 | 是/否 |
 
 ### 风险与问题
-| ID | 风险或问题 | 类型 | 影响 | 建议下一步 | 负责人 | 严重度 |
-|---|---|---|---|---|---|---|
-| R1 | ... | 技术/工期/成本/商务/客户/资料缺口 | ... | ... | ... | 高/中/低 |
+| ID | 风险或问题 | 类型 | 影响 | 建议下一步 | 负责人 | 来源时间点 | 严重度 |
+|---|---|---|---|---|---|---|---|
+| R1 | ... | 技术/工期/成本/商务/客户/资料缺口 | ... | ... | ... | 00:00:00/待确认 | 高/中/低 |
 
 ### 待确认事项
-| ID | 待确认事项 | 为什么需要确认 | 建议确认对象 | 来源 |
+| ID | 待确认事项 | 为什么需要确认 | 建议确认对象 | 来源时间点 |
 |---|---|---|---|---|
-| Q1 | ... | ... | ... | transcript |
+| Q1 | ... | ... | ... | 00:00:00/待确认 |
+
+### 资料与证据
+| ID | 资料类型 | 文件或来源 | 来源时间点 | 依据摘录 | 说明 |
+|---|---|---|---|---|---|
+| E1 | 一手转录/辅助总结/用户补充/原始音视频 | ... | 00:00:00/待确认 | ... | ... |
 
 ### 可沉淀知识候选
 （如果有可以沉淀为公司规则、项目经验或流程改进的知识，列出候选。如果没有写「无」）
@@ -2319,7 +2412,7 @@ def _build_minutes_prompt(
 
 ### 生成说明
 - 生成时间：当前时间
-- 转录来源：用户粘贴文本
+- 转录来源：{transcript_source}
 - 使用模型：DeepSeek Flash
 - 说话人映射：未使用 / 已使用
 - 待确认项目：N 项
@@ -2333,6 +2426,7 @@ def _build_actions_prompt(
     transcript_text: str,
     speaker_map_text: str | None = None,
     term_corrections_text: str | None = None,
+    auxiliary_summaries_text: str | None = None,
 ) -> str:
     """Build the user prompt for action items generation from transcript."""
     sections = [
@@ -2345,6 +2439,13 @@ def _build_actions_prompt(
         sections.append("\n## 说话人映射参考\n\n" + speaker_map_text)
     if term_corrections_text:
         sections.append("\n## 术语纠错参考\n\n" + term_corrections_text)
+    if auxiliary_summaries_text:
+        sections.append(
+            "\n## 辅助总结参考\n\n"
+            "以下材料来自同一会议资料目录的辅助总结，只能作为二级参考；"
+            "无法在一手转录中确认的行动项必须标记为待确认，并注明来源为辅助总结。\n\n"
+            + auxiliary_summaries_text
+        )
     sections.append("\n## 会议转录文本\n\n" + transcript_text)
     sections.append(
         """
@@ -2369,9 +2470,9 @@ def _build_actions_prompt(
 | 已取消 | 0 |
 
 ### 行动项清单
-| ID | 状态 | 优先级 | 行动项 | 负责人 | 协作人 | 截止时间 | 依赖条件 | 来源依据 | 待确认原因 |
-|---|---|---|---|---|---|---|---|---|---|
-| A1 | 待确认/待执行 | 高/中/低 | ... | ...（无则写待确认） | ...（无则写—） | ...（无则写待确认） | ...（无则写—） | transcript | ...（无则写—） |
+| ID | 状态 | 优先级 | 行动项 | 负责人 | 协作人 | 截止时间 | 依赖条件 | 来源时间点 | 依据摘录 | 待确认原因 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| A1 | 待确认/待执行/已完成/已取消 | 高/中/低 | ... | ...（无则写待确认） | ...（无则写—） | ...（无则写待确认） | ...（无则写—） | 00:00:00/待确认 | ... | ...（无则写—） |
 
 ### 按负责人分组
 （用二级标题列出每位负责人的行动项）
@@ -2395,6 +2496,160 @@ def _read_file_safe(path: Path) -> str:
     if not path.exists() or not path.is_file():
         return ""
     return path.read_text(encoding="utf-8")
+
+
+def _failed_transcript_reason(transcript_text: str) -> str:
+    if "转录失败" not in transcript_text and "transcription_status: failed" not in transcript_text.lower():
+        return ""
+    match = re.search(r"\*\*错误\*\*[：:]\s*(.+)", transcript_text)
+    if match:
+        return match.group(1).strip()
+    match = re.search(r"错误[：:]\s*(.+)", transcript_text)
+    if match:
+        return match.group(1).strip()
+    return "音视频转录失败"
+
+
+def _transcript_status_value(transcript_text: str) -> str:
+    if _failed_transcript_reason(transcript_text):
+        return "failed"
+    statuses = [
+        match.group(1).strip().lower()
+        for match in re.finditer(r"^\|\s*转录状态\s*\|\s*(.*?)\s*\|\s*$", transcript_text or "", re.MULTILINE)
+    ]
+    if "partial" in statuses:
+        return "partial"
+    status = statuses[0] if statuses else ""
+    if status:
+        return status
+    if "partial" in (transcript_text or "").lower() or "部分转录" in (transcript_text or ""):
+        return "partial"
+    return "completed"
+
+
+def _partial_transcript_notice(transcript_text: str) -> str:
+    missing = _transcript_metadata_value(transcript_text, "缺失片段") or "存在未成功转录的片段，具体时间段待确认"
+    return f"| Q-PARTIAL | 转录不完整 | {missing}，纪要和行动项可能缺失上下文 | 会议组织者 | 待确认 |\n"
+
+
+def _meeting_run_lock_path(root: Path, folder_dir: Path) -> Path:
+    return folder_dir / ".project-r-meeting-processing.lock"
+
+
+def _acquire_meeting_run_lock(root: Path, folder_dir: Path, *, operation: str, user_id: int) -> Path:
+    lock_path = _meeting_run_lock_path(root, folder_dir)
+    if lock_path.exists():
+        raise HTTPException(status_code=409, detail="当前会议已有处理中任务，请等待完成后再操作")
+    lock_path.write_text(
+        json.dumps(
+            {
+                "operation": operation,
+                "user_id": user_id,
+                "created_at": serialize_datetime_utc(datetime.now(timezone.utc)),
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return lock_path
+
+
+def _release_meeting_run_lock(lock_path: Path | None) -> None:
+    if lock_path and lock_path.exists():
+        try:
+            lock_path.unlink()
+        except OSError:
+            pass
+
+
+def _workspace_file_uploader(db: Session, workspace_id: int, rel_path: str) -> int | None:
+    meta = (
+        db.query(WorkspaceFile)
+        .filter(
+            WorkspaceFile.workspace_id == workspace_id,
+            WorkspaceFile.relative_path == rel_path,
+            WorkspaceFile.deleted_at.is_(None),
+        )
+        .first()
+    )
+    return meta.uploaded_by if meta else None
+
+
+def _notify_meeting_run_finished(
+    db: Session,
+    *,
+    workspace: Workspace,
+    actor_user_id: int,
+    folder_path: str,
+    title: str,
+    status: str,
+    detail: str,
+) -> None:
+    severity = "success" if status == "completed" else "warning" if status == "partial" else "critical"
+    notify_user(
+        db,
+        actor_user_id,
+        category="workspace",
+        severity=severity,
+        title=title,
+        content=f"{workspace.name}：{detail}",
+        action_status="none" if status == "completed" else "pending",
+        action_kind="open_workspace",
+        action_payload={"workspace_id": workspace.id, "path": folder_path},
+        event_key=f"workspace:{workspace.id}:meeting:{folder_path}:{title}:{datetime.now(timezone.utc).timestamp()}",
+    )
+
+
+_AUXILIARY_SUMMARY_EXTENSIONS = {".md", ".txt", ".docx"}
+
+
+def _filename_match_tokens(filename: str) -> set[str]:
+    stem = Path(filename or "").stem.lower()
+    raw_tokens = re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]{2,}", stem)
+    ignored = {"audio", "video", "meeting", "summary", "transcript", "纪要", "总结", "转录", "会议"}
+    return {token for token in raw_tokens if len(token) >= 2 and token not in ignored}
+
+
+def _read_auxiliary_summaries(folder_dir: Path, source_filename: str = "", max_chars: int = 20000) -> str:
+    summary_dir = folder_dir / "03-辅助总结"
+    if not summary_dir.exists() or not summary_dir.is_dir():
+        return ""
+
+    source_tokens = _filename_match_tokens(source_filename)
+    candidates = [
+        child for child in sorted(summary_dir.iterdir(), key=lambda item: item.name.lower())
+        if child.is_file() and not child.name.startswith("~$") and child.suffix.lower() in _AUXILIARY_SUMMARY_EXTENSIONS
+    ]
+    if source_tokens:
+        matched = [
+            child for child in candidates
+            if source_tokens.intersection(_filename_match_tokens(child.name))
+        ]
+        candidates = matched
+
+    sections: list[str] = []
+    total = 0
+    for child in candidates:
+        suffix = child.suffix.lower()
+        try:
+            if suffix == ".docx":
+                text = _extract_text_from_docx(child.read_bytes(), child.name)
+            else:
+                text = child.read_text(encoding="utf-8")
+        except Exception as exc:
+            sections.append(f"### {child.name}\n\n> 辅助总结读取失败：{exc}")
+            continue
+        text = text.strip()
+        if not text:
+            continue
+        remaining = max_chars - total
+        if remaining <= 0:
+            break
+        clipped = text[:remaining]
+        total += len(clipped)
+        suffix_note = "\n\n> 已截断，仅保留前部内容。" if len(text) > len(clipped) else ""
+        sections.append(f"### {child.name}\n\n{clipped}{suffix_note}")
+    return "\n\n".join(sections)
 
 
 def _parse_table_row_count(markdown_text: str, section_header: str) -> int:
@@ -2456,15 +2711,26 @@ def generate_meeting_minutes_and_actions(
     transcript_path = transcript_dir / "transcript-latest.md"
     if not transcript_path.exists():
         raise HTTPException(status_code=400, detail="转录文件（transcript-latest.md）不存在，请先保存转录")
+    transcript_rel = transcript_path.relative_to(root).as_posix()
+    transcript_uploaded_by = _workspace_file_uploader(db, workspace_id, transcript_rel)
     transcript_text = transcript_path.read_text(encoding="utf-8")
     if not transcript_text.strip():
         raise HTTPException(status_code=400, detail="转录文件为空")
+    failed_reason = _failed_transcript_reason(transcript_text)
+    if failed_reason:
+        raise HTTPException(status_code=400, detail=f"转录未成功，不能生成会议纪要。原因：{failed_reason}")
+    transcription_status = _transcript_status_value(transcript_text)
+    if transcription_status == "partial" and not req.allow_partial:
+        raise HTTPException(status_code=400, detail="转录状态为 partial，请确认允许基于成功片段生成纪要后再继续")
+    lock_path = _acquire_meeting_run_lock(root, folder_dir, operation="generate_minutes", user_id=user.id)
 
     # Read optional speaker map and term corrections
     speaker_map_path = folder_dir / "02-转录文本" / "speaker-map-latest.md"
     speaker_map_text = _read_file_safe(speaker_map_path)
     term_corrections_path = folder_dir / "02-转录文本" / "term-corrections-latest.md"
     term_corrections_text = _read_file_safe(term_corrections_path)
+    original_filename = _transcript_metadata_value(transcript_text, "原始文件名")
+    auxiliary_summaries_text = _read_auxiliary_summaries(folder_dir, source_filename=original_filename)
 
     # Determine version numbers
     minutes_dir = folder_dir / "04-会议纪要"
@@ -2483,18 +2749,31 @@ def generate_meeting_minutes_and_actions(
                 detail="已存在纪要与行动项。如需重新生成，请设置 regenerate=True 或先删除已有文件",
             )
 
-    # LLM generation
-    from core.llm import get_llm_client
-
-    minutes_md: str = ""
-    actions_md: str = ""
-    token_input: int = 0
-    token_output: int = 0
-    model_used: str = "template-fallback"
-
     try:
-        _minutes_prompt = _build_minutes_prompt(transcript_text, speaker_map_text, term_corrections_text)
-        _actions_prompt = _build_actions_prompt(transcript_text, speaker_map_text, term_corrections_text)
+        # LLM generation
+        from core.llm import get_llm_client
+
+        minutes_md: str = ""
+        actions_md: str = ""
+        token_input: int = 0
+        token_output: int = 0
+        model_used: str = "template-fallback"
+
+        meeting_type = _read_meeting_meta(folder_dir).get("meeting_type", "")
+
+        _minutes_prompt = _build_minutes_prompt(
+            transcript_text,
+            speaker_map_text,
+            term_corrections_text,
+            auxiliary_summaries_text,
+            meeting_type=meeting_type,
+        )
+        _actions_prompt = _build_actions_prompt(
+            transcript_text,
+            speaker_map_text,
+            term_corrections_text,
+            auxiliary_summaries_text,
+        )
 
         client = get_llm_client("deepseek-flash")
         model_used = "deepseek-flash"
@@ -2521,6 +2800,8 @@ def generate_meeting_minutes_and_actions(
             token_input += actions_response.usage.get("input_tokens", 0)
             token_output += actions_response.usage.get("output_tokens", 0)
 
+    except HTTPException:
+        raise
     except Exception as exc:
         # If LLM fails, fall back to template-based generation
         model_used = "template-fallback"
@@ -2528,6 +2809,17 @@ def generate_meeting_minutes_and_actions(
         now_ts = serialize_datetime_utc(datetime.now(timezone.utc))
         minutes_md = _build_fallback_minutes(transcript_text, now_ts, str(exc))
         actions_md = _build_fallback_actions(now_ts)
+
+    finally:
+        _release_meeting_run_lock(lock_path)
+
+    if transcription_status == "partial":
+        partial_block = (
+            "\n\n> 转录状态：partial。以下纪要和行动项仅基于已成功转录片段生成。"
+            "缺失片段可能导致结论不完整，请人工复核。\n"
+        )
+        if "转录状态：partial" not in minutes_md:
+            minutes_md = minutes_md.rstrip() + partial_block
 
     # Save minutes
     minutes_v_path = minutes_dir / f"minutes-v{minutes_ver}.md"
@@ -2551,7 +2843,7 @@ def generate_meeting_minutes_and_actions(
     _upsert_workspace_file(
         db, workspace_id, user.id, minutes_v_rel,
         f"minutes-v{minutes_ver}.md", "text/markdown", len(minutes_md.encode("utf-8")), minutes_v_path,
-    )
+    ).rag_status = "partial" if transcription_status == "partial" else "not_ingested"
     # Mark previously synced files as needs_reingest
     for prefix_dir, prefix_name in [(minutes_dir, "minutes"), (actions_dir, "actions")]:
         if not prefix_dir.exists():
@@ -2568,15 +2860,15 @@ def generate_meeting_minutes_and_actions(
     _upsert_workspace_file(
         db, workspace_id, user.id, minutes_latest_rel,
         "minutes-latest.md", "text/markdown", len(minutes_md.encode("utf-8")), minutes_latest_path,
-    )
+    ).rag_status = "partial" if transcription_status == "partial" else "not_ingested"
     _upsert_workspace_file(
         db, workspace_id, user.id, actions_v_rel,
         f"actions-v{actions_ver}.md", "text/markdown", len(actions_md.encode("utf-8")), actions_v_path,
-    )
+    ).rag_status = "partial" if transcription_status == "partial" else "not_ingested"
     _upsert_workspace_file(
         db, workspace_id, user.id, actions_latest_rel,
         "actions-latest.md", "text/markdown", len(actions_md.encode("utf-8")), actions_latest_path,
-    )
+    ).rag_status = "partial" if transcription_status == "partial" else "not_ingested"
 
     total_tokens = token_input + token_output
 
@@ -2590,9 +2882,12 @@ def generate_meeting_minutes_and_actions(
             actor_id=user.id,
             workspace_kind=workspace.workspace_kind,
             meeting_folder_path=req.folder_path,
+            input_files=[{"path": transcript_rel, "uploaded_by": transcript_uploaded_by}],
+            run_by=user.id,
             created_files=[minutes_v_rel, minutes_latest_rel, actions_v_rel, actions_latest_rel],
             model=model_used,
             token_cost=total_tokens,
+            transcription_status=transcription_status,
             gbrain_ingest=False,
         ),
     )
@@ -2604,6 +2899,17 @@ def generate_meeting_minutes_and_actions(
         title="生成会议纪要与行动项",
         path=req.folder_path,
         detail=f"纪要：minutes-v{minutes_ver}.md, actions-v{actions_ver}.md",
+        status="completed" if transcription_status != "partial" else "completed",
+        result={"transcription_status": transcription_status},
+    )
+    _notify_meeting_run_finished(
+        db,
+        workspace=workspace,
+        actor_user_id=user.id,
+        folder_path=req.folder_path,
+        title="会议纪要生成完成" if transcription_status != "partial" else "会议纪要基于部分转录生成",
+        status="completed" if transcription_status != "partial" else "partial",
+        detail=f"{req.folder_path} 已生成 minutes-v{minutes_ver}.md / actions-v{actions_ver}.md",
     )
     db.commit()
     return MeetingGenerateResponse(
@@ -2622,6 +2928,9 @@ def generate_meeting_minutes_and_actions(
 
 def _build_fallback_minutes(transcript_text: str, timestamp: str, error: str = "") -> str:
     """Template-based fallback when LLM is unavailable."""
+    transcript_source = _transcript_metadata_value(transcript_text, "转录来源") or "待确认"
+    transcription_status = _transcript_status_value(transcript_text)
+    partial_note = _partial_transcript_notice(transcript_text) if transcription_status == "partial" else ""
     return f"""# 会议纪要
 
 ## 会议基本信息
@@ -2632,7 +2941,8 @@ def _build_fallback_minutes(transcript_text: str, timestamp: str, error: str = "
 | 会议时间 | 待确认 |
 | 参会人 | 待确认 |
 | 会议类型 | 其他 |
-| 转录来源 | 用户粘贴文本 |
+| 转录来源 | {transcript_source} |
+| 转录状态 | {transcription_status} |
 
 ## 一句话结论
 
@@ -2644,21 +2954,34 @@ def _build_fallback_minutes(transcript_text: str, timestamp: str, error: str = "
 
 ## 关键决策
 
-| ID | 决策 | 决策背景 | 影响范围 | 来源依据 | 置信度 | 待确认 |
-|---|---|---|---|---|---|---|
-| — | — | — | — | — | — | 是 |
+| ID | 决策 | 决策背景 | 影响范围 | 来源时间点 | 依据摘录 | 置信度 | 待确认 |
+|---|---|---|---|---|---|---|---|
+| — | — | — | — | — | — | — | 是 |
+
+## 行动项
+
+| ID | 行动项 | 负责人 | 协作人 | 截止时间 | 优先级 | 状态 | 来源时间点 | 待确认 |
+|---|---|---|---|---|---|---|---|---|
+| — | — | 待确认 | — | 待确认 | — | 待确认 | — | 是 |
 
 ## 风险与问题
 
-| ID | 风险或问题 | 类型 | 影响 | 建议下一步 | 负责人 | 严重度 |
-|---|---|---|---|---|---|---|
-| — | — | — | — | — | — | — |
+| ID | 风险或问题 | 类型 | 影响 | 建议下一步 | 负责人 | 来源时间点 | 严重度 |
+|---|---|---|---|---|---|---|---|
+| — | — | 资料缺口 | — | 人工复核转录和纪要 | 待确认 | — | 中 |
 
 ## 待确认事项
 
-| ID | 待确认事项 | 为什么需要确认 | 建议确认对象 | 来源 |
+| ID | 待确认事项 | 为什么需要确认 | 建议确认对象 | 来源时间点 |
 |---|---|---|---|---|
 | Q1 | 全部内容 | LLM 暂不可用，请人工编写纪要 | 会议组织者 | — |
+{partial_note}
+
+## 资料与证据
+
+| ID | 资料类型 | 文件或来源 | 来源时间点 | 依据摘录 | 说明 |
+|---|---|---|---|---|---|
+| E1 | 一手转录 | {transcript_source} | — | — | fallback 仅保留证据入口，需人工复核 |
 
 ## 可沉淀知识候选
 
@@ -2667,7 +2990,8 @@ def _build_fallback_minutes(transcript_text: str, timestamp: str, error: str = "
 ## 生成说明
 
 - 生成时间：{timestamp}
-- 转录来源：用户粘贴文本
+- 转录来源：{transcript_source}
+- 转录状态：{transcription_status}
 - 使用模型：template-fallback
 - 待确认项目：全部
 """
@@ -2696,11 +3020,13 @@ def _build_fallback_actions(timestamp: str) -> str:
 
 ## 行动项清单
 
-无（LLM 暂不可用，请人工从转录文本提取）
+| ID | 状态 | 优先级 | 行动项 | 负责人 | 协作人 | 截止时间 | 依赖条件 | 来源时间点 | 依据摘录 | 待确认原因 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| — | 待确认 | — | — | 待确认 | — | 待确认 | — | — | — | LLM 暂不可用，请人工从转录文本提取 |
 
 ## 待确认行动项
 
-无
+全部行动项需人工复核。
 
 ## 生成说明
 
@@ -2785,6 +3111,27 @@ def _parse_speakers_from_transcript(transcript_text: str) -> list[DetectedSpeake
     return speakers
 
 
+def _speaker_timeline_rows(transcript_text: str, limit: int = 30) -> list[str]:
+    rows: list[str] = []
+    in_section = False
+    for line in transcript_text.splitlines():
+        if line.startswith("## ") and "说话人时间轴" in line:
+            in_section = True
+            continue
+        if in_section and line.startswith("## "):
+            break
+        if not in_section or not line.startswith("|") or "---" in line or "行号" in line:
+            continue
+        parts = [part.strip() for part in line.split("|") if part.strip()]
+        if len(parts) >= 4:
+            rows.append(
+                f"| {_escape_pipe(parts[0])} | {_escape_pipe(parts[1])} | {_escape_pipe(parts[2])} | {_escape_pipe(parts[3])} |"
+            )
+        if len(rows) >= limit:
+            break
+    return rows
+
+
 @router.get("/{workspace_id}/meetings/speakers", response_model=MeetingSpeakersResponse)
 def get_meeting_speakers(
     workspace_id: int,
@@ -2814,12 +3161,18 @@ def get_meeting_speakers(
     return MeetingSpeakersResponse(ok=True, detected_speakers=speakers)
 
 
-def _build_speaker_map_markdown(speakers: list[SpeakerMapItem], author: str, timestamp: str) -> str:
+def _build_speaker_map_markdown(
+    speakers: list[SpeakerMapItem],
+    author: str,
+    timestamp: str,
+    timeline_rows: list[str] | None = None,
+) -> str:
     """Build speaker-map-latest.md formal content."""
     rows = "\n".join(
         f"| {_escape_pipe(s.speaker_id)} | {_escape_pipe(s.display_name)} | 已映射 | {_escape_pipe(author)} | {timestamp} |"
         for s in speakers
     )
+    timeline = "\n".join(timeline_rows or ["| — | — | — | — |"])
     return (
         "# 说话人映射\n\n"
         "## 映射状态\n\n"
@@ -2829,7 +3182,11 @@ def _build_speaker_map_markdown(speakers: list[SpeakerMapItem], author: str, tim
         "## 说话人映射表\n\n"
         "| 说话人ID | 显示名称 | 映射状态 | 修改人 | 修改时间 |\n"
         "|---|---|---|---|---|\n"
-        f"{rows}\n"
+        f"{rows}\n\n"
+        "## 时间轴辅助信息\n\n"
+        "| 行号 | 时间点 | 说话人ID | 内容摘要 |\n"
+        "|---|---|---|---|\n"
+        f"{timeline}\n"
     )
 
 
@@ -2859,7 +3216,9 @@ def save_meeting_speaker_map(
     # Version numbering
     ver = _next_version_number(transcript_dir, "speaker-map")
 
-    md = _build_speaker_map_markdown(req.speakers, author_name, now_ts)
+    transcript_text = _read_file_safe(folder_dir / "02-转录文本" / "transcript-latest.md")
+    timeline_rows = _speaker_timeline_rows(transcript_text)
+    md = _build_speaker_map_markdown(req.speakers, author_name, now_ts, timeline_rows)
 
     v_path = transcript_dir / f"speaker-map-v{ver}.md"
     v_path.write_text(md, encoding="utf-8")
@@ -2986,6 +3345,39 @@ class MediaTranscribeResponse(BaseModel):
     token_cost: int = 0
 
 
+class MediaTranscribePreflightRequest(BaseModel):
+    folder_path: str
+    filename: str
+    size_bytes: int
+    content_type: str = "application/octet-stream"
+
+
+class MediaTranscribePreflightResponse(BaseModel):
+    ok: bool
+    filename: str
+    size_mb: float
+    estimated_duration_minutes: int | None = None
+    is_long_media: bool = False
+    estimated_segments: int = 1
+    estimated_cost_note: str = ""
+    warnings: list[str] = []
+    model: str = "MiMo V2.5"
+
+
+class MeetingRetryRequest(BaseModel):
+    folder_path: str
+    operation: str = "transcribe"  # transcribe / generate_minutes
+
+
+class MeetingRetryResponse(BaseModel):
+    ok: bool
+    meeting_folder_path: str
+    operation: str
+    status: str  # queued / completed / partial / failed
+    message: str = ""
+    agent_run: AgentRunResponse | None = None
+
+
 def _size_mb(path: Path) -> float:
     return path.stat().st_size / (1024 * 1024) if path.exists() else 0.0
 
@@ -3001,6 +3393,33 @@ def _duration_minutes(path: Path) -> int | None:
         return max(1, round(float(proc.stdout.strip()) / 60))
     except Exception:
         return None
+
+
+def _estimate_media_info(size_bytes: int, filename: str) -> dict:
+    """Estimate media cost/duration from file size and type. Returns preflight info."""
+    size_mb = size_bytes / (1024 * 1024)
+    is_audio_only = Path(filename).suffix.lower() in {".mp3", ".wav", ".m4a", ".ogg", ".flac"}
+    # Rough estimate: audio ~1 MB/min, video ~8 MB/min
+    if is_audio_only:
+        est_minutes = max(1, round(size_mb / 1.0))
+    else:
+        est_minutes = max(1, round(size_mb / 8.0))
+    is_long = est_minutes > 30
+    seg_count = max(1, (est_minutes + 299) // 300)  # 300s segments
+    warnings: list[str] = []
+    if is_long:
+        warnings.append(f"媒体时长超过 30 分钟（预估 {est_minutes} 分钟），将自动分段转录（{seg_count} 段）")
+    if size_mb > 500:
+        warnings.append("文件超过 500 MB，转录时间较长，请耐心等待")
+    cost_note = f"预估 {est_minutes} 分钟，将使用 MiMo V2.5 模型转录。{'长视频将自动分段处理。' if is_long else ''}"
+    return {
+        "size_mb": round(size_mb, 1),
+        "estimated_duration_minutes": est_minutes,
+        "is_long_media": is_long,
+        "estimated_segments": seg_count,
+        "estimated_cost_note": cost_note,
+        "warnings": warnings,
+    }
 
 
 @router.post("/{workspace_id}/meetings/transcribe/media", response_model=MediaTranscribeResponse)
@@ -3030,29 +3449,30 @@ async def transcribe_meeting_media(
     root = _workspace_file_root(workspace)
     folder_rel = _safe_relative_path(folder_path)
     folder_dir = _resolve_workspace_child(root, folder_rel)
+    lock_path = _acquire_meeting_run_lock(root, folder_dir, operation="media_transcribe", user_id=user.id)
 
-    # Save raw media to 01-原始资料/
-    raw_dir = folder_dir / "01-原始资料"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    media_path = _resolve_conflict_path(raw_dir, _safe_name(filename), "keep_both")
-    if media_path is None:
-        raise HTTPException(status_code=500, detail="无法保存媒体文件")
-
-    content_bytes = await file.read()
-    media_path.write_bytes(content_bytes)
-    media_rel = media_path.relative_to(root).as_posix()
-
-    # Warn for long videos > 30 min
-    duration_min = _duration_minutes(media_path)
-    if duration_min is not None and duration_min > 30:
-        pass  # caller/frontend handles confirmation; this is informational
-
-    # Transcribe via core.media_transcription
-    from core.media_transcription import transcribe_media_to_markdown, load_media_transcription_options
-    from core.llm import get_llm_client
-
-    token_cost = 0
     try:
+        # Save raw media to 01-原始资料/
+        raw_dir = folder_dir / "01-原始资料"
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        media_path = _resolve_conflict_path(raw_dir, _safe_name(filename), "keep_both")
+        if media_path is None:
+            raise HTTPException(status_code=500, detail="无法保存媒体文件")
+
+        content_bytes = await file.read()
+        media_path.write_bytes(content_bytes)
+        media_rel = media_path.relative_to(root).as_posix()
+
+        # Warn for long videos > 30 min
+        duration_min = _duration_minutes(media_path)
+        if duration_min is not None and duration_min > 30:
+            pass  # caller/frontend handles confirmation; this is informational
+
+        # Transcribe via core.media_transcription
+        from core.media_transcription import transcribe_media_to_markdown, load_media_transcription_options
+        from core.llm import get_llm_client
+
+        token_cost = 0
         options = load_media_transcription_options()
         transcription_client = get_llm_client(options.model_profile)
         result = transcribe_media_to_markdown(media_path, options=options, llm_client=transcription_client)
@@ -3068,12 +3488,18 @@ async def transcribe_meeting_media(
         transcription_status = "failed"
         segment_count = 0
         warnings_list = [str(exc)]
+        token_cost = 0
+        media_rel = media_path.relative_to(root).as_posix() if "media_path" in locals() and media_path.exists() else ""
+        content_bytes = content_bytes if "content_bytes" in locals() else b""
         transcript_text = (
             f"# 会议转录文本 - 转录失败\n\n"
             f"**转录状态**：failed\n\n"
             f"**错误**：{exc}\n\n"
-            f"请检查媒体文件是否有效，或联系管理员。\n"
+            f"请检查媒体文件是否有效，或联系管理员。\n\n"
+            f"> **注意**：当前版本仅支持整体重试转录（通过「重试转录」按钮），不支持单片段重跑。\n"
         )
+    finally:
+        _release_meeting_run_lock(lock_path)
 
     # Save transcript
     transcript_dir = folder_dir / "02-转录文本"
@@ -3084,7 +3510,14 @@ async def transcribe_meeting_media(
     if transcription_status == "failed":
         final_md = transcript_text
     else:
-        final_md = _build_transcript_markdown(transcript_text, now_utc, input_type=ext.lstrip("."), original_filename=filename)
+        final_md = _build_transcript_markdown(
+            transcript_text,
+            now_utc,
+            input_type=ext.lstrip("."),
+            original_filename=filename,
+            transcription_status=transcription_status,
+            warnings=warnings_list,
+        )
 
     v1_path = _resolve_conflict_path(transcript_dir, "transcript-v1.md", "keep_both")
     if v1_path is None:
@@ -3097,12 +3530,16 @@ async def transcribe_meeting_media(
     latest_rel = latest_path.relative_to(root).as_posix()
 
     # Record WorkspaceFile metadata
-    _upsert_workspace_file(db, workspace_id, user.id, media_rel,
+    media_meta = _upsert_workspace_file(db, workspace_id, user.id, media_rel,
                            filename, file.content_type or "application/octet-stream", len(content_bytes), media_path)
-    _upsert_workspace_file(db, workspace_id, user.id, v1_rel,
+    media_meta.rag_status = "pending_transcription" if transcription_status == "failed" else "not_ingested"
+    v1_meta = _upsert_workspace_file(db, workspace_id, user.id, v1_rel,
                            "transcript-v1.md", "text/markdown", len(final_md.encode("utf-8")), v1_path)
-    _upsert_workspace_file(db, workspace_id, user.id, latest_rel,
+    latest_meta = _upsert_workspace_file(db, workspace_id, user.id, latest_rel,
                            "transcript-latest.md", "text/markdown", len(final_md.encode("utf-8")), latest_path)
+    transcript_rag_status = "failed" if transcription_status == "failed" else "partial" if transcription_status == "partial" else "not_ingested"
+    v1_meta.rag_status = transcript_rag_status
+    latest_meta.rag_status = transcript_rag_status
 
     _write_workspace_audit(db, user.id, "meeting_media_transcribe",
                            _audit_detail(workspace_id, folder_path, actor_id=user.id,
@@ -3110,13 +3547,24 @@ async def transcribe_meeting_media(
                                          transcript=v1_rel,
                                          status=transcription_status,
                                          segments=segment_count,
-                                         gbrain_ingest=False))
+                                         gbrain_ingest=False),
+                           success=transcription_status != "failed")
     agent_run = _write_workspace_file_agent_run(
         db, user_id=user.id, workspace=workspace,
         source_type="meeting_media_transcribe",
         title="会议音视频转录",
         path=folder_path,
         detail=f"转录：{filename}（{segment_count}段，{transcription_status}）",
+        status="failed" if transcription_status == "failed" else "completed",
+    )
+    _notify_meeting_run_finished(
+        db,
+        workspace=workspace,
+        actor_user_id=user.id,
+        folder_path=folder_path,
+        title="会议音视频转录完成" if transcription_status != "failed" else "会议音视频转录失败",
+        status="partial" if transcription_status == "partial" else "failed" if transcription_status == "failed" else "completed",
+        detail=f"{filename}：{transcription_status}，生成 {latest_rel}",
     )
     db.commit()
     return MediaTranscribeResponse(
@@ -3134,11 +3582,326 @@ async def transcribe_meeting_media(
     )
 
 
+# ── Step 5b: Media preflight ───────────────────────────────────────────────
+
+@router.post("/{workspace_id}/meetings/transcribe/media/preflight", response_model=MediaTranscribePreflightResponse)
+def preflight_meeting_media_transcribe(
+    workspace_id: int,
+    req: MediaTranscribePreflightRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Estimate media cost/duration before transcription. Does not upload or transcribe."""
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    _ensure_member(db, user.id, workspace_id)
+
+    if workspace.workspace_kind == "user":
+        raise HTTPException(status_code=400, detail="个人工作台不支持音视频转录")
+    _validate_meeting_folder(workspace, req.folder_path)
+
+    ext = Path(req.filename).suffix.lower()
+    if ext not in _SUPPORTED_MEDIA_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"仅支持音视频格式：{', '.join(sorted(_SUPPORTED_MEDIA_EXTENSIONS))}")
+
+    info = _estimate_media_info(req.size_bytes, req.filename)
+    return MediaTranscribePreflightResponse(
+        ok=True,
+        filename=req.filename,
+        size_mb=info["size_mb"],
+        estimated_duration_minutes=info["estimated_duration_minutes"],
+        is_long_media=info["is_long_media"],
+        estimated_segments=info["estimated_segments"],
+        estimated_cost_note=info["estimated_cost_note"],
+        warnings=info["warnings"],
+        model="MiMo V2.5",
+    )
+
+
+# ── Step 5c: Meeting retry ─────────────────────────────────────────────────
+
+@router.post("/{workspace_id}/meetings/retry", response_model=MeetingRetryResponse)
+def retry_meeting_operation(
+    workspace_id: int,
+    req: MeetingRetryRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retry a failed meeting operation (transcription or minutes generation).
+
+    Re-runs the same operation after verifying that:
+    - The previous run failed
+    - No active lock exists
+    - The meeting folder still has the necessary input files
+    """
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    _ensure_member(db, user.id, workspace_id)
+
+    if workspace.workspace_kind == "user":
+        raise HTTPException(status_code=400, detail="个人工作台不支持此操作")
+    if workspace.workspace_kind not in ("project", "customer"):
+        raise HTTPException(status_code=400, detail="不支持的工作区类型")
+
+    root = _workspace_file_root(workspace)
+    folder_rel = _safe_relative_path(req.folder_path)
+    _ensure_not_trash_path(folder_rel)
+    folder_dir = _resolve_workspace_child(root, folder_rel)
+
+    # Validate this is a meeting folder
+    missing = [sub for sub in MEETING_SUBDIRS if not (folder_dir / sub).is_dir()]
+    if missing:
+        raise HTTPException(status_code=400, detail="请选择完整的会议文件夹")
+
+    expected_parent = meeting_parent_path(workspace.workspace_kind)
+    folder_posix = folder_rel.as_posix()
+    if folder_posix != expected_parent and not folder_posix.startswith(expected_parent + "/"):
+        raise HTTPException(status_code=400, detail=f"会议文件夹必须位于 {expected_parent}/ 下")
+
+    lock_path = _meeting_run_lock_path(root, folder_dir)
+    if lock_path.exists():
+        raise HTTPException(status_code=409, detail="当前会议已有处理中任务，请等待完成后再操作")
+
+    if req.operation == "transcribe":
+        # Check for failed transcript
+        transcript_latest = folder_dir / "02-转录文本" / "transcript-latest.md"
+        if transcript_latest.exists():
+            text = transcript_latest.read_text(encoding="utf-8")
+            if not _failed_transcript_reason(text):
+                raise HTTPException(status_code=400, detail="转录已成功完成，无需重试。如需重新转录请先删除旧转录文件。")
+
+        # Find raw media in 01-原始资料 to re-transcribe
+        raw_dir = folder_dir / "01-原始资料"
+        if not raw_dir.exists() or not raw_dir.is_dir():
+            raise HTTPException(status_code=400, detail="原始资料目录不存在，无法重试转录。请重新上传音视频文件。")
+
+        media_files = [
+            child for child in sorted(raw_dir.iterdir())
+            if child.is_file() and child.suffix.lower() in _SUPPORTED_MEDIA_EXTENSIONS
+        ]
+        if not media_files:
+            raise HTTPException(status_code=400, detail="原始资料中没有音视频文件，无法重试转录。请重新上传。")
+
+        # Use the first (or most recent) media file
+        media_path = max(media_files, key=lambda p: p.stat().st_mtime)
+        _acquire_meeting_run_lock(root, folder_dir, operation="media_transcribe_retry", user_id=user.id)
+
+        try:
+            from core.media_transcription import transcribe_media_to_markdown, load_media_transcription_options
+            from core.llm import get_llm_client
+
+            token_cost = 0
+            options = load_media_transcription_options()
+            transcription_client = get_llm_client(options.model_profile)
+            result = transcribe_media_to_markdown(media_path, options=options, llm_client=transcription_client)
+            transcript_text = result.transcript_text
+            transcription_status = result.transcription_status
+            segment_count = result.segment_count
+            warnings_list = list(result.warnings) if result.warnings else []
+            if result.token_usage:
+                token_cost += result.token_usage.get("input_tokens", 0) + result.token_usage.get("output_tokens", 0)
+            if result.refinement_token_usage:
+                token_cost += result.refinement_token_usage.get("input_tokens", 0) + result.refinement_token_usage.get("output_tokens", 0)
+        except Exception as exc:
+            transcription_status = "failed"
+            segment_count = 0
+            warnings_list = [str(exc)]
+            token_cost = 0
+            transcript_text = (
+                f"# 会议转录文本 - 转录失败\n\n"
+                f"**转录状态**：failed\n\n"
+                f"**错误**：{exc}\n\n"
+                f"请检查媒体文件是否有效，或联系管理员。\n\n"
+                f"> **注意**：当前版本仅支持整体重试转录（通过「重试转录」按钮），不支持单片段重跑。\n"
+            )
+        finally:
+            _release_meeting_run_lock(lock_path)
+
+        # Save transcript (overwrite latest, keep history)
+        transcript_dir = folder_dir / "02-转录文本"
+        transcript_dir.mkdir(parents=True, exist_ok=True)
+
+        now_utc = datetime.now(timezone.utc)
+        if transcription_status != "failed":
+            final_md = _build_transcript_markdown(
+                transcript_text, now_utc,
+                input_type=media_path.suffix.lstrip("."),
+                original_filename=media_path.name,
+                transcription_status=transcription_status,
+                warnings=warnings_list,
+            )
+        else:
+            final_md = transcript_text
+
+        v_ver = _next_version_number(transcript_dir, "transcript")
+        v_path = transcript_dir / f"transcript-v{v_ver}.md"
+        v_path.write_text(final_md, encoding="utf-8")
+        latest_path = transcript_dir / "transcript-latest.md"
+        latest_path.write_text(final_md, encoding="utf-8")
+
+        v_rel = v_path.relative_to(root).as_posix()
+        latest_rel = latest_path.relative_to(root).as_posix()
+
+        _upsert_workspace_file(db, workspace_id, user.id, v_rel,
+                               f"transcript-v{v_ver}.md", "text/markdown", len(final_md.encode("utf-8")), v_path)
+        _upsert_workspace_file(db, workspace_id, user.id, latest_rel,
+                               "transcript-latest.md", "text/markdown", len(final_md.encode("utf-8")), latest_path)
+
+        _write_workspace_audit(db, user.id, "meeting_media_transcribe_retry",
+                               _audit_detail(workspace_id, req.folder_path, actor_id=user.id,
+                                             media_file=str(media_path), transcript=latest_rel,
+                                             status=transcription_status, segments=segment_count))
+        agent_run = _write_workspace_file_agent_run(
+            db, user_id=user.id, workspace=workspace,
+            source_type="meeting_media_transcribe_retry",
+            title="重试会议音视频转录",
+            path=req.folder_path,
+            detail=f"转录重试：{media_path.name}（{segment_count}段，{transcription_status}）",
+            status="failed" if transcription_status == "failed" else "completed",
+        )
+        _notify_meeting_run_finished(
+            db, workspace=workspace, actor_user_id=user.id,
+            folder_path=req.folder_path,
+            title="会议音视频转录重试完成" if transcription_status != "failed" else "会议音视频转录重试失败",
+            status="partial" if transcription_status == "partial" else "failed" if transcription_status == "failed" else "completed",
+            detail=f"{media_path.name}：{transcription_status}，生成 {latest_rel}",
+        )
+        db.commit()
+        return MeetingRetryResponse(
+            ok=True,
+            meeting_folder_path=req.folder_path,
+            operation=req.operation,
+            status=transcription_status,
+            message=f"转录{'部分完成' if transcription_status == 'partial' else '完成' if transcription_status != 'failed' else '失败'}（{segment_count}段）",
+            agent_run=serialize_agent_run(db, agent_run),
+        )
+
+    elif req.operation == "generate_minutes":
+        # Check for failed or partial minutes
+        minutes_latest = folder_dir / "04-会议纪要" / "minutes-latest.md"
+        transcript_latest = folder_dir / "02-转录文本" / "transcript-latest.md"
+        if not transcript_latest.exists():
+            raise HTTPException(status_code=400, detail="转录文件不存在，无法重试生成纪要")
+
+        transcript_text = transcript_latest.read_text(encoding="utf-8")
+        failed_reason = _failed_transcript_reason(transcript_text)
+        if failed_reason:
+            raise HTTPException(status_code=400, detail=f"转录未成功，需要先重试转录。原因：{failed_reason}")
+
+        # Delegate to generate endpoint with regenerate=True (in-process via function call)
+        from core.llm import get_llm_client
+
+        speaker_map_text = _read_file_safe(folder_dir / "02-转录文本" / "speaker-map-latest.md")
+        term_corrections_text = _read_file_safe(folder_dir / "02-转录文本" / "term-corrections-latest.md")
+        original_filename = _transcript_metadata_value(transcript_text, "原始文件名")
+        auxiliary_summaries_text = _read_auxiliary_summaries(folder_dir, source_filename=original_filename)
+        transcription_status = _transcript_status_value(transcript_text)
+
+        lock_path = _acquire_meeting_run_lock(root, folder_dir, operation="generate_minutes_retry", user_id=user.id)
+
+        try:
+            minutes_ver = _next_version_number(folder_dir / "04-会议纪要", "minutes")
+            actions_ver = _next_version_number(folder_dir / "05-行动项", "actions")
+            (folder_dir / "04-会议纪要").mkdir(parents=True, exist_ok=True)
+            (folder_dir / "05-行动项").mkdir(parents=True, exist_ok=True)
+
+            try:
+                client = get_llm_client("deepseek-flash")
+                model_used = "deepseek-flash"
+                retry_meeting_type = _read_meeting_meta(folder_dir).get("meeting_type", "")
+                minutes_response = client.complete(
+                    [{"role": "user", "content": _build_minutes_prompt(transcript_text, speaker_map_text, term_corrections_text, auxiliary_summaries_text, meeting_type=retry_meeting_type)}],
+                    system_prompt=_MEETING_SYSTEM_PROMPT,
+                    temperature=0.3,
+                )
+                minutes_md = minutes_response.text.strip() if minutes_response.text else ""
+                actions_response = client.complete(
+                    [{"role": "user", "content": _build_actions_prompt(transcript_text, speaker_map_text, term_corrections_text, auxiliary_summaries_text)}],
+                    system_prompt=_MEETING_SYSTEM_PROMPT,
+                    temperature=0.3,
+                )
+                actions_md = actions_response.text.strip() if actions_response.text else ""
+                token_cost = (
+                    (minutes_response.usage or {}).get("input_tokens", 0) + (minutes_response.usage or {}).get("output_tokens", 0)
+                    + (actions_response.usage or {}).get("input_tokens", 0) + (actions_response.usage or {}).get("output_tokens", 0)
+                )
+            except Exception as exc:
+                model_used = "template-fallback"
+                now_ts = serialize_datetime_utc(datetime.now(timezone.utc))
+                minutes_md = _build_fallback_minutes(transcript_text, now_ts, str(exc))
+                actions_md = _build_fallback_actions(now_ts)
+                token_cost = 0
+        finally:
+            _release_meeting_run_lock(lock_path)
+
+        if transcription_status == "partial":
+            partial_block = "\n\n> 转录状态：partial。以下纪要和行动项仅基于已成功转录片段生成。缺失片段可能导致结论不完整，请人工复核。\n"
+            if "转录状态：partial" not in minutes_md:
+                minutes_md = minutes_md.rstrip() + partial_block
+
+        minutes_v_path = folder_dir / "04-会议纪要" / f"minutes-v{minutes_ver}.md"
+        minutes_v_path.write_text(minutes_md, encoding="utf-8")
+        minutes_latest_path = folder_dir / "04-会议纪要" / "minutes-latest.md"
+        minutes_latest_path.write_text(minutes_md, encoding="utf-8")
+        actions_v_path = folder_dir / "05-行动项" / f"actions-v{actions_ver}.md"
+        actions_v_path.write_text(actions_md, encoding="utf-8")
+        actions_latest_path = folder_dir / "05-行动项" / "actions-latest.md"
+        actions_latest_path.write_text(actions_md, encoding="utf-8")
+
+        minutes_v_rel = minutes_v_path.relative_to(root).as_posix()
+        minutes_latest_rel = minutes_latest_path.relative_to(root).as_posix()
+        actions_v_rel = actions_v_path.relative_to(root).as_posix()
+        actions_latest_rel = actions_latest_path.relative_to(root).as_posix()
+
+        _upsert_workspace_file(db, workspace_id, user.id, minutes_v_rel,
+                               f"minutes-v{minutes_ver}.md", "text/markdown", len(minutes_md.encode("utf-8")), minutes_v_path)
+        _upsert_workspace_file(db, workspace_id, user.id, minutes_latest_rel,
+                               "minutes-latest.md", "text/markdown", len(minutes_md.encode("utf-8")), minutes_latest_path)
+        _upsert_workspace_file(db, workspace_id, user.id, actions_v_rel,
+                               f"actions-v{actions_ver}.md", "text/markdown", len(actions_md.encode("utf-8")), actions_v_path)
+        _upsert_workspace_file(db, workspace_id, user.id, actions_latest_rel,
+                               "actions-latest.md", "text/markdown", len(actions_md.encode("utf-8")), actions_latest_path)
+
+        _write_workspace_audit(db, user.id, "meeting_minutes_generate_retry",
+                               _audit_detail(workspace_id, req.folder_path, actor_id=user.id,
+                                             created_files=[minutes_v_rel, minutes_latest_rel, actions_v_rel, actions_latest_rel],
+                                             model=model_used, token_cost=token_cost))
+        agent_run = _write_workspace_file_agent_run(
+            db, user_id=user.id, workspace=workspace,
+            source_type="meeting_minutes_generate_retry",
+            title="重试生成会议纪要与行动项",
+            path=req.folder_path,
+            detail=f"纪要重试：minutes-v{minutes_ver}.md / actions-v{actions_ver}.md（{model_used}）",
+        )
+        _notify_meeting_run_finished(
+            db, workspace=workspace, actor_user_id=user.id,
+            folder_path=req.folder_path,
+            title="会议纪要重试生成完成",
+            status="completed" if transcription_status != "partial" else "partial",
+            detail=f"{req.folder_path} 已重新生成 minutes-v{minutes_ver}.md / actions-v{actions_ver}.md",
+        )
+        db.commit()
+        return MeetingRetryResponse(
+            ok=True,
+            meeting_folder_path=req.folder_path,
+            operation=req.operation,
+            status="completed" if transcription_status != "partial" else "partial",
+            message=f"重新生成纪要与行动项（v{minutes_ver}），模型：{model_used}，token：{token_cost}",
+            agent_run=serialize_agent_run(db, agent_run),
+        )
+
+    else:
+        raise HTTPException(status_code=400, detail=f"不支持的重试操作：{req.operation}")
+
+
 # ── Step 6: GBrain meeting ingest ────────────────────────────────────────
 
 class MeetingIngestRequest(BaseModel):
     folder_path: str
     recursive: bool = True
+    single_file_path: str | None = None  # For single-file actions-only ingest
 
 
 class MeetingIngestResponse(BaseModel):
@@ -3151,27 +3914,102 @@ class MeetingIngestResponse(BaseModel):
     skipped_files: list[str]
     gbrain_ingest: bool = True
     agent_run: AgentRunResponse | None = None
+    warning: str = ""
 
 
-def _gbrain_ready_compose(meeting_folder_name: str, minutes_md: str, transcript_md: str, actions_md: str = "") -> str:
-    """Compose a GBrain-ready combined page from meeting output files."""
+def _gbrain_ready_compose(
+    meeting_folder_name: str,
+    minutes_md: str,
+    transcript_md: str,
+    actions_md: str = "",
+    *,
+    source_scope: str = "",
+    source_context: str = "full_meeting",
+) -> str:
+    """Compose a GBrain-ready combined page from meeting output files.
+
+    When source_context is 'action_items_only', the page contains only action items
+    with lower context priority.
+    """
+    generated_at = serialize_datetime_utc(datetime.now(timezone.utc))
+    is_actions_only = source_context == "action_items_only"
+
     lines = [
-        f"# {meeting_folder_name}",
-        "",
-        "> 本页面由 Project_R 自动编译生成。来源：会议文件夹中的 latest 版本。",
-        "",
+        "---",
+        "schema: project_r_meeting_gbrain_ready_v1",
+        f"title: {meeting_folder_name}",
+        f"source_context: {source_context}",
+        f"source_scope: {source_scope or 'workspace'}",
+        "source_priority: transcript_first" if not is_actions_only else "source_priority: actions_only",
+        "generated_by: Project_R meeting workflow",
+        f"generated_at: {generated_at}",
         "---",
         "",
-        "## 会议纪要",
-        "",
-        minutes_md.lstrip("# ").strip() if minutes_md else "（无纪要内容）",
-        "",
-        "## 转录文本",
-        "",
-        transcript_md.lstrip("# ").strip() if transcript_md else "（无转录）",
+        f"# {meeting_folder_name}",
     ]
-    if actions_md:
-        lines.extend(["", "---", "", "## 行动项（辅助参考）", "", actions_md.lstrip("# ").strip()])
+
+    if is_actions_only:
+        lines.extend([
+            "",
+            "> ⚠️ 本页面仅包含行动项，不包含完整会议纪要和转录文本。",
+            "> 如需要完整会议知识，建议录入完整会议资料（minutes-latest.md + transcript-latest.md）。",
+            "",
+            "---",
+            "",
+            "## Source Context / 来源说明",
+            "",
+            f"- source_context: `{source_context}` — 仅行动项，低上下文完整度",
+            f"- source_scope: `{source_scope or 'workspace'}`",
+            "- 行动项由 Project_R 从会议转录文本或辅助总结中提炼生成。",
+            "- 没有转录文本和会议纪要上下文，行动项的负责人和截止时间均以原始文件标注为准。",
+            "",
+            "## 行动项内容",
+            "",
+        ])
+        if actions_md:
+            lines.append(actions_md.lstrip("# ").strip())
+        else:
+            lines.append("（无行动项内容）")
+    else:
+        lines.extend([
+            "",
+            "> 本页面由 Project_R 自动编译生成。来源：会议文件夹中的 latest 版本。会议纪要是整理结果，不是一手转录；事实判断优先回到一手转录证据。",
+            "",
+            "---",
+            "",
+            "## Source Context / 来源说明",
+            "",
+            f"- source_context: `{source_context}`",
+            f"- source_scope: `{source_scope or 'workspace'}`",
+            "- 一手证据：`transcript-latest.md`",
+            "- 整理结果：`minutes-latest.md`",
+            "- 行动项辅助：`actions-latest.md`",
+            "- 原始音视频不直接作为 GBrain 正文；如需核验，应回到工作区原始资料。",
+            "",
+            "## 会议摘要",
+            "",
+            "摘要、决策、行动项、风险和待确认事项来自下方会议纪要与行动项结构化内容；所有无法在转录中确认的内容应以待确认处理。",
+            "",
+            "## 会议纪要",
+            "",
+            minutes_md.lstrip("# ").strip() if minutes_md else "（无纪要内容）",
+            "",
+            "## 决策 / 行动项 / 风险 / 待确认事项",
+            "",
+            "详见会议纪要和行动项章节中的结构化表格；引用时应优先使用表格中的来源时间点和依据摘录。",
+            "",
+            "## 转录文本",
+            "",
+            transcript_md.lstrip("# ").strip() if transcript_md else "（无转录）",
+            "",
+            "## 一手转录来源引用",
+            "",
+            "- 文件：`transcript-latest.md`",
+            "- 引用粒度：时间戳 / 说话人 / 内容行",
+        ])
+        if actions_md:
+            lines.extend(["", "---", "", "## 行动项（辅助参考）", "", actions_md.lstrip("# ").strip()])
+
     lines.append("")
     return "\n\n".join(lines)
 
@@ -3183,12 +4021,26 @@ def ingest_meeting_to_gbrain(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Compile meeting outputs into a GBrain-ready page and ingest to the workspace source."""
+    """Compile meeting outputs into a GBrain-ready page and ingest to the workspace source.
+
+    Supports both full meeting ingest (default) and single-file actions-only ingest
+    (when single_file_path points to actions-latest.md).
+    """
     workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
     if not workspace:
         raise HTTPException(status_code=404, detail="项目不存在")
     _ensure_member(db, user.id, workspace_id)
-    _validate_meeting_folder(workspace, req.folder_path)
+
+    is_single_file_actions = (
+        req.single_file_path is not None
+        and req.single_file_path.rstrip("/").endswith("actions-latest.md")
+    )
+
+    if is_single_file_actions:
+        # Single-file actions-only: skip full meeting folder validation
+        pass
+    else:
+        _validate_meeting_folder(workspace, req.folder_path)
 
     member = db.query(WorkspaceMember).filter(
         WorkspaceMember.workspace_id == workspace_id, WorkspaceMember.user_id == user.id).first()
@@ -3223,67 +4075,108 @@ def ingest_meeting_to_gbrain(
         gbrain_ready_dir = Path(gbrain_ready_dir)
     gbrain_ready_dir.mkdir(parents=True, exist_ok=True)
 
-    # Collect latest versions and identify superseded
-    # Read *-latest.md for content, use vN numbering only for old version detection
     ingested: list[str] = []
     skipped: list[str] = []
+    warning: str = ""
 
-    sections = {
-        "04-会议纪要": "minutes",
-        "02-转录文本": "transcript",
-        "05-行动项": "actions",
-    }
-    collected: dict[str, str] = {}
-    for subdir, prefix in sections.items():
-        dir_p = folder_dir / subdir
-        if not dir_p.exists():
-            continue
-        latest_path = dir_p / f"{prefix}-latest.md"
-        if not latest_path.exists():
-            continue
-        lr = latest_path.relative_to(root).as_posix()
+    if is_single_file_actions:
+        # ── Single-file actions-only ingest ──────────────────────────────
+        # Only read the actions-latest.md file
+        actions_dir = folder_dir / "05-行动项"
+        actions_latest = actions_dir / "actions-latest.md"
+        if not actions_latest.exists():
+            raise HTTPException(status_code=400, detail="行动项文件 actions-latest.md 不存在")
+
+        actions_md = actions_latest.read_text(encoding="utf-8")
+        lr = actions_latest.relative_to(root).as_posix()
         ingested.append(lr)
-        collected[subdir] = latest_path.read_text(encoding="utf-8")
 
-        # Mark vN files (other than latest reference) as superseded
-        vn_pattern = re.compile(rf"^{re.escape(prefix)}-v(\d+)\.md$", re.IGNORECASE)
-        for child in dir_p.iterdir():
-            if not child.is_file():
-                continue
-            if child.name == f"{prefix}-latest.md":
-                continue
-            if vn_pattern.match(child.name):
-                sr = child.relative_to(root).as_posix()
-                skipped.append(sr)
-                sp_meta = db.query(WorkspaceFile).filter(
-                    WorkspaceFile.workspace_id == workspace_id,
-                    WorkspaceFile.relative_path == sr).first()
-                if sp_meta:
-                    sp_meta.rag_status = "skipped_superseded_version"
+        # Check if full meeting files exist and warn
+        has_minutes = (folder_dir / "04-会议纪要" / "minutes-latest.md").exists()
+        has_transcript = (folder_dir / "02-转录文本" / "transcript-latest.md").exists()
+        if has_minutes and has_transcript:
+            warning = "该会议存在完整的纪要和转录文件。建议改为录入完整会议资料以获取更全面的知识上下文。"
 
-    if not collected:
-        raise HTTPException(status_code=400, detail="没有可录入的会议文件。请先生成纪要和转录。")
+        meeting_name = folder_dir.name
+        gb_md = _gbrain_ready_compose(
+            meeting_name,
+            "",
+            "",
+            actions_md,
+            source_scope=source_scope,
+            source_context="action_items_only",
+        )
+        gb_path = _resolve_conflict_path(gbrain_ready_dir, f"{_safe_name(meeting_name)}.md", "keep_both")
+        if gb_path is None:
+            raise HTTPException(status_code=500, detail="无法写入 GBrain-ready 文件")
+        gb_path.write_text(gb_md, encoding="utf-8")
 
-    # Compose GBrain-ready page
-    meeting_name = folder_dir.name
-    gb_md = _gbrain_ready_compose(
-        meeting_name,
-        collected.get("04-会议纪要", ""),
-        collected.get("02-转录文本", ""),
-        collected.get("05-行动项", ""),
-    )
-    gb_path = _resolve_conflict_path(gbrain_ready_dir, f"{_safe_name(meeting_name)}.md", "keep_both")
-    if gb_path is None:
-        raise HTTPException(status_code=500, detail="无法写入 GBrain-ready 文件")
-    gb_path.write_text(gb_md, encoding="utf-8")
-
-    # Update ingested files' statuses — gbrain_ready (not synced until GBrain sync succeeds)
-    for ipath in ingested:
+        # Update ingested file status
         imeta = db.query(WorkspaceFile).filter(
             WorkspaceFile.workspace_id == workspace_id,
-            WorkspaceFile.relative_path == ipath).first()
+            WorkspaceFile.relative_path == lr).first()
         if imeta:
             imeta.rag_status = "gbrain_ready"
+
+    else:
+        # ── Full meeting ingest (existing behavior) ─────────────────────
+        sections = {
+            "04-会议纪要": "minutes",
+            "02-转录文本": "transcript",
+            "05-行动项": "actions",
+        }
+        collected: dict[str, str] = {}
+        for subdir, prefix in sections.items():
+            dir_p = folder_dir / subdir
+            if not dir_p.exists():
+                continue
+            latest_path = dir_p / f"{prefix}-latest.md"
+            if not latest_path.exists():
+                continue
+            lr = latest_path.relative_to(root).as_posix()
+            ingested.append(lr)
+            collected[subdir] = latest_path.read_text(encoding="utf-8")
+
+            # Mark vN files as superseded
+            vn_pattern = re.compile(rf"^{re.escape(prefix)}-v(\d+)\.md$", re.IGNORECASE)
+            for child in dir_p.iterdir():
+                if not child.is_file():
+                    continue
+                if child.name == f"{prefix}-latest.md":
+                    continue
+                if vn_pattern.match(child.name):
+                    sr = child.relative_to(root).as_posix()
+                    skipped.append(sr)
+                    sp_meta = db.query(WorkspaceFile).filter(
+                        WorkspaceFile.workspace_id == workspace_id,
+                        WorkspaceFile.relative_path == sr).first()
+                    if sp_meta:
+                        sp_meta.rag_status = "skipped_superseded_version"
+
+        if not collected:
+            raise HTTPException(status_code=400, detail="没有可录入的会议文件。请先生成纪要和转录。")
+
+        meeting_name = folder_dir.name
+        gb_md = _gbrain_ready_compose(
+            meeting_name,
+            collected.get("04-会议纪要", ""),
+            collected.get("02-转录文本", ""),
+            collected.get("05-行动项", ""),
+            source_scope=source_scope,
+            source_context="full_meeting",
+        )
+        gb_path = _resolve_conflict_path(gbrain_ready_dir, f"{_safe_name(meeting_name)}.md", "keep_both")
+        if gb_path is None:
+            raise HTTPException(status_code=500, detail="无法写入 GBrain-ready 文件")
+        gb_path.write_text(gb_md, encoding="utf-8")
+
+        # Update ingested files' statuses
+        for ipath in ingested:
+            imeta = db.query(WorkspaceFile).filter(
+                WorkspaceFile.workspace_id == workspace_id,
+                WorkspaceFile.relative_path == ipath).first()
+            if imeta:
+                imeta.rag_status = "gbrain_ready"
 
     _write_workspace_audit(db, user.id, "meeting_gbrain_ingest",
                            _audit_detail(workspace_id, req.folder_path, actor_id=user.id,
@@ -3291,11 +4184,13 @@ def ingest_meeting_to_gbrain(
                                          ingested=ingested, skipped=skipped,
                                          gbrain_ready_path=str(gb_path.resolve()),
                                          gbrain_ready_generated=True,
-                                         gbrain_synced=False))
+                                         gbrain_synced=False,
+                                         single_file_actions_only=is_single_file_actions,
+                                         warning=warning if warning else None))
     agent_run = _write_workspace_file_agent_run(
         db, user_id=user.id, workspace=workspace,
         source_type="meeting_gbrain_ingest",
-        title="会议资料录入 GBrain",
+        title="会议行动项录入 GBrain" if is_single_file_actions else "会议资料录入 GBrain",
         path=req.folder_path,
         detail=f"已生成 {len(ingested)} 个 GBrain-ready 文件，跳过 {len(skipped)} 个旧版本",
     )
@@ -3310,6 +4205,7 @@ def ingest_meeting_to_gbrain(
         skipped_files=skipped,
         gbrain_ingest=True,
         agent_run=serialize_agent_run(db, agent_run),
+        warning=warning,
     )
 
 
@@ -4403,18 +5299,6 @@ def _compile_customer_workspace_sources_for_request(workspace: Workspace, source
         return compile_customer_workspace_sources(workspace)
 
 
-WORKSPACE_INGEST_RUN_STATUSES = {
-    "queued",
-    "preprocessing",
-    "gbrain_ready",
-    "sync_pending",
-    "synced",
-    "failed",
-    "pending_capability",
-    "ignored",
-}
-
-
 def _new_workspace_ingest_run_id(workspace: Workspace) -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     return f"workspace-{workspace.id}-{stamp}-{uuid.uuid4().hex[:8]}"
@@ -4436,182 +5320,6 @@ def _workspace_ingest_run_id_from_job(job: WorkspaceIngestJob) -> str:
         if payload.get("run_id"):
             return str(payload["run_id"])
     return _workspace_ingest_job_run_id(job)
-
-
-def _workspace_ingest_status_event(status: str, message: str = "", at: datetime | None = None) -> dict:
-    normalized = status if status in WORKSPACE_INGEST_RUN_STATUSES else "failed"
-    return {
-        "status": normalized,
-        "message": message,
-        "at": serialize_datetime_utc(at or datetime.now(timezone.utc)),
-    }
-
-
-def _workspace_ingest_run_payload(
-    *,
-    run_id: str,
-    status: str,
-    workspace: Workspace | None,
-    source_id: str | None,
-    source_path: str,
-    recursive: bool,
-    started_at: datetime | None,
-    finished_at: datetime | None,
-    error: str | None,
-    status_history: list[dict],
-) -> dict:
-    normalized = status if status in WORKSPACE_INGEST_RUN_STATUSES else "failed"
-    return {
-        "run_id": run_id,
-        "status": normalized,
-        "workspace_id": getattr(workspace, "id", None),
-        "workspace_kind": getattr(workspace, "workspace_kind", None),
-        "workspace_name": getattr(workspace, "name", ""),
-        "source_id": source_id,
-        "source_path": source_path,
-        "recursive": recursive,
-        "started_at": serialize_datetime_utc(started_at) if started_at else None,
-        "finished_at": serialize_datetime_utc(finished_at) if finished_at else None,
-        "error": error or None,
-        "status_history": status_history,
-    }
-
-
-def _derive_workspace_ingest_run_status(
-    *,
-    compiled_files: int,
-    failed_files: int,
-    pending_extractor_capability_files: int,
-    pending_transcription_files: int,
-    skipped_files: int,
-    sync_ok: bool,
-    ok: bool,
-) -> str:
-    if failed_files > 0:
-        return "failed"
-    if compiled_files > 0 and not sync_ok:
-        return "sync_pending"
-    if compiled_files > 0 and ok:
-        return "synced"
-    if pending_extractor_capability_files > 0 or pending_transcription_files > 0:
-        return "pending_capability"
-    if not ok:
-        return "failed"
-    if skipped_files > 0:
-        return "ignored"
-    return "ignored"
-
-
-def _workspace_ingest_run_status_label(status: str) -> str:
-    return {
-        "queued": "任务已排队",
-        "preprocessing": "正在预处理源文件",
-        "gbrain_ready": "已生成 GBrain-ready Markdown",
-        "sync_pending": "GBrain 同步待处理",
-        "synced": "GBrain 同步完成",
-        "failed": "录入失败",
-        "pending_capability": "等待预处理能力补齐",
-        "ignored": "已忽略或无可处理文件",
-    }.get(status, status)
-
-
-def _workspace_ingest_item_run_status(item: dict, *, sync_ok: bool) -> str:
-    status = str(item.get("status") or "")
-    if status == "compiled":
-        return "synced" if sync_ok else "sync_pending"
-    if status in {"pending_extractor_capability", "pending_transcription"} or status.startswith("pending_"):
-        return "pending_capability"
-    if status == "failed":
-        return "failed"
-    if status in {"skipped", "ignored"}:
-        return "ignored"
-    return "failed" if status else "ignored"
-
-
-def _workspace_ingest_manifest_name(workspace: Workspace) -> str:
-    if workspace.workspace_kind == "customer":
-        return CUSTOMER_WORKSPACE_INGEST_MANIFEST_NAME
-    return PROJECT_INGEST_MANIFEST_NAME
-
-
-def _finalize_workspace_ingest_manifest(
-    workspace: Workspace,
-    manifest: dict | None,
-    *,
-    run_id: str,
-    run_status: str,
-    source_path: str,
-    recursive: bool,
-    started_at: datetime,
-    finished_at: datetime,
-    status_history: list[dict],
-    sync_ok: bool,
-    gbrain_sync_status: str | None,
-    gbrain_error: str | None,
-    gbrain_think_status: str | None,
-) -> None:
-    if not isinstance(manifest, dict):
-        return
-    source_id = str(manifest.get("source_id") or "")
-    run_payload = _workspace_ingest_run_payload(
-        run_id=run_id,
-        status=run_status,
-        workspace=workspace,
-        source_id=source_id,
-        source_path=source_path,
-        recursive=recursive,
-        started_at=started_at,
-        finished_at=finished_at,
-        error=gbrain_error,
-        status_history=status_history,
-    )
-    manifest["run_id"] = run_id
-    manifest["run_status"] = run_status
-    manifest["run"] = run_payload
-    manifest["status_history"] = status_history
-    manifest["sync"] = {
-        "ok": bool(sync_ok),
-        "status": gbrain_sync_status,
-        "error": gbrain_error,
-        "think_status": gbrain_think_status,
-    }
-    for item in manifest.get("items") or []:
-        if not isinstance(item, dict):
-            continue
-        item["preprocess_status"] = str(item.get("status") or "")
-        item["source_hash"] = item.get("source_hash") or item.get("source_sha256")
-        if item.get("target_file"):
-            item["gbrain_ready_file"] = item.get("gbrain_ready_file") or item["target_file"]
-            item["output_file"] = item.get("output_file") or item["target_file"]
-        item_run_status = _workspace_ingest_item_run_status(item, sync_ok=sync_ok)
-        item["run_status"] = item_run_status
-        item["sync_status"] = item_run_status if item_run_status in {"synced", "sync_pending"} else "not_applicable"
-        item["model_profile"] = item.get("model_profile") or item.get("extractor_profile") or "not_applicable"
-        item["skill_version"] = (
-            item.get("skill_version")
-            or item.get("preprocessor_version")
-            or item.get("extractor_profile")
-            or item.get("content_kind")
-            or "workspace-ingest-v1"
-        )
-        item["prompt_version"] = item.get("prompt_version") or item.get("extractor_prompt_version") or "not_applicable"
-
-    manifests_path = manifest.get("manifests_path")
-    runs_path = manifest.get("runs_path")
-    try:
-        run_path = None
-        if runs_path:
-            run_path = Path(str(runs_path)) / f"{run_id}.json"
-            manifest["run_manifest_path"] = str(run_path.resolve())
-        if manifests_path:
-            path = Path(str(manifests_path)) / _workspace_ingest_manifest_name(workspace)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-        if run_path is not None:
-            run_path.parent.mkdir(parents=True, exist_ok=True)
-            run_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    except OSError as exc:
-        manifest["run_manifest_write_error"] = str(exc)
 
 
 def _execute_workspace_knowledge_ingest(
@@ -5094,37 +5802,6 @@ def _write_immediate_workspace_ingest_agent_run(
         status="completed" if payload.get("ok") else "failed",
         result=_workspace_ingest_result_payload(payload),
         error_message=str(payload.get("gbrain_error") or ""),
-    )
-
-
-def _workspace_ingest_result_payload(payload: dict) -> dict:
-    manifest = payload.get("manifest") if isinstance(payload.get("manifest"), dict) else {}
-    return {
-        "workspace_id": payload.get("workspace_id"),
-        "indexed_files": payload.get("indexed_files", 0),
-        "compiled_files": payload.get("compiled_files", 0),
-        "pending_extractor_capability_files": payload.get("pending_extractor_capability_files", 0),
-        "pending_transcription_files": payload.get("pending_transcription_files", 0),
-        "failed_files": payload.get("failed_files", 0),
-        "gbrain_source_id": payload.get("gbrain_source_id"),
-        "gbrain_sync_status": payload.get("gbrain_sync_status"),
-        "rag_status": payload.get("rag_status"),
-        "run_id": payload.get("run_id"),
-        "run_status": payload.get("run_status"),
-        "run": manifest.get("run"),
-        "manifest_summary": manifest.get("summary"),
-    }
-
-
-def _workspace_ingest_summary_text(payload: dict) -> str:
-    run_status = payload.get("run_status") or payload.get("rag_status") or "unknown"
-    return (
-        f"状态 {run_status}，"
-        f"已入库 {payload.get('indexed_files', 0)} 个，"
-        f"已编译 {payload.get('compiled_files', 0)} 个，"
-        f"待能力补齐 {payload.get('pending_extractor_capability_files', 0)} 个，"
-        f"待转写 {payload.get('pending_transcription_files', 0)} 个，"
-        f"失败 {payload.get('failed_files', 0)} 个"
     )
 
 

@@ -3,6 +3,8 @@ import type {
   DistillationSuggestionResponse,
   MeetingFolderResponse,
   MeetingGenerateResponse,
+  MeetingRetryResponse,
+  MediaPreflightResponse,
   NotificationsListResponse,
   SaveMeetingTranscriptResponse,
   MeetingSpeakersResponse,
@@ -375,7 +377,7 @@ export function deleteWorkspace(options: ApiClientOptions, workspaceId: number) 
 export function createMeetingFolder(
   options: ApiClientOptions,
   workspaceId: number,
-  data: { topic: string; meeting_time?: string },
+  data: { topic: string; meeting_time?: string; meeting_type?: string },
 ) {
   return apiRequest<MeetingFolderResponse>(options, `/workspaces/${workspaceId}/meetings/folder`, {
     method: "POST",
@@ -468,9 +470,31 @@ export function transcribeMeetingMedia(
 export function ingestMeetingToGBrain(
   options: ApiClientOptions,
   workspaceId: number,
-  data: { folder_path: string; recursive?: boolean },
+  data: { folder_path: string; recursive?: boolean; single_file_path?: string },
 ) {
   return apiRequest<MeetingIngestResponse>(options, `/workspaces/${workspaceId}/meetings/ingest`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function preflightMeetingMediaTranscribe(
+  options: ApiClientOptions,
+  workspaceId: number,
+  data: { folder_path: string; filename: string; size_bytes: number; content_type?: string },
+) {
+  return apiRequest<MediaPreflightResponse>(options, `/workspaces/${workspaceId}/meetings/transcribe/media/preflight`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function retryMeetingOperation(
+  options: ApiClientOptions,
+  workspaceId: number,
+  data: { folder_path: string; operation: string },
+) {
+  return apiRequest<MeetingRetryResponse>(options, `/workspaces/${workspaceId}/meetings/retry`, {
     method: "POST",
     body: JSON.stringify(data),
   });

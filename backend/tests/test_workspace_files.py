@@ -1049,8 +1049,8 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         meta = self.db.query(WorkspaceFile).filter(WorkspaceFile.id == uploaded.file_id).first()
         self.assertEqual(meta.rag_status, "synced")
         self.assertTrue(meta.source_hash)
-        self.assertTrue((self.gbrain_ready_root(workspace) / "contracts" / "index.md").exists())
-        self.assertFalse((self.workspace_root(workspace) / "derived" / "contracts" / "index.md").exists())
+        self.assertTrue((self.gbrain_ready_root(workspace) / "commercial" / "index.md").exists())
+        self.assertFalse((self.workspace_root(workspace) / "derived" / "commercial" / "index.md").exists())
 
     def test_customer_workspace_knowledge_refresh_uses_customer_source(self):
         workspace = workspaces_api.create_workspace(
@@ -1936,6 +1936,45 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         )
         self.assertGreaterEqual(len(audits), 1)
 
+    def test_create_meeting_folder_rejects_invalid_type_before_writing(self):
+        """非法会议类型应在写入会议目录前被拒绝。"""
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 会议类型校验", brand="BFI"),
+            self.user,
+            self.db,
+        )
+        root = self.workspace_root(workspace)
+        meeting_root = root / workspaces_api.meeting_parent_path(workspace.workspace_kind)
+        before = sorted(path.name for path in meeting_root.iterdir()) if meeting_root.exists() else []
+
+        with self.assertRaises(HTTPException) as ctx:
+            workspaces_api.create_meeting_folder(
+                workspace.id,
+                workspaces_api.CreateMeetingFolderRequest(topic="非法类型", meeting_type="不是合法类型"),
+                self.user,
+                self.db,
+            )
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        after = sorted(path.name for path in meeting_root.iterdir()) if meeting_root.exists() else []
+        self.assertEqual(after, before)
+
+    def test_create_meeting_folder_persists_meeting_type(self):
+        """创建会议文件夹时保存会议类型 metadata。"""
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 会议类型保存", brand="BFI"),
+            self.user,
+            self.db,
+        )
+        response = workspaces_api.create_meeting_folder(
+            workspace.id,
+            workspaces_api.CreateMeetingFolderRequest(topic="客户同步", meeting_type="客户沟通会"),
+            self.user,
+            self.db,
+        )
+        meta = workspaces_api._read_meeting_meta(self.workspace_root(workspace) / response.meeting_folder_path)
+        self.assertEqual(meta.get("meeting_type"), "客户沟通会")
+
     def test_meeting_transcript_rejects_wrong_parent_path(self):
         """会议文件夹放在 99-未归档文件 下即使有5子目录也应 400"""
         workspace = workspaces_api.create_workspace(
@@ -2274,6 +2313,93 @@ class WorkspaceFileTreeTests(unittest.TestCase):
             )
         self.assertEqual(ctx.exception.status_code, 400)
 
+    def test_generate_rejects_failed_transcript(self):
+        """转录失败的 transcript-latest.md 不能继续生成纪要和行动项。"""
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 失败转录", brand="BFI"),
+            self.user,
+            self.db,
+        )
+        folder_resp = workspaces_api.create_meeting_folder(
+            workspace.id,
+            workspaces_api.CreateMeetingFolderRequest(topic="失败转录测试"),
+            self.user,
+            self.db,
+        )
+        root = self.workspace_root(workspace)
+        transcript_path = root / folder_resp.meeting_folder_path / "02-转录文本" / "transcript-latest.md"
+        transcript_path.write_text(
+            "# 会议转录文本 - 转录失败\n\n**转录状态**：failed\n\n**错误**：媒体文件无法解析\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaises(HTTPException) as ctx:
+            workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id,
+                workspaces_api.MeetingGenerateRequest(folder_path=folder_resp.meeting_folder_path, regenerate=True),
+                self.user,
+                self.db,
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("转录未成功", ctx.exception.detail)
+        self.assertIn("媒体文件无法解析", ctx.exception.detail)
+
+    def test_generate_partial_transcript_marks_outputs_partial(self):
+        """partial 转录允许生成，但输出和文件状态必须明确标记。"""
+        from unittest.mock import patch, MagicMock
+
+        workspace, folder_path = self._create_meeting_with_transcript()
+        root = self.workspace_root(workspace)
+        transcript_path = root / folder_path / "02-转录文本" / "transcript-latest.md"
+        transcript_text = transcript_path.read_text(encoding="utf-8").replace(
+            "| 原始文件名 | — |",
+            "| 原始文件名 | partial.mp4 |\n| 转录状态 | partial |\n| 缺失片段 | 00:05:00-00:06:00 |",
+        )
+        transcript_path.write_text(transcript_text, encoding="utf-8")
+
+        mock_response = MagicMock()
+        mock_response.text = "# 会议纪要\n\n## 一句话结论\n\n基于部分转录生成。\n"
+        mock_response.usage = {"input_tokens": 1, "output_tokens": 1}
+        mock_client = MagicMock()
+        mock_client.complete.return_value = mock_response
+
+        with patch("core.llm.get_llm_client", return_value=mock_client):
+            resp = workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id,
+                workspaces_api.MeetingGenerateRequest(folder_path=folder_path),
+                self.user,
+                self.db,
+            )
+
+        latest = (root / resp.minutes_latest_path).read_text(encoding="utf-8")
+        self.assertIn("转录状态：partial", latest)
+        latest_meta = (
+            self.db.query(WorkspaceFile)
+            .filter(WorkspaceFile.workspace_id == workspace.id, WorkspaceFile.relative_path == resp.minutes_latest_path)
+            .first()
+        )
+        self.assertIsNotNone(latest_meta)
+        self.assertEqual(latest_meta.rag_status, "partial")
+
+    def test_generate_partial_transcript_can_be_rejected_explicitly(self):
+        """调用方可显式禁止基于 partial 转录继续生成。"""
+        workspace, folder_path = self._create_meeting_with_transcript()
+        root = self.workspace_root(workspace)
+        transcript_path = root / folder_path / "02-转录文本" / "transcript-latest.md"
+        transcript_path.write_text(
+            transcript_path.read_text(encoding="utf-8") + "\n| 转录状态 | partial |\n",
+            encoding="utf-8",
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id,
+                workspaces_api.MeetingGenerateRequest(folder_path=folder_path, allow_partial=False),
+                self.user,
+                self.db,
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("partial", ctx.exception.detail)
+
     def test_generate_success_with_mock_llm(self):
         """LLM 成功时生成 4 个文件 + 4 条 WorkspaceFile + audit"""
         from unittest.mock import patch, MagicMock
@@ -2359,6 +2485,79 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         detail = json.loads(audits[-1].detail)
         self.assertIn("gbrain_ingest", detail)
         self.assertFalse(detail["gbrain_ingest"])
+
+    def test_generate_includes_auxiliary_summary_reference(self):
+        """03-辅助总结 中的材料进入 prompt，但作为二级参考。"""
+        from unittest.mock import patch, MagicMock
+
+        workspace, folder_path = self._create_meeting_with_transcript()
+        root = self.workspace_root(workspace)
+        aux_dir = root / folder_path / "03-辅助总结"
+        aux_dir.mkdir(parents=True, exist_ok=True)
+        (aux_dir / "meeting.summary.md").write_text(
+            "# 辅助总结\n\n辅助总结独有信息：客户要求下周确认预算。",
+            encoding="utf-8",
+        )
+
+        mock_response = MagicMock()
+        mock_response.text = "# 会议纪要\n\n## 一句话结论\n\n辅助总结已参考。\n"
+        mock_response.usage = {"input_tokens": 10, "output_tokens": 20}
+        mock_client = MagicMock()
+        mock_client.complete.return_value = mock_response
+
+        with patch("core.llm.get_llm_client", return_value=mock_client):
+            resp = workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id,
+                workspaces_api.MeetingGenerateRequest(folder_path=folder_path),
+                self.user,
+                self.db,
+            )
+
+        self.assertTrue(resp.ok)
+        prompts = [call.args[0][0]["content"] for call in mock_client.complete.call_args_list]
+        joined = "\n\n".join(prompts)
+        self.assertIn("## 辅助总结参考", joined)
+        self.assertIn("meeting.summary.md", joined)
+        self.assertIn("辅助总结独有信息：客户要求下周确认预算", joined)
+        self.assertIn("只能作为二级参考", joined)
+
+    def test_generate_matches_auxiliary_summary_by_original_filename(self):
+        """根目录工作流有多场会议时，只读取与原始文件名匹配的辅助总结。"""
+        from unittest.mock import patch, MagicMock
+
+        workspace, folder_path = self._create_meeting_with_transcript()
+        root = self.workspace_root(workspace)
+        transcript_path = root / folder_path / "02-转录文本" / "transcript-latest.md"
+        transcript_text = transcript_path.read_text(encoding="utf-8")
+        transcript_text = transcript_text.replace(
+            "| 原始文件名 | — |",
+            "| 原始文件名 | 20260608 Raven team 周会_audio.mp4 |",
+        )
+        transcript_path.write_text(transcript_text, encoding="utf-8")
+
+        aux_dir = root / folder_path / "03-辅助总结"
+        aux_dir.mkdir(parents=True, exist_ok=True)
+        (aux_dir / "纪要_Raven team 周会.docx.txt").write_text("Raven 匹配摘要", encoding="utf-8")
+        (aux_dir / "Internal Meeting.summary.md").write_text("CRM 不应混入", encoding="utf-8")
+
+        mock_response = MagicMock()
+        mock_response.text = "# 会议纪要\n\n## 一句话结论\n\nOK\n"
+        mock_response.usage = {"input_tokens": 1, "output_tokens": 1}
+        mock_client = MagicMock()
+        mock_client.complete.return_value = mock_response
+
+        with patch("core.llm.get_llm_client", return_value=mock_client):
+            workspaces_api.generate_meeting_minutes_and_actions(
+                workspace.id,
+                workspaces_api.MeetingGenerateRequest(folder_path=folder_path),
+                self.user,
+                self.db,
+            )
+
+        prompts = [call.args[0][0]["content"] for call in mock_client.complete.call_args_list]
+        joined = "\n\n".join(prompts)
+        self.assertIn("Raven 匹配摘要", joined)
+        self.assertNotIn("CRM 不应混入", joined)
 
     def test_generate_409_when_exists_and_not_regenerate(self):
         """已存在 latest 且 regenerate=False 时返回 409"""
@@ -2844,6 +3043,28 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         self.assertTrue((root / resp1.media_path).exists())
         self.assertTrue((root / resp2.media_path).exists())
 
+    def test_media_preflight_rejects_non_meeting_folder(self):
+        """Preflight 虽不上传文件，也必须限制在当前工作区会议目录内。"""
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 Preflight", brand="BFI"),
+            self.user,
+            self.db,
+        )
+
+        with self.assertRaises(HTTPException) as ctx:
+            workspaces_api.preflight_meeting_media_transcribe(
+                workspace.id,
+                workspaces_api.MediaTranscribePreflightRequest(
+                    folder_path="01-项目启动",
+                    filename="meeting.mp3",
+                    size_bytes=1024 * 1024,
+                    content_type="audio/mpeg",
+                ),
+                self.user,
+                self.db,
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+
 
     # ── Step 6: Meeting GBrain ingest tests ─────────────────────────────────
 
@@ -3154,6 +3375,10 @@ class WorkspaceFileTreeTests(unittest.TestCase):
 
         gb_path = Path(ingest_resp.gbrain_ready_path)
         self.assertTrue(gb_path.exists())
+        gb_content = gb_path.read_text(encoding="utf-8")
+        self.assertIn("source_context: full_meeting", gb_content)
+        self.assertIn("会议纪要是整理结果，不是一手转录", gb_content)
+        self.assertIn("## 一手转录来源引用", gb_content)
         gb_md = gb_path.read_text(encoding="utf-8")
         self.assertIn("E2E", gb_md)
 
@@ -3195,6 +3420,120 @@ class WorkspaceFileTreeTests(unittest.TestCase):
                 self.other, self.db,
             )
         # Should fail — either 403 or the folder won't match
+
+    def test_meeting_ingest_actions_only(self):
+        """Actions-only ingest produces GBrain-ready with source_context: action_items_only."""
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="会动测-A", brand="BFI"),
+            self.user, self.db,
+        )
+        root = self.workspace_root(workspace)
+        fp = workspaces_api.create_meeting_folder(
+            workspace.id,
+            workspaces_api.CreateMeetingFolderRequest(topic="Actions Only 测试"),
+            self.user, self.db,
+        ).meeting_folder_path
+
+        folder_dir = root / fp
+
+        # 1. Save a dummy transcript
+        trans_text = "# 会议转录文本\n\n## 基本信息\n| 字段 | 值 |\n|---|---|\n| 会议主题 | Actions Only |\n| 转录来源 | paste |\n| 转录状态 | completed |\n\n## 说话人概览\n| 说话人ID | 显示名称 | 映射状态 | 发言占比 |\n|---|---|---|---|\n| Speaker 1 | Speaker 1 | 未映射 | 100% |\n\n## 完整转录\n| 时间点 | 说话人ID | 显示名称 | 内容 | 置信度 |\n|---|---|---|---|---|\n| 00:00 | Speaker 1 | Speaker 1 | 测试内容 | high |\n"
+        transcript_dir = folder_dir / "02-转录文本"
+        transcript_dir.mkdir(parents=True, exist_ok=True)
+        (transcript_dir / "transcript-latest.md").write_text(trans_text, encoding="utf-8")
+
+        # 2. Save dummy minutes
+        minutes_text = "# 会议纪要\n\n## 会议基本信息\n\n| 字段 | 值 |\n|---|---|\n| 会议主题 | Actions Only |\n\n## 行动项\n\n| ID | 行动项 | 负责人 |\n|---|---|---|\n| A1 | 测试行动项 | 待确认 |\n\n"
+        minutes_dir = folder_dir / "04-会议纪要"
+        minutes_dir.mkdir(parents=True, exist_ok=True)
+        (minutes_dir / "minutes-latest.md").write_text(minutes_text, encoding="utf-8")
+
+        # 3. Save dummy actions
+        actions_text = "# 行动项\n\n## 基本信息\n\n| 字段 | 值 |\n|---|---|\n| 来源会议 | Actions Only |\n\n## 行动项清单\n\n| ID | 状态 | 优先级 | 行动项 | 负责人 |\n|---|---|---|---|---|\n| A1 | 待执行 | 高 | 测试行动项 | 张三 |\n\n"
+        actions_dir = folder_dir / "05-行动项"
+        actions_dir.mkdir(parents=True, exist_ok=True)
+        (actions_dir / "actions-latest.md").write_text(actions_text, encoding="utf-8")
+
+        # 4. Ingest with full meeting (normal)
+        full_resp = workspaces_api.ingest_meeting_to_gbrain(
+            workspace.id,
+            workspaces_api.MeetingIngestRequest(folder_path=fp),
+            self.user, self.db,
+        )
+        self.assertTrue(full_resp.ok)
+        ingested_suffixes = [p.split("/")[-1] for p in full_resp.ingested_files]
+        self.assertIn("minutes-latest.md", ingested_suffixes)
+        self.assertIn("transcript-latest.md", ingested_suffixes)
+
+        gb_md = Path(full_resp.gbrain_ready_path).read_text(encoding="utf-8")
+        self.assertIn("source_context: full_meeting", gb_md)
+        self.assertIn("测试行动项", gb_md)
+
+        # 5. Ingest with actions-only (single_file_path)
+        actions_resp = workspaces_api.ingest_meeting_to_gbrain(
+            workspace.id,
+            workspaces_api.MeetingIngestRequest(
+                folder_path=fp,
+                single_file_path=fp + "/05-行动项/actions-latest.md",
+            ),
+            self.user, self.db,
+        )
+        self.assertTrue(actions_resp.ok)
+        self.assertEqual(len(actions_resp.ingested_files), 1)
+        ingested_name = actions_resp.ingested_files[0].split("/")[-1]
+        self.assertEqual(ingested_name, "actions-latest.md")
+
+        gb_md2 = Path(actions_resp.gbrain_ready_path).read_text(encoding="utf-8")
+        self.assertIn("source_context: action_items_only", gb_md2)
+        self.assertIn("仅行动项", gb_md2)
+        # Actions-only page mentions 会议纪要/转录文本 only in disclaimer, not as sections
+        self.assertNotIn("## 会议纪要\n", gb_md2.replace("\r", ""), "不应包含会议纪要章节")
+        self.assertNotIn("## 转录文本\n", gb_md2.replace("\r", ""), "不应包含转录文本章节")
+
+        # 6. Warning should exist because minutes+transcript exist
+        self.assertTrue(actions_resp.warning, "应返回 warning 提示录入完整会议")
+
+    def test_meeting_ingest_single_file_no_recursive(self):
+        """Right-click single-file ingest (recursive=False) only processes the specified path."""
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="会动测-B", brand="BFI"),
+            self.user, self.db,
+        )
+        root = self.workspace_root(workspace)
+        fp = workspaces_api.create_meeting_folder(
+            workspace.id,
+            workspaces_api.CreateMeetingFolderRequest(topic="单件录入"),
+            self.user, self.db,
+        ).meeting_folder_path
+
+        folder_dir = root / fp
+        trans_text = "# 会议转录文本\n\n## 基本信息\n| 字段 | 值 |\n|---|---|\n| 会议主题 | 单件 |\n| 转录来源 | paste |\n| 转录状态 | completed |\n\n## 完整转录\n| 时间点 | 说话人ID | 显示名称 | 内容 | 置信度 |\n|---|---|---|---|---|\n| 00:00 | S1 | S1 | 测试 | high |\n"
+        transcript_dir = folder_dir / "02-转录文本"
+        transcript_dir.mkdir(parents=True, exist_ok=True)
+        (transcript_dir / "transcript-latest.md").write_text(trans_text, encoding="utf-8")
+
+        minutes_text = "# 会议纪要\n\n## 行动项\n\n| ID | 行动项 | 负责人 |\n|---|---|---|\n| A1 | 测试 | 待确认 |\n\n"
+        minutes_dir = folder_dir / "04-会议纪要"
+        minutes_dir.mkdir(parents=True, exist_ok=True)
+        (minutes_dir / "minutes-latest.md").write_text(minutes_text, encoding="utf-8")
+        (minutes_dir / "minutes-v1.md").write_text(minutes_text, encoding="utf-8")  # old version
+
+        # Ingest full meeting
+        resp = workspaces_api.ingest_meeting_to_gbrain(
+            workspace.id,
+            workspaces_api.MeetingIngestRequest(folder_path=fp),
+            self.user, self.db,
+        )
+        self.assertTrue(resp.ok)
+        # Full meeting ingest includes all latest files
+        ingested_names = [p.split("/")[-1] for p in resp.ingested_files]
+        self.assertIn("transcript-latest.md", ingested_names)
+        self.assertIn("minutes-latest.md", ingested_names)
+        # v1 files should be skipped as superseded
+        self.assertTrue(
+            any("minutes-v1.md" in p for p in resp.skipped_files),
+            "v1 应被跳过为已取代版本",
+        )
 
 
 if __name__ == "__main__":

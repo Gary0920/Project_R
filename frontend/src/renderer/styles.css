@@ -9065,6 +9065,7 @@ button:hover .profile-name-edit-icon {
   color: hsl(var(--muted-foreground));
   font-size: 12px;
   line-height: 1.45;
+  white-space: pre-wrap;
 }
 
 .workspace-confirm-actions {
@@ -9659,6 +9660,18 @@ button:hover .profile-name-edit-icon {
   outline: none;
 }
 
+.workspace-text-prompt select {
+  height: 34px;
+  min-width: 0;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  padding: 0 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
 .workspace-text-prompt div {
   justify-content: flex-end;
 }
@@ -9680,7 +9693,8 @@ button:hover .profile-name-edit-icon {
 }
 
 .workspace-text-prompt button:disabled,
-.workspace-text-prompt input:disabled {
+.workspace-text-prompt input:disabled,
+.workspace-text-prompt select:disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }
@@ -9826,6 +9840,26 @@ button:hover .profile-name-edit-icon {
   color: hsl(var(--destructive));
 }
 
+.workspace-rag-retry {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  padding: 0 6px;
+  height: 18px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 4px;
+  background: hsl(var(--card));
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  cursor: pointer;
+  line-height: 1;
+  transition: background 0.15s, color 0.15s;
+}
+.workspace-rag-retry:hover {
+  background: hsl(var(--accent));
+  color: hsl(var(--foreground));
+}
+
 .workspace-file-preview-sidecar {
   position: relative;
   min-height: 0;
@@ -9875,10 +9909,17 @@ button:hover .profile-name-edit-icon {
   padding: 0 12px;
 }
 
-.workspace-file-preview-sidecar-header div {
+.workspace-file-preview-sidecar-header > div:first-child {
   min-width: 0;
   display: grid;
   gap: 2px;
+}
+
+.workspace-file-preview-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
 }
 
 .workspace-file-preview-sidecar-header strong,

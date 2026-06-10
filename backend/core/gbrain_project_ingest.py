@@ -234,7 +234,7 @@ def compile_project_workspace_sources(
         "started_at": started_at,
         "finished_at": _utc_now(),
         "environment_ok": environment["ok"],
-        "items": [_result_to_project_manifest_item(result, paths["root"], paths["derived"]) for result in results],
+        "items": [_result_to_project_manifest_item(result, paths["root"], paths["gbrain_ready"]) for result in results],
         "summary": {
             "total": len(results),
             "compiled": sum(1 for result in results if result.status == "compiled"),
@@ -249,7 +249,7 @@ def compile_project_workspace_sources(
     manifest_path = paths["manifests"] / PROJECT_INGEST_MANIFEST_NAME
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    git_status = _commit_derived_changes(paths["derived"], manifest["summary"], settings.local_git_enabled)
+    git_status = _commit_derived_changes(paths["gbrain_ready"], manifest["summary"], settings.local_git_enabled)
     manifest["local_git"] = git_status
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest
@@ -1026,7 +1026,7 @@ def _project_target_path(source_path: Path, paths: dict[str, Path], category: st
     root = paths["root"]
     rel = source_path.resolve().relative_to(root.resolve())
     rest_parts = list(rel.parts[1:-1]) if rel.parts and rel.parts[0] in PROJECT_DIR_CATEGORY_MAP else list(rel.parts[:-1])
-    target_dir = paths["derived"] / category
+    target_dir = paths["gbrain_ready"] / category
     for part in rest_parts:
         target_dir = target_dir / _safe_filename(part)
     return target_dir / f"{_safe_filename(source_path.stem)}.md"
@@ -1091,7 +1091,7 @@ def _normalized_ingest_path(source_path: str | None) -> str:
 
 def _is_inside_runtime_dir(path: Path, paths: dict[str, Path], sidecar_dirs: list[Path]) -> bool:
     resolved = path.resolve()
-    runtime_roots = [paths["derived"], paths["manifests"], paths["root"] / ".trash", paths["root"] / ".git"]
+    runtime_roots = [paths["gbrain_ready"], paths["derived"], paths["manifests"], paths["root"] / ".trash", paths["root"] / ".git"]
     if paths.get("legacy_derived") is not None:
         runtime_roots.append(paths["legacy_derived"])
     if paths.get("legacy_manifests") is not None:

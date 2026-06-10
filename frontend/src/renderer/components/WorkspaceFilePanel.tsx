@@ -23,6 +23,8 @@ import {
   generateMeetingMinutesAndActions,
   getMeetingSpeakers,
   ingestMeetingToGBrain,
+  preflightMeetingMediaTranscribe,
+  retryMeetingOperation,
   saveMeetingSpeakerMap,
   saveMeetingTermCorrections,
   saveMeetingTranscript,
@@ -31,10 +33,11 @@ import {
   uploadWorkspaceFiles,
 } from "../api/workspaces";
 import type { ApiClientOptions } from "../api/client";
-import type { AgentRunResponse, DetectedSpeaker, GBrainEntityMergeCandidate, GBrainEntityMergePreviewResponse, MeetingFolderResponse, MeetingGenerateResponse, SaveMeetingTranscriptResponse, WorkspaceEntityMergeCandidatesResponse, WorkspaceFileItemResponse, WorkspaceKnowledgeGraphResponse, WorkspaceNativeGraphContextResponse } from "../api/types";
+import type { AgentRunResponse, DetectedSpeaker, GBrainEntityMergeCandidate, GBrainEntityMergePreviewResponse, MeetingFolderResponse, MeetingGenerateResponse, MeetingRetryResponse, MediaPreflightResponse, SaveMeetingTranscriptResponse, WorkspaceEntityMergeCandidatesResponse, WorkspaceFileItemResponse, WorkspaceKnowledgeGraphResponse, WorkspaceNativeGraphContextResponse } from "../api/types";
 import { parseApiDate } from "../utils/time";
 import {
   AgentIcon,
+  ArchiveIcon,
   ArrowUpIcon,
   BrainIcon,
   ChevronLeftIcon,
@@ -188,6 +191,8 @@ function getRagStatusMeta(status: string | null | undefined) {
   if (status === "skipped") return { label: "暂不入库", tone: "muted", title: "当前文件暂不进入知识库" };
   if (status === "skipped_superseded_version") return { label: "已取代", tone: "muted", title: "旧版本，已有更新版本录入" };
   if (status === "needs_reingest") return { label: "需重录", tone: "processing", title: "会议已重跑，GBrain 知识需重新录入" };
+  if (status === "not_ingested") return { label: "未入库", tone: "pending", title: "会议工作流输出已生成，但尚未录入 GBrain" };
+  if (status === "partial") return { label: "部分完成", tone: "processing", title: "转录或纪要基于部分成功片段生成，需要人工复核" };
   return { label: "未入库", tone: "empty", title: "尚未录入当前工作区知识库" };
 }
 
@@ -796,12 +801,16 @@ export function WorkspaceFilePanel({
   const [textPrompt, setTextPrompt] = useState<WorkspaceTextPrompt | null>(null);
   const [textPromptValue, setTextPromptValue] = useState("");
   const [textPromptBusy, setTextPromptBusy] = useState(false);
+  const MEETING_TYPE_OPTIONS = [
+    "项目统筹会", "客户沟通会", "技术交底", "现场协调", "内部复盘", "培训分享", "其他",
+  ];
   const [meetingFolderForm, setMeetingFolderForm] = useState<{
     open: boolean;
     topic: string;
     meetingTime: string;
+    meetingType: string;
     busy: boolean;
-  }>({ open: false, topic: "", meetingTime: "", busy: false });
+  }>({ open: false, topic: "", meetingTime: "", meetingType: "其他", busy: false });
   const [meetingTranscriptForm, setMeetingTranscriptForm] = useState<{
     open: boolean;
     folderPath: string;
@@ -842,6 +851,13 @@ export function WorkspaceFilePanel({
   function isMeetingTranscriptFile(name: string): boolean {
     const ext = name.split(".").pop()?.toLowerCase() ?? "";
     return MEETING_TRANSCRIPT_EXTENSIONS.has(ext);
+  }
+
+  function isMeetingTranscriptSourceFile(item: WorkspaceFileItemResponse): boolean {
+    if (!isMeetingTranscriptFile(item.name)) return false;
+    const lowerPath = item.path.toLowerCase();
+    const lowerName = item.name.toLowerCase();
+    return lowerPath.includes("/02-转录文本/") || lowerName.startsWith("transcript");
   }
 
   function isInMeetingWorkflowPath(filePath: string): boolean {
@@ -1173,7 +1189,7 @@ export function WorkspaceFilePanel({
   function openMeetingFolderForm() {
     if (!workspaceId) return;
     if (workspaceKind === "user") return;
-    setMeetingFolderForm({ open: true, topic: "", meetingTime: "", busy: false });
+    setMeetingFolderForm({ open: true, topic: "", meetingTime: "", meetingType: "其他", busy: false });
     setContextMenu(null);
   }
 
@@ -1184,14 +1200,14 @@ export function WorkspaceFilePanel({
     setMeetingFolderForm((prev) => ({ ...prev, busy: true }));
     setError(null);
     try {
-      const data: { topic: string; meeting_time?: string } = { topic };
+      const data: { topic: string; meeting_time?: string; meeting_type?: string } = { topic, meeting_type: meetingFolderForm.meetingType };
       if (meetingFolderForm.meetingTime.trim()) {
         data.meeting_time = meetingFolderForm.meetingTime.trim();
       }
       const response: MeetingFolderResponse = await createMeetingFolder(apiOptions, workspaceId, data);
       if (response.agent_run) setLatestAgentRun(response.agent_run);
       setNotice(`已创建会议文件夹：${response.meeting_folder_path}`);
-      setMeetingFolderForm({ open: false, topic: "", meetingTime: "", busy: false });
+      setMeetingFolderForm({ open: false, topic: "", meetingTime: "", meetingType: "其他", busy: false });
       await refresh();
       // Navigate into the new folder
       navigateTo(response.meeting_folder_path);
@@ -1300,10 +1316,14 @@ export function WorkspaceFilePanel({
         { folder_path: folderPath, regenerate },
       );
       if (response.agent_run) setLatestAgentRun(response.agent_run);
+      const details = [
+        `纪要：${response.minutes_latest_path}`,
+        `行动项：${response.actions_latest_path}`,
+      ];
       if (response.model_used === "template-fallback") {
-        setNotice(`纪要与行动项已保存（LLM 暂不可用，使用模板占位）。模型：${response.model_used}`);
+        setNotice(`纪要与行动项已保存（LLM 暂不可用，使用模板占位）。${details.join("；")}。`);
       } else {
-        setNotice(`纪要与行动项已保存（模型：${response.model_used}，token：${response.token_cost}）`);
+        setNotice(`纪要与行动项已保存（${details.join("；")}，模型：${response.model_used}，token：${response.token_cost}）。可在文件面板中下载。`);
       }
       await refresh();
     } catch (genError: unknown) {
@@ -1394,32 +1414,50 @@ export function WorkspaceFilePanel({
     }
   }
 
-  async function handleIngestMeeting() {
+  async function handleIngestMeeting(actionsOnly = false) {
     if (!workspaceId || !currentPath) return;
     const sourceScope = workspaceKind === "customer" ? "CRM 客户情报" : "项目知识库";
+    const scopeLabel = workspaceKind === "customer" ? "客户情报" : "当前项目";
+    const detailLines = [
+      `当前工作区：${workspaceName ?? workspaceKind}`,
+      `目标 source：${sourceScope}（${scopeLabel}）`,
+      `路径：${activeMeetingFolderPath}`,
+    ];
+    if (actionsOnly) {
+      detailLines.push("范围：仅录入行动项文件 actions-latest.md");
+      detailLines.push("将标记为「仅行动项」，低上下文完整度");
+      detailLines.push("建议：如需要完整会议知识，请改为录入完整会议（纪要和转录）。");
+    } else {
+      detailLines.push("将取 latest 版本组合成 GBrain-ready 页面，旧版本标记为已取代。");
+      detailLines.push("生成后需在 GBrain 管理端同步（本操作不自动触发 sync）。");
+    }
+    detailLines.push("原始音视频不直接录入。");
+    detailLines.push("仅工作区管理员可操作。");
+
     setPendingConfirmation({
-      title: "录入此会议",
-      detail: [
-        `当前工作区：${workspaceName ?? workspaceKind}`,
-        `目标 source：${sourceScope}`,
-        `路径：${activeMeetingFolderPath}`,
-        "将取 latest 版本组合成 GBrain-ready 页面，旧版本标记为已取代。",
-        "生成后需在 GBrain 管理端同步（本操作不自动触发 sync）。",
-        "原始音视频不直接录入。",
-        "仅工作区管理员可操作。",
-      ].join("\\n"),
+      title: actionsOnly ? "录入行动项（仅行动项）" : "录入此会议",
+      detail: detailLines.join("\\n"),
       confirmLabel: "确认录入",
       tone: "warning",
       onConfirm: async () => {
         setRefreshingKnowledge(true);
         setError(null);
         try {
-          const resp = await ingestMeetingToGBrain(apiOptions, workspaceId!, { folder_path: activeMeetingFolderPath });
+          const ingestData: { folder_path: string; recursive?: boolean; single_file_path?: string } = {
+            folder_path: activeMeetingFolderPath,
+          };
+          if (actionsOnly) {
+            ingestData.single_file_path = `${activeMeetingFolderPath}/05-行动项/actions-latest.md`;
+          }
+          const resp = await ingestMeetingToGBrain(apiOptions, workspaceId!, ingestData);
           const msgs = [`已录入 ${resp.ingested_files.length} 个文件`];
           if (resp.skipped_files.length > 0) {
             msgs.push(`跳过 ${resp.skipped_files.length} 个旧版本`);
           }
           msgs.push(`source：${resp.source_id}`);
+          if (resp.warning) {
+            msgs.push(`注意：${resp.warning}`);
+          }
           setNotice(msgs.join("，"));
           if (resp.agent_run) setLatestAgentRun(resp.agent_run);
           await refresh();
@@ -1432,6 +1470,30 @@ export function WorkspaceFilePanel({
     });
   }
 
+  function niceSaveSummary(filePath: string, status: string) {
+    const statusLabel = status === "failed" ? "失败" : status === "partial" ? "部分完成" : "完成";
+    setNotice(`已保存：${filePath}（${statusLabel}）。可下载或在文件面板查看。`);
+  }
+
+  async function handleRetryMeeting(operation: "transcribe" | "generate_minutes") {
+    if (!workspaceId || !currentPath) return;
+    setRefreshingKnowledge(true);
+    setError(null);
+    try {
+      const resp: MeetingRetryResponse = await retryMeetingOperation(apiOptions, workspaceId!, {
+        folder_path: activeMeetingFolderPath,
+        operation,
+      });
+      if (resp.agent_run) setLatestAgentRun(resp.agent_run);
+      setNotice(`重试完成：${resp.message}`);
+      await refresh();
+    } catch (retryErr: unknown) {
+      setError(retryErr instanceof Error ? retryErr.message : "重试失败");
+    } finally {
+      setRefreshingKnowledge(false);
+    }
+  }
+
   function handleMediaTranscribe() {
     if (!workspaceId || !currentPath) return;
     const input = document.createElement("input");
@@ -1441,18 +1503,56 @@ export function WorkspaceFilePanel({
       const file = input.files?.[0];
       if (!file) return;
       const sizeMB = file.size / (1024 * 1024);
-      const detail = [
+      const isVideo = !!file.name.match(/\.(mp4|mov|avi|wmv|mkv|webm)$/i);
+
+      // Attempt preflight for accurate duration estimate
+      let preflight: MediaPreflightResponse | null = null;
+      try {
+        preflight = await preflightMeetingMediaTranscribe(apiOptions, workspaceId!, {
+          folder_path: activeMeetingFolderPath,
+          filename: file.name,
+          size_bytes: file.size,
+          content_type: file.type,
+        });
+      } catch {
+        // Preflight unavailable; fall back to rough estimate
+      }
+
+      const estMin = preflight?.estimated_duration_minutes
+        ?? (isVideo ? Math.max(1, Math.round(sizeMB / 8)) : Math.max(1, Math.round(sizeMB)));
+      const estSeg = preflight?.estimated_segments ?? Math.max(1, Math.ceil(estMin / 5));
+      const isLong = preflight?.is_long_media ?? (estMin > 30);
+
+      const details: string[] = [
+        `当前工作区：${workspaceName ?? workspaceKind}`,
+        `目标路径：${activeMeetingFolderPath}`,
         `文件：${file.name}`,
         `大小：${sizeMB.toFixed(1)} MB`,
-        "转录将调用 MiMo V2.5 模型，长视频可能自动分段处理。",
-        "转写时间取决于文件长度，请耐心等待。",
-        "转录完成后将在文件面板中显示。",
-      ].join("\\n");
+        `预估时长：约 ${estMin} 分钟`,
+      ];
+
+      if (isLong) {
+        details.push("");
+        details.push("⚠️ 高成本 / 长时间操作提示：");
+        details.push(`- 预估分段数：${estSeg} 段（每段约 300 秒）`);
+        details.push("- 转录模型：MiMo V2.5（语音识别 + 结构化提炼）");
+        details.push(`- 长${isVideo ? "视频" : "音频"}处理预计耗时较长，请耐心等待`);
+        details.push("- 处理期间请勿重复操作，完成后会收到通知");
+        if (sizeMB > 500) {
+          details.push("- 文件超过 500 MB，建议在网络稳定、有充裕时间时处理");
+        }
+      } else {
+        details.push(`- 预估分段数：${estSeg} 段`);
+        details.push(`- 短${isVideo ? "视频" : "音频"}，预计较快完成转录`);
+      }
+      details.push("");
+      details.push("转录完成后将在当前文件夹的 02-转录文本 / 子目录生成结果。");
+
       setPendingConfirmation({
-        title: "上传会议音视频并转录",
-        detail,
+        title: isLong ? "上传并转录音视频（高成本操作）" : "上传并转录音视频",
+        detail: details.join("\\n"),
         confirmLabel: "确认转录",
-        tone: "warning",
+        tone: isLong ? "danger" : "warning",
         onConfirm: async () => {
           const folderPath = activeMeetingFolderPath;
           setNotice("正在转录音视频…");
@@ -1463,9 +1563,9 @@ export function WorkspaceFilePanel({
             if (resp.agent_run) setLatestAgentRun(resp.agent_run);
             const notices: string[] = [];
             if (resp.transcription_status === "failed") {
-              notices.push("转录失败");
+              notices.push("转录失败 — 可点击「重试转录」再次尝试");
             } else if (resp.transcription_status === "partial") {
-              notices.push(`部分转录完成（${resp.segment_count}段）`);
+              notices.push(`部分转录完成（${resp.segment_count}段）— 可重试失败片段`);
             } else {
               notices.push(`转录完成（${resp.segment_count}段）`);
             }
@@ -1475,7 +1575,8 @@ export function WorkspaceFilePanel({
             if (resp.token_cost > 0) {
               notices.push(`token：${resp.token_cost}`);
             }
-            setNotice(notices.join("，") + ` → ${resp.transcript_latest_path}`);
+            niceSaveSummary(resp.transcript_latest_path, resp.transcription_status);
+            setNotice(notices.join("，"));
             await refresh();
           } catch (txErr: unknown) {
             setError(txErr instanceof Error ? txErr.message : "转录失败");
@@ -1761,6 +1862,25 @@ export function WorkspaceFilePanel({
         status: "failed",
         error: previewError instanceof Error ? previewError.message : "文件预览失败",
       });
+    }
+  }
+
+  async function downloadWorkspaceFile(item: WorkspaceFileItemResponse) {
+    if (!workspaceId || item.type === "directory") return;
+    setError(null);
+    try {
+      const blob = await fetchWorkspaceFileBlob(apiOptions, workspaceId, item.path);
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = item.name;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      setNotice(`已开始下载：${item.name}`);
+    } catch (downloadError: unknown) {
+      setError(downloadError instanceof Error ? downloadError.message : "文件下载失败");
     }
   }
 
@@ -2512,11 +2632,12 @@ export function WorkspaceFilePanel({
       ) : null}
 
       {showMeetingWorkflowToolbar ? (
-        <div className="workspace-meeting-toolbar">
+        <div className="workspace-meeting-toolbar" data-testid="meeting-toolbar">
           <span className="workspace-meeting-toolbar-label">会议工作流</span>
           <div className="workspace-meeting-toolbar-actions">
             <button
               className="workspace-file-primary-action"
+              disabled={refreshingKnowledge}
               onClick={() => handleMediaTranscribe()}
               title="上传会议音文件到当前文件夹并自动转录"
               type="button"
@@ -2525,6 +2646,7 @@ export function WorkspaceFilePanel({
             </button>
             <button
               className="workspace-file-primary-action"
+              disabled={refreshingKnowledge}
               onClick={() => openMeetingTranscriptForm()}
               title="将已有的会议转录文本保存到当前文件夹"
               type="button"
@@ -2533,7 +2655,7 @@ export function WorkspaceFilePanel({
             </button>
             <button
               className="workspace-file-primary-action"
-              disabled={!isLegitimateMeetingFolder}
+              disabled={!isLegitimateMeetingFolder || refreshingKnowledge}
               onClick={() => void handleOpenSpeakerMap()}
               title={!isLegitimateMeetingFolder ? "请在具体会议文件夹中使用此功能。" : "为当前会议的检测说话人设置显示名称"}
               type="button"
@@ -2542,7 +2664,7 @@ export function WorkspaceFilePanel({
             </button>
             <button
               className="workspace-file-primary-action"
-              disabled={!isLegitimateMeetingFolder}
+              disabled={!isLegitimateMeetingFolder || refreshingKnowledge}
               onClick={() => setTermCorrectionsOpen(true)}
               title={!isLegitimateMeetingFolder ? "请在具体会议文件夹中使用此功能。" : "添加需要纠正的术语"}
               type="button"
@@ -2551,7 +2673,7 @@ export function WorkspaceFilePanel({
             </button>
             <button
               className="workspace-file-primary-action"
-              disabled={!isLegitimateMeetingFolder}
+              disabled={!isLegitimateMeetingFolder || refreshingKnowledge}
               onClick={() => void handleGenerateMinutes()}
               title={!isLegitimateMeetingFolder ? "请在具体会议文件夹中使用此功能。" : "从当前会议的转录文本生成纪要与行动项"}
               type="button"
@@ -2560,13 +2682,56 @@ export function WorkspaceFilePanel({
             </button>
             <button
               className="workspace-file-primary-action"
-              disabled={!isLegitimateMeetingFolder}
+              disabled={!isLegitimateMeetingFolder || refreshingKnowledge}
+              onClick={() => void handleGenerateMinutes(true)}
+              title="如果会议转录已更新，重新生成纪要与行动项（创建新版本）"
+              type="button"
+            >
+              <RefreshIcon /><span>重跑纪要</span>
+            </button>
+            <button
+              className="workspace-file-primary-action"
+              disabled={!isLegitimateMeetingFolder || refreshingKnowledge}
               onClick={() => void handleIngestMeeting()}
               title={!isLegitimateMeetingFolder ? "请在具体会议文件夹中使用此功能。" : "将当前会议组合成 GBrain-ready 页面"}
               type="button"
             >
               <BrainIcon /><span>录入此会议</span>
             </button>
+            {/* Actions-only ingest entry - only show in meeting root */}
+            {isLegitimateMeetingFolder ? (
+              <button
+                className="workspace-file-primary-action"
+                disabled={refreshingKnowledge}
+                onClick={() => void handleIngestMeeting(true)}
+                title="仅录入行动项，不包含纪要和转录上下文"
+                type="button"
+              >
+                <BrainIcon /><span>录入行动项</span>
+              </button>
+            ) : null}
+            {isLegitimateMeetingFolder ? (
+              <>
+                <button
+                  className="workspace-file-primary-action"
+                  disabled={refreshingKnowledge}
+                  onClick={() => void handleRetryMeeting("transcribe")}
+                  title="重试之前失败的音视频转录操作"
+                  type="button"
+                >
+                  <RefreshIcon /><span>重试转录</span>
+                </button>
+                <button
+                  className="workspace-file-primary-action"
+                  disabled={refreshingKnowledge}
+                  onClick={() => void handleRetryMeeting("generate_minutes")}
+                  title="重试之前失败的纪要生成操作"
+                  type="button"
+                >
+                  <RefreshIcon /><span>重试纪要生成</span>
+                </button>
+              </>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -2671,7 +2836,34 @@ export function WorkspaceFilePanel({
                   ) : isPersonalWorkspace ? (
                     <span className="workspace-rag-badge is-muted" title="个人工作台文件不会自动进入知识库">暂存</span>
                   ) : (
-                    <span className={`workspace-rag-badge is-${ragStatus.tone}`} title={ragStatus.title}>{ragStatus.label}</span>
+                    <span className={`workspace-rag-badge is-${ragStatus.tone}`} title={ragStatus.title}>
+                      {ragStatus.label}
+                      {item.rag_status === "failed" && canShowKnowledgeIngest ? (
+                        <button
+                          className="workspace-rag-retry"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleRefreshKnowledge(item.path, false, item);
+                          }}
+                          title="重新处理此文件"
+                          type="button"
+                        >重试</button>
+                      ) : null}
+                      {item.rag_status === "partial" || item.rag_status === "pending_transcription" ? (
+                        <button
+                          className="workspace-rag-retry"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (item.path.startsWith("20-会议与沟通")) {
+                              // Navigate to meeting folder and show retry
+                              setCurrentPath(item.path.split("/").slice(0, -1).join("/"));
+                            }
+                          }}
+                          title="查看详情"
+                          type="button"
+                        >详情</button>
+                      ) : null}
+                    </span>
                   )}
                 </div>
               );
@@ -2712,6 +2904,7 @@ export function WorkspaceFilePanel({
           ) : contextMenu.item ? (
             <>
               <button onClick={() => runContextAction(() => activateFileItem(contextMenu.item!))} type="button"><NoteIcon />预览</button>
+              <button onClick={() => runContextAction(() => void downloadWorkspaceFile(contextMenu.item!))} type="button"><ArchiveIcon />下载</button>
               <button disabled={!canModifyWorkspaceItem(contextMenu.item)} onClick={() => runContextAction(() => handleCut(contextMenu.item!))} type="button"><MoveIcon />剪切</button>
               <button disabled={!canCopyWorkspaceItem(contextMenu.item)} onClick={() => runContextAction(() => handleCopy(contextMenu.item!))} type="button"><CopyIcon />复制</button>
               {canShowKnowledgeIngest ? (
@@ -2721,6 +2914,79 @@ export function WorkspaceFilePanel({
                   type="button"
                 >
                   <RefreshIcon />录入此文件
+                </button>
+              ) : null}
+              {/* Actions-only ingest for actions-latest.md */}
+              {canShowKnowledgeIngest && contextMenu.item && !isTrashWorkspaceItem(contextMenu.item)
+                && contextMenu.item.name === "actions-latest.md"
+                && inferMeetingFolder(contextMenu.item.path) !== null ? (
+                <button
+                  disabled={refreshingKnowledge}
+                  onClick={() => runContextAction(async () => {
+                    if (!workspaceId) return;
+                    setCurrentPath(inferMeetingFolder(contextMenu.item!.path)!);
+                    setPendingConfirmation({
+                      title: "录入行动项（仅行动项）",
+                      detail: [
+                        `当前工作区：${workspaceName ?? workspaceKind}`,
+                        `路径：${inferMeetingFolder(contextMenu.item!.path)!}/05-行动项/actions-latest.md`,
+                        "范围：仅录入行动项文件，不包含会议纪要和转录文本。",
+                        "将标记为「仅行动项」，低上下文完整度。",
+                        "如需要完整会议知识，建议改为录入完整会议。",
+                      ].join("\\n"),
+                      confirmLabel: "录入行动项",
+                      tone: "warning",
+                      onConfirm: async () => {
+                        await handleIngestMeeting(true);
+                      },
+                    });
+                  })}
+                  type="button"
+                >
+                  <BrainIcon />录入行动项（仅行动项）
+                </button>
+              ) : null}
+              {/* Retry failed ingest */}
+              {contextMenu.item && !isTrashWorkspaceItem(contextMenu.item)
+                && contextMenu.item.rag_status === "failed" ? (
+                <button
+                  disabled={refreshingKnowledge}
+                  onClick={() => runContextAction(() => {
+                    handleRefreshKnowledge(
+                      contextMenu.item!.path,
+                      false,
+                      contextMenu.item,
+                    );
+                  })}
+                  type="button"
+                >
+                  <RefreshIcon />重新处理此文件
+                </button>
+              ) : null}
+              {/* Retry failed meeting transcription - for transcript files */}
+              {contextMenu.item && !isTrashWorkspaceItem(contextMenu.item)
+                && contextMenu.item.name?.startsWith("transcript-")
+                && (contextMenu.item.rag_status === "failed" || contextMenu.item.rag_status === "partial")
+                && inferMeetingFolder(contextMenu.item.path) !== null ? (
+                <button
+                  disabled={refreshingKnowledge}
+                  onClick={() => runContextAction(async () => {
+                    if (!workspaceId) return;
+                    // Navigate to meeting folder and trigger regenerate
+                    setCurrentPath(inferMeetingFolder(contextMenu.item!.path)!);
+                    setPendingConfirmation({
+                      title: "重新生成纪要与行动项",
+                      detail: `基于现有转录重新生成纪要与行动项。转录状态为 ${contextMenu.item!.rag_status}，部分失败内容可能无法覆盖。`,
+                      confirmLabel: "重新生成",
+                      tone: "warning",
+                      onConfirm: async () => {
+                        await handleGenerateMinutes(true);
+                      },
+                    });
+                  })}
+                  type="button"
+                >
+                  <NoteIcon />重新生成纪要
                 </button>
               ) : null}
               {/* Meeting file context actions — only when a valid meeting folder can be inferred */}
@@ -2759,7 +3025,7 @@ export function WorkspaceFilePanel({
                       <NoteIcon />转录此音视频
                     </button>
                   ) : null}
-                  {isMeetingTranscriptFile(contextMenu.item.name) ? (
+                  {isMeetingTranscriptSourceFile(contextMenu.item) ? (
                     <button
                       disabled={refreshingKnowledge}
                       onClick={() => runContextAction(async () => {
@@ -2827,6 +3093,36 @@ export function WorkspaceFilePanel({
                       type="button"
                     >
                       <NoteIcon />用此转录生成纪要
+                    </button>
+                  ) : null}
+                  {contextMenu.item?.name === "actions-latest.md" && inferMeetingFolder(contextMenu.item.path) !== null ? (
+                    <button
+                      disabled={refreshingKnowledge}
+                      onClick={() => runContextAction(async () => {
+                        if (!workspaceId) return;
+                        const item = contextMenu.item!;
+                        const meetingFolder = inferMeetingFolder(item.path)!;
+                        setRefreshingKnowledge(true);
+                        setError(null);
+                        try {
+                          const resp = await ingestMeetingToGBrain(apiOptions, workspaceId!, {
+                            folder_path: meetingFolder,
+                            single_file_path: item.path,
+                          });
+                          const msgs = [`已录入 ${resp.ingested_files.length} 个文件`];
+                          if (resp.warning) msgs.push(`注意：${resp.warning}`);
+                          setNotice(msgs.join("，"));
+                          if (resp.agent_run) setLatestAgentRun(resp.agent_run);
+                          await refresh();
+                        } catch (ingestErr: unknown) {
+                          setError(ingestErr instanceof Error ? ingestErr.message : "录入失败");
+                        } finally {
+                          setRefreshingKnowledge(false);
+                        }
+                      })}
+                      type="button"
+                    >
+                      <BrainIcon />录入此行动项
                     </button>
                   ) : null}
                 </>
@@ -2906,6 +3202,19 @@ export function WorkspaceFilePanel({
                 placeholder="ISO-8601，例如 2026-06-15T09:30"
                 value={meetingFolderForm.meetingTime}
               />
+            </label>
+            <label>
+              <span>会议类型</span>
+              <select
+                className="workspace-meeting-type-select"
+                disabled={meetingFolderForm.busy}
+                onChange={(event) => setMeetingFolderForm((prev) => ({ ...prev, meetingType: event.target.value }))}
+                value={meetingFolderForm.meetingType}
+              >
+                {MEETING_TYPE_OPTIONS.map((mt) => (
+                  <option key={mt} value={mt}>{mt}</option>
+                ))}
+              </select>
             </label>
             <div>
               <button disabled={meetingFolderForm.busy} onClick={() => setMeetingFolderForm((prev) => ({ ...prev, open: false }))} type="button">取消</button>
@@ -3001,9 +3310,13 @@ export function WorkspaceFilePanel({
               <strong>术语纠错</strong>
               <button disabled={termCorrectionsBusy} onClick={() => setTermCorrectionsOpen(false)} type="button">×</button>
             </header>
-            <p style={{ opacity: 0.7, marginBottom: 8 }}>
-              添加需要纠正的术语。已保存的术语会在下次生成纪要时被使用。
-            </p>
+            <div style={{ background: "var(--warning)/0.1", padding: "8px 12px", borderRadius: 6, marginBottom: 10, fontSize: "0.9em", lineHeight: 1.5 }}>
+              <strong>转录中这些词是否需要修正？</strong>
+              <p style={{ margin: "4px 0 0", opacity: 0.75 }}>
+                音视频转录可能将专业术语、人名、地名词识别错误。请检查并修正：添加原识别词和正确写法，例如 "波离" → "玻璃"、"五矿" → "5mm"。
+                已保存的术语会在下次生成纪要时自动应用。跳过将保留原始识别结果，未确认术语在纪要中标记为「待确认」。
+              </p>
+            </div>
             {termCorrections.length > 0 ? (
               <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 12 }}>
                 <thead>
@@ -3074,13 +3387,20 @@ export function WorkspaceFilePanel({
               <strong>说话人映射</strong>
               <button disabled={speakerMapLoading} onClick={() => setSpeakerMapOpen(false)} type="button">×</button>
             </header>
+            <div style={{ background: "var(--warning)/0.1", padding: "8px 12px", borderRadius: 6, marginBottom: 10, fontSize: "0.9em", lineHeight: 1.5 }}>
+              <strong>需要标记发言人吗？</strong>
+              <p style={{ margin: "4px 0 0", opacity: 0.75 }}>
+                系统已自动检测到以下说话人。为每个人填写真实姓名，生成纪要时就会使用姓名而非 "Speaker 1"。
+                跳过将保留为「待确认」，可以在后续随时补充。
+              </p>
+            </div>
             {speakerMapLoading ? (
               <p>正在读取说话人信息...</p>
             ) : detectedSpeakers.length === 0 ? (
-              <p>未检测到说话人。可以跳过此步骤。</p>
+              <p>未检测到说话人。可以跳过此步骤，未确认项将被标记为「待确认」。</p>
             ) : (
               <div>
-                <p style={{ opacity: 0.7, marginBottom: 8 }}>为以下检测到的说话人设置显示名称：</p>
+                <p style={{ opacity: 0.7, marginBottom: 8, fontSize: "0.85em" }}>点击说话人ID下方的输入框，填写显示名称。</p>
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr>
@@ -3137,7 +3457,10 @@ export function WorkspaceFilePanel({
             <strong>预览</strong>
             <span>{filePreview.item.name}</span>
           </div>
-          <button aria-label="关闭预览" className="workspace-file-action" onClick={closeFilePreview} title="关闭预览" type="button"><XmarkIcon /></button>
+          <div className="workspace-file-preview-actions">
+            <button aria-label="下载文件" className="workspace-file-action" onClick={() => void downloadWorkspaceFile(filePreview.item)} title="下载文件" type="button"><ArchiveIcon /></button>
+            <button aria-label="关闭预览" className="workspace-file-action" onClick={closeFilePreview} title="关闭预览" type="button"><XmarkIcon /></button>
+          </div>
         </header>
         <div className="workspace-file-preview-stage">
           {filePreview.status === "loading" ? <span>正在加载预览...</span> : null}

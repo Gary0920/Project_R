@@ -431,6 +431,28 @@ export type MeetingIngestResponse = {
   skipped_files: string[];
   gbrain_ingest: boolean;
   agent_run?: AgentRunResponse | null;
+  warning?: string;
+};
+
+export type MediaPreflightResponse = {
+  ok: boolean;
+  filename: string;
+  size_mb: number;
+  estimated_duration_minutes: number | null;
+  is_long_media: boolean;
+  estimated_segments: number;
+  estimated_cost_note: string;
+  warnings: string[];
+  model: string;
+};
+
+export type MeetingRetryResponse = {
+  ok: boolean;
+  meeting_folder_path: string;
+  operation: string;
+  status: string;
+  message: string;
+  agent_run?: AgentRunResponse | null;
 };
 
 export type WorkspaceKnowledgeRefreshResponse = {
