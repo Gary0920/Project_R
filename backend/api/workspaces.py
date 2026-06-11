@@ -2,13 +2,11 @@ import json
 import re
 import base64
 import binascii
-import mimetypes
 from datetime import datetime, timezone
 from pathlib import Path
 import shutil
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
@@ -110,6 +108,7 @@ from app.features.workspaces.schemas import (
 from app.features.workspaces.files.signature import (
     record_file_signature as _record_file_signature,
 )
+from app.features.workspaces.files import browser as workspace_file_browser
 from app.features.workspaces.files.storage import (
     WorkspaceStorageConfig,
     candidate_storage_path,
@@ -455,34 +454,16 @@ def list_workspace_files(
     db: Session = Depends(get_db),
     include_deleted: bool = False,
 ):
-    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-    if not workspace:
-        raise HTTPException(status_code=404, detail="项目不存在")
-
-    member = _ensure_member(db, user.id, workspace_id)
-    storage_path = _ensure_storage_path(workspace)
-    if workspace.storage_path != storage_path:
-        workspace.storage_path = storage_path
-        db.commit()
-
-    root = Path(storage_path).resolve()
-    if include_deleted:
-        return WorkspaceFilesResponse(
-            workspace_id=workspace.id,
-            root_name=workspace.name,
-            items=_build_deleted_file_items(db, workspace.id, member, user.id, user.role),
-        )
-    metas = (
-        db.query(WorkspaceFile)
-        .filter(WorkspaceFile.workspace_id == workspace_id, WorkspaceFile.deleted_at.is_(None))
-        .all()
-    )
-    metadata_by_path = {item.relative_path: item for item in metas}
-    uploader_names = _display_user_names(db, {item.uploaded_by for item in metas})
-    return WorkspaceFilesResponse(
-        workspace_id=workspace.id,
-        root_name=workspace.name,
-        items=_build_file_tree(root, root, metadata_by_path, uploader_names, member, user.id, user.role),
+    return workspace_file_browser.list_workspace_files(
+        db,
+        workspace_id,
+        user,
+        include_deleted,
+        ensure_member=_ensure_member,
+        ensure_storage_path=_ensure_storage_path,
+        build_deleted_file_items=_build_deleted_file_items,
+        build_file_tree=_build_file_tree,
+        display_user_names=_display_user_names,
     )
 
 
@@ -493,29 +474,16 @@ def get_workspace_file_content(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-    if not workspace:
-        raise HTTPException(status_code=404, detail="项目不存在")
-    _ensure_member(db, user.id, workspace_id)
-    root = _workspace_file_root(workspace)
-    rel = _safe_relative_path(path)
-    target = _resolve_workspace_child(root, rel)
-    if not target.exists() or not target.is_file():
-        raise HTTPException(status_code=404, detail="文件不存在")
-    rel_path = target.relative_to(root).as_posix()
-    meta = (
-        db.query(WorkspaceFile)
-        .filter(
-            WorkspaceFile.workspace_id == workspace_id,
-            WorkspaceFile.relative_path == rel_path,
-            WorkspaceFile.deleted_at.is_(None),
-        )
-        .first()
+    return workspace_file_browser.get_workspace_file_content(
+        db,
+        workspace_id,
+        path,
+        user,
+        ensure_member=_ensure_member,
+        workspace_file_root=_workspace_file_root,
+        safe_relative_path=_safe_relative_path,
+        resolve_workspace_child=_resolve_workspace_child,
     )
-    if meta and meta.trash_path:
-        raise HTTPException(status_code=404, detail="文件不存在")
-    media_type = (meta.content_type if meta else None) or mimetypes.guess_type(target.name)[0] or "application/octet-stream"
-    return FileResponse(target, media_type=media_type, filename=target.name)
 
 
 @router.post("/{workspace_id}/files/upload", response_model=WorkspaceMultiUploadResponse)
@@ -692,38 +660,22 @@ def create_workspace_folder(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-    if not workspace:
-        raise HTTPException(status_code=404, detail="项目不存在")
-    _ensure_member(db, user.id, workspace_id)
-    root = _workspace_file_root(workspace)
-    parent_rel = _safe_relative_path(req.parent_path)
-    _ensure_not_trash_path(parent_rel)
-    parent = _resolve_workspace_child(root, parent_rel)
-    if not parent.exists() or not parent.is_dir():
-        raise HTTPException(status_code=400, detail="目标父文件夹不存在")
-    folder_name = _safe_name(req.name)
-    target = _resolve_workspace_child(root, parent.relative_to(root) / folder_name)
-    if target.exists():
-        raise HTTPException(status_code=409, detail="已存在同名文件夹")
-    target.mkdir()
-    rel_path = target.relative_to(root).as_posix()
-    _write_workspace_audit(
+    return workspace_file_browser.create_workspace_folder(
         db,
-        user.id,
-        "workspace_folder_create",
-        _audit_detail(workspace_id, rel_path, actor_id=user.id),
+        workspace_id,
+        req,
+        user,
+        ensure_member=_ensure_member,
+        workspace_file_root=_workspace_file_root,
+        safe_relative_path=_safe_relative_path,
+        ensure_not_trash_path=_ensure_not_trash_path,
+        resolve_workspace_child=_resolve_workspace_child,
+        safe_name=_safe_name,
+        write_workspace_audit=_write_workspace_audit,
+        audit_detail=_audit_detail,
+        write_workspace_file_agent_run=_write_workspace_file_agent_run,
+        serialize_agent_run=serialize_agent_run,
     )
-    agent_run = _write_workspace_file_agent_run(
-        db,
-        user_id=user.id,
-        workspace=workspace,
-        source_type="workspace_folder_create",
-        title="新建项目文件夹",
-        path=rel_path,
-    )
-    db.commit()
-    return WorkspaceFileMutationResponse(ok=True, path=rel_path, agent_run=serialize_agent_run(db, agent_run))
 
 
 # ── Meeting endpoints ────────────────────────────────────────────────────
