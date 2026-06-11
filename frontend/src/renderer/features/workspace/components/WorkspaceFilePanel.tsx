@@ -13,6 +13,10 @@ import {
   type WorkspaceMeetingFolderForm,
 } from "./WorkspaceMeetingFolderDialog";
 import {
+  WorkspaceMeetingTranscriptDialog,
+  type WorkspaceMeetingTranscriptForm,
+} from "./WorkspaceMeetingTranscriptDialog";
+import {
   clearWorkspaceTrash,
   applyWorkspaceEntityMergeCandidateAction,
   copyWorkspacePath,
@@ -199,13 +203,7 @@ export function WorkspaceFilePanel({
   const [textPromptValue, setTextPromptValue] = useState("");
   const [textPromptBusy, setTextPromptBusy] = useState(false);
   const [meetingFolderForm, setMeetingFolderForm] = useState<WorkspaceMeetingFolderForm>({ open: false, topic: "", meetingTime: "", meetingType: "其他", busy: false });
-  const [meetingTranscriptForm, setMeetingTranscriptForm] = useState<{
-    open: boolean;
-    folderPath: string;
-    content: string;
-    selectedFile: File | null;
-    busy: boolean;
-  }>({ open: false, folderPath: "", content: "", selectedFile: null, busy: false });
+  const [meetingTranscriptForm, setMeetingTranscriptForm] = useState<WorkspaceMeetingTranscriptForm>({ open: false, folderPath: "", content: "", selectedFile: null, busy: false });
   const [speakerMapOpen, setSpeakerMapOpen] = useState(false);
   const [detectedSpeakers, setDetectedSpeakers] = useState<DetectedSpeaker[]>([]);
   const [speakerMapLoading, setSpeakerMapLoading] = useState(false);
@@ -2339,80 +2337,12 @@ export function WorkspaceFilePanel({
         />
       ) : null}
       {meetingTranscriptForm.open ? (
-        <div className="workspace-text-prompt-overlay" onClick={() => !meetingTranscriptForm.busy && setMeetingTranscriptForm((prev) => ({ ...prev, open: false }))}>
-          <form
-            className="workspace-text-prompt"
-            onClick={(event) => event.stopPropagation()}
-            onSubmit={(event) => {
-              event.preventDefault();
-              void handleMeetingTranscriptSave();
-            }}
-          >
-            <header>
-              <strong>保存会议转录文本</strong>
-              <button disabled={meetingTranscriptForm.busy} onClick={() => setMeetingTranscriptForm((prev) => ({ ...prev, open: false }))} type="button">×</button>
-            </header>
-            <label>
-              <span>会议文件夹路径</span>
-              <input
-                disabled={meetingTranscriptForm.busy}
-                onChange={(event) => setMeetingTranscriptForm((prev) => ({ ...prev, folderPath: event.target.value }))}
-                onKeyDown={(event) => { if (event.key === "Escape") setMeetingTranscriptForm((prev) => ({ ...prev, open: false })); }}
-                placeholder="例如：20-会议与沟通/20260615-0930-项目启动会"
-                value={meetingTranscriptForm.folderPath}
-              />
-            </label>
-            <label>
-              <span>转录来源</span>
-              <div className="workspace-transcript-source">
-                <label className="workspace-file-upload-button">
-                  <input
-                    accept=".txt,.md,.markdown,.docx"
-                    disabled={meetingTranscriptForm.busy}
-                    onChange={handleTranscriptFileSelect}
-                    type="file"
-                  />
-                  选择文件 (TXT / MD / DOCX)
-                </label>
-                {meetingTranscriptForm.selectedFile ? (
-                  <span className="workspace-transcript-file-name">
-                    {meetingTranscriptForm.selectedFile.name}
-                    <button
-                      className="workspace-file-action"
-                      disabled={meetingTranscriptForm.busy}
-                      onClick={() => setMeetingTranscriptForm((prev) => ({ ...prev, selectedFile: null, content: "" }))}
-                      type="button"
-                      title="清除文件"
-                    >×</button>
-                  </span>
-                ) : null}
-              </div>
-            </label>
-            <label>
-              <span>转录内容{meetingTranscriptForm.selectedFile ? "（预览）" : ""}</span>
-              <textarea
-                autoFocus
-                disabled={meetingTranscriptForm.busy || (meetingTranscriptForm.selectedFile !== null && meetingTranscriptForm.selectedFile.name.toLowerCase().endsWith(".docx"))}
-                onChange={(event) => setMeetingTranscriptForm((prev) => ({ ...prev, content: event.target.value }))}
-                onKeyDown={(event) => { if (event.key === "Escape") setMeetingTranscriptForm((prev) => ({ ...prev, open: false })); }}
-                placeholder={meetingTranscriptForm.selectedFile?.name.toLowerCase().endsWith(".docx") ? "DOCX 文件将由服务器解析..." : "在此粘贴会议转录文本，或选择文件自动填充..."}
-                rows={10}
-                value={meetingTranscriptForm.content}
-              />
-            </label>
-            <div>
-              <button disabled={meetingTranscriptForm.busy} onClick={() => setMeetingTranscriptForm((prev) => ({ ...prev, open: false }))} type="button">取消</button>
-              <button
-                disabled={
-                  meetingTranscriptForm.busy
-                  || !meetingTranscriptForm.folderPath.trim()
-                  || (!meetingTranscriptForm.content.trim() && !meetingTranscriptForm.selectedFile)
-                }
-                type="submit"
-              >保存</button>
-            </div>
-          </form>
-        </div>
+        <WorkspaceMeetingTranscriptDialog
+          form={meetingTranscriptForm}
+          setForm={setMeetingTranscriptForm}
+          onFileSelect={handleTranscriptFileSelect}
+          onSubmit={() => void handleMeetingTranscriptSave()}
+        />
       ) : null}
       {termCorrectionsOpen ? (
         <div className="workspace-text-prompt-overlay" onClick={() => !termCorrectionsBusy && setTermCorrectionsOpen(false)}>
