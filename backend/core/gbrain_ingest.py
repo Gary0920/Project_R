@@ -14,7 +14,7 @@ import yaml
 
 from app.features.preprocessing.docx_text import preprocess_docx_text
 from core.gbrain import GBrainSettings, ensure_gbrain_environment, load_gbrain_settings, resolve_gbrain_source_paths
-from core.meeting_structured_extraction import (
+from app.features.preprocessing.meeting_structured import (
     MeetingStructuredExtractionResult,
     PROMPT_VERSION as MEETING_PROMPT_VERSION,
     SKILL_NAME as MEETING_PREPROCESS_SKILL,
@@ -23,7 +23,7 @@ from core.meeting_structured_extraction import (
     find_transcript_sidecar,
     find_transcript_sidecars_for_media_files,
 )
-from core.pdf_structured_extraction import (
+from app.features.preprocessing.pdf_structured import (
     PDFStructuredExtractionResult,
     PROMPT_VERSION as PDF_PROMPT_VERSION,
     SKILL_NAME as PDF_PREPROCESS_SKILL,

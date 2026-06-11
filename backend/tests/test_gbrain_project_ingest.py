@@ -10,13 +10,13 @@ from unittest.mock import patch
 import yaml
 
 import core.gbrain_project_ingest as project_ingest
-from core.email_structured_extraction import EmailStructuredExtractionResult
+from app.features.preprocessing.email_structured import EmailStructuredExtractionResult
 from app.features.preprocessing.classifier import ExtractorClassification
 from core.gbrain import GBrainSettings
 from core.gbrain_project_ingest import PROJECT_INGEST_MANIFEST_NAME, compile_project_workspace_sources
-from core.image_structured_extraction import ImageStructuredExtractionResult
-from core.media_transcription import MediaTranscriptionResult
-from core.pdf_structured_extraction import PDFStructuredExtractionResult
+from app.features.preprocessing.image_structured import ImageStructuredExtractionResult
+from app.features.preprocessing.media_transcription import MediaTranscriptionResult
+from app.features.preprocessing.pdf_structured import PDFStructuredExtractionResult
 
 
 class GBrainProjectIngestTests(unittest.TestCase):

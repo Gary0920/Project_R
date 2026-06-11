@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 from typing import Any
 
-from core.pdf_structured_extraction import _pdf_image_sidecar_candidates
+from app.features.preprocessing.pdf_structured import _pdf_image_sidecar_candidates
 
 
 TEXT_EXTENSIONS = {".txt"}

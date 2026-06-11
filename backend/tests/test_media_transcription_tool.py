@@ -1,7 +1,7 @@
 """Unit tests for media_transcription_tool.py.
 
 No database access required — the tool is a pure wrapper around
-core.media_transcription.transcribe_media_to_markdown().
+app.features.preprocessing.media_transcription.transcribe_media_to_markdown().
 """
 
 import unittest

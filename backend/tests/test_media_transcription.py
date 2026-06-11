@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.shared.llm.client import LLMResponse, ProviderSettings
-from core.media_transcription import MediaTranscriptionOptions, transcribe_media_to_markdown
+from app.features.preprocessing.media_transcription import MediaTranscriptionOptions, transcribe_media_to_markdown
 
 
 class FakeLLMClient:
@@ -48,8 +48,8 @@ class MediaTranscriptionTests(unittest.TestCase):
                 refinement_enabled=False,
             )
 
-            with patch("core.media_transcription._extract_audio_sidecar_for_transcription", return_value=audio), patch(
-                "core.media_transcription._split_audio_for_transcription",
+            with patch("app.features.preprocessing.media_transcription._extract_audio_sidecar_for_transcription", return_value=audio), patch(
+                "app.features.preprocessing.media_transcription._split_audio_for_transcription",
                 return_value=[audio],
             ):
                 result = transcribe_media_to_markdown(video, options=options, llm_client=client)
@@ -66,7 +66,7 @@ class MediaTranscriptionTests(unittest.TestCase):
             options = MediaTranscriptionOptions(model_profile="mimo-test", max_raw_bytes=1000, refinement_enabled=True)
 
             with patch(
-                "core.media_transcription._refine_transcript",
+                "app.features.preprocessing.media_transcription._refine_transcript",
                 return_value={
                     "text": "# meeting Transcript\n\n## Speaker Map / 说话人映射\n- Speaker 1: Unknown\n\n## Corrected Transcript / 术语纠错后转写\n[00:00] Speaker 1: Project_R 和 GBrain 需要跟进。\n",
                     "profile": "deepseek-test",

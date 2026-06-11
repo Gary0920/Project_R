@@ -2994,7 +2994,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
     def test_transcribe_success_saves_media_and_transcript(self):
         """Mock 转录成功：媒体入 01-原始资料，转录入 02-转录文本，3 WorkspaceFile + audit"""
         from unittest.mock import patch, MagicMock
-        from core import media_transcription as mt
+        from app.features.preprocessing import media_transcription as mt
         workspace, folder_path = self._create_meeting_with_transcript()
 
         mock_result = MagicMock()
@@ -3046,7 +3046,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
     def test_transcribe_handles_exception_as_failed(self):
         """Mock 转写异常 → transcription_status=failed, ok=True, 保存失败说明"""
         from unittest.mock import patch
-        from core import media_transcription as mt
+        from app.features.preprocessing import media_transcription as mt
         workspace, folder_path = self._create_meeting_with_transcript()
 
         with patch.object(mt, "transcribe_media_to_markdown", side_effect=RuntimeError("Mock ASR failure")):
@@ -3065,7 +3065,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
     def test_transcribe_keeps_both_on_name_conflict(self):
         """同名媒体文件冲突时追加 (1) 不覆盖旧文件"""
         from unittest.mock import patch, MagicMock
-        from core import media_transcription as mt
+        from app.features.preprocessing import media_transcription as mt
         workspace, folder_path = self._create_meeting_with_transcript()
 
         mock_result = MagicMock()

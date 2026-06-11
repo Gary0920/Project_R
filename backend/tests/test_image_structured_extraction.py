@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.image_structured_extraction import (
+from app.features.preprocessing.image_structured import (
     ImageStructuredExtractionOptions,
     _image_prompt,
     extract_image_structured_markdown,

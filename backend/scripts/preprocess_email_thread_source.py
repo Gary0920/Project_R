@@ -10,7 +10,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from core.email_structured_extraction import (
+from app.features.preprocessing.email_structured import (
     PROMPT_VERSION,
     SKILL_NAME,
     SKILL_VERSION,

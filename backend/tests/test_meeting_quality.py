@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from core.meeting_quality import (
+from app.features.preprocessing.meeting_quality import (
     detect_repeated_text,
     classify_transcript_quality,
     quality_to_manifest_metadata,

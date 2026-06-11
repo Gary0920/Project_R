@@ -4,11 +4,11 @@ from email.message import EmailMessage
 from pathlib import Path
 from unittest.mock import patch
 
-from core.email_structured_extraction import EmailExtractionOptions, extract_email_structured_markdown
-from core.image_structured_extraction import ImageStructuredExtractionOptions, extract_image_structured_markdown
+from app.features.preprocessing.email_structured import EmailExtractionOptions, extract_email_structured_markdown
+from app.features.preprocessing.image_structured import ImageStructuredExtractionOptions, extract_image_structured_markdown
 from app.shared.llm.client import LLMResponse, ProviderSettings
-from core.media_transcription import MediaTranscriptionOptions, transcribe_media_to_markdown
-from core.pdf_structured_extraction import PDFExtractionOptions, extract_pdf_structured_markdown, load_pdf_extraction_options
+from app.features.preprocessing.media_transcription import MediaTranscriptionOptions, transcribe_media_to_markdown
+from app.features.preprocessing.pdf_structured import PDFExtractionOptions, extract_pdf_structured_markdown, load_pdf_extraction_options
 from app.features.preprocessing.policy import PreprocessModelPolicyError
 import core.gbrain_ingest as company_ingest
 import core.gbrain_project_ingest as project_ingest

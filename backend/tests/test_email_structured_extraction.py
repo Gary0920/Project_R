@@ -3,7 +3,7 @@ import unittest
 from email.message import EmailMessage
 from pathlib import Path
 
-from core.email_structured_extraction import EmailExtractionOptions, extract_email_attachments, extract_email_structured_markdown
+from app.features.preprocessing.email_structured import EmailExtractionOptions, extract_email_attachments, extract_email_structured_markdown
 
 
 class EmailStructuredExtractionTests(unittest.TestCase):

@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from core.pdf_structured_extraction import (
+from app.features.preprocessing.pdf_structured import (
     _detect_pdf_subkind,
     validate_pdf_extraction,
     _load_subkind_prompt,

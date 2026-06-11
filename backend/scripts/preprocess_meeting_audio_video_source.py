@@ -11,8 +11,8 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from core.gbrain_ingest import _sha256_file, _write_markdown
-from core.media_transcription import TRANSCRIPTION_PROMPT_VERSION, transcribe_media_to_markdown
-from core.meeting_structured_extraction import (
+from app.features.preprocessing.media_transcription import TRANSCRIPTION_PROMPT_VERSION, transcribe_media_to_markdown
+from app.features.preprocessing.meeting_structured import (
     PROMPT_VERSION,
     SKILL_NAME,
     SKILL_VERSION,

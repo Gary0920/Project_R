@@ -12,7 +12,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from core.gbrain_ingest import _sha256_file, _write_markdown
 from core.gbrain_project_ingest import DRAWING_PDF_PREPROCESS_SKILL
-from core.pdf_structured_extraction import PROMPT_VERSION, SKILL_VERSION, extract_pdf_structured_markdown
+from app.features.preprocessing.pdf_structured import PROMPT_VERSION, SKILL_VERSION, extract_pdf_structured_markdown
 
 
 def main() -> int:

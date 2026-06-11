@@ -9,7 +9,7 @@ import yaml
 
 from core.gbrain import GBrainSettings
 from core.gbrain_ingest import approve_pending_review_markdown, compile_company_wiki_sources
-from core.pdf_structured_extraction import PDFStructuredExtractionResult
+from app.features.preprocessing.pdf_structured import PDFStructuredExtractionResult
 
 
 class GBrainIngestTests(unittest.TestCase):

@@ -1,6 +1,6 @@
 """Reusable media transcription tool.
 
-Wraps `core.media_transcription.transcribe_media_to_markdown()` as a
+Wraps `app.features.preprocessing.media_transcription.transcribe_media_to_markdown()` as a
 self-contained tool that does NOT write project files, generate GBrain-ready
 output, modify workspace data, or interact with the chat/API layer.
 
@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.shared.llm.client import get_llm_client
-from core.media_transcription import (
+from app.features.preprocessing.media_transcription import (
     load_media_transcription_options,
     transcribe_media_to_markdown,
 )

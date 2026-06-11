@@ -3483,8 +3483,8 @@ async def transcribe_meeting_media(
         if duration_min is not None and duration_min > 30:
             pass  # caller/frontend handles confirmation; this is informational
 
-        # Transcribe via core.media_transcription
-        from core.media_transcription import transcribe_media_to_markdown, load_media_transcription_options
+        # Transcribe via app.features.preprocessing.media_transcription
+        from app.features.preprocessing.media_transcription import transcribe_media_to_markdown, load_media_transcription_options
         from app.shared.llm.client import get_llm_client
 
         token_cost = 0
@@ -3704,7 +3704,7 @@ def retry_meeting_operation(
         _acquire_meeting_run_lock(root, folder_dir, operation="media_transcribe_retry", user_id=user.id)
 
         try:
-            from core.media_transcription import transcribe_media_to_markdown, load_media_transcription_options
+            from app.features.preprocessing.media_transcription import transcribe_media_to_markdown, load_media_transcription_options
             from app.shared.llm.client import get_llm_client
 
             token_cost = 0

@@ -10,7 +10,7 @@ import yaml
 from app.shared.llm.client import LLMConfigurationError
 from app.features.preprocessing.docx_text import preprocess_docx_text
 from app.features.preprocessing.classifier import ExtractorClassification, classify_source_file
-from core.email_structured_extraction import (
+from app.features.preprocessing.email_structured import (
     EmailStructuredExtractionResult,
     PROMPT_VERSION as EMAIL_PROMPT_VERSION,
     SKILL_NAME as EMAIL_PREPROCESS_SKILL,
@@ -41,12 +41,12 @@ from core.gbrain_ingest import (
     _split_frontmatter,
     _write_markdown,
 )
-from core.meeting_quality import (
+from app.features.preprocessing.meeting_quality import (
     detect_repeated_text,
     quality_to_manifest_metadata,
     TranscriptionQualityResult,
 )
-from core.meeting_structured_extraction import (
+from app.features.preprocessing.meeting_structured import (
     MeetingStructuredExtractionResult,
     PROMPT_VERSION as MEETING_PROMPT_VERSION,
     SKILL_NAME as MEETING_PREPROCESS_SKILL,
@@ -55,12 +55,12 @@ from core.meeting_structured_extraction import (
     find_transcript_sidecar,
     find_transcript_sidecars_for_media_files,
 )
-from core.media_transcription import (
+from app.features.preprocessing.media_transcription import (
     TRANSCRIPTION_PROMPT_VERSION,
     MediaTranscriptionResult,
     transcribe_media_to_markdown,
 )
-from core.pdf_structured_extraction import (
+from app.features.preprocessing.pdf_structured import (
     PDFStructuredExtractionResult,
     PROMPT_VERSION as PDF_PROMPT_VERSION,
     SKILL_NAME as PDF_PREPROCESS_SKILL,
@@ -68,7 +68,7 @@ from core.pdf_structured_extraction import (
     extract_pdf_structured_markdown,
 )
 from app.features.preprocessing.policy import PreprocessModelPolicyError
-from core.image_structured_extraction import (
+from app.features.preprocessing.image_structured import (
     ImageStructuredExtractionResult,
     PROMPT_VERSION as IMAGE_PROMPT_VERSION,
     SKILL_NAME as IMAGE_PREPROCESS_SKILL,

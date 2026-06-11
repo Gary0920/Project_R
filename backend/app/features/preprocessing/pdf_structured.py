@@ -31,7 +31,7 @@ _PDF_SUBKIND_RULES: list[tuple[re.Pattern, str, str]] = [
     (re.compile(r"shop.drawing", re.IGNORECASE), "drawing_shop_drawing", "pdf-drawing-sd"),
     (re.compile(r"floor.plan|平面图|elevation|立面图|general.arrangement", re.IGNORECASE), "drawing_general_arrangement", "pdf-drawing-ga"),
 ]
-_SUBKIND_PROMPT_DIR = Path(__file__).resolve().parents[1] / "prompts"
+_SUBKIND_PROMPT_DIR = Path(__file__).resolve().parents[3] / "prompts"
 
 SYSTEM_PROMPT = """你是 Project_R 的 PDF 结构化资料提炼 Agent。
 

@@ -1,6 +1,6 @@
 import unittest
 
-from core.pdf_structured_extraction import _assert_bilingual_markdown, _final_prompt
+from app.features.preprocessing.pdf_structured import _assert_bilingual_markdown, _final_prompt
 
 
 class PDFStructuredExtractionTests(unittest.TestCase):

@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from core.image_structured_extraction import (
+from app.features.preprocessing.image_structured import (
     _detect_image_subkind,
     _find_field_value,
     _parse_extracted_fields,
@@ -98,7 +98,7 @@ class TestEnrichMarkdown(unittest.TestCase):
         md = "# Payment Screenshot\n## Description\nSome text.\n"
         fields = _parse_extracted_fields("", "payment")
         # Create enriched fields manually
-        from core.image_structured_extraction import PaymentScreenshotFields
+        from app.features.preprocessing.image_structured import PaymentScreenshotFields
         fields = ExtractedImageFields(
             subkind="payment",
             payment=PaymentScreenshotFields(amount="68.00", currency="CNY"),
@@ -112,7 +112,7 @@ class TestEnrichMarkdown(unittest.TestCase):
         md = "## Extracted Fields\n- **金额**: 68.00\n## Description\n"
         fields = ExtractedImageFields(
             subkind="payment",
-            payment=__import__('core.image_structured_extraction', fromlist=['PaymentScreenshotFields']).PaymentScreenshotFields(amount="68.00"),
+            payment=__import__('app.features.preprocessing.image_structured', fromlist=['PaymentScreenshotFields']).PaymentScreenshotFields(amount="68.00"),
         )
         enriched = _enrich_markdown_with_parsed_fields(md, fields)
         # Should not duplicate the section
@@ -126,7 +126,7 @@ class TestEnrichMarkdown(unittest.TestCase):
 
     def test_enrich_contact_sheet_markdown(self):
         md = "# Contact Sheet\n"
-        from core.image_structured_extraction import ContactSheetFields
+        from app.features.preprocessing.image_structured import ContactSheetFields
         fields = ExtractedImageFields(
             subkind="contact_sheet",
             contact_sheet=ContactSheetFields(
