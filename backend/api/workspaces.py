@@ -1,7 +1,5 @@
 import json
 import re
-import base64
-import binascii
 from datetime import datetime, timezone
 from pathlib import Path
 import shutil
@@ -109,6 +107,7 @@ from app.features.workspaces.files.signature import (
     record_file_signature as _record_file_signature,
 )
 from app.features.workspaces.files import browser as workspace_file_browser
+from app.features.workspaces.files import uploads as workspace_file_uploads
 from app.features.workspaces.files.storage import (
     WorkspaceStorageConfig,
     candidate_storage_path,
@@ -494,85 +493,27 @@ async def upload_workspace_files(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-    if not workspace:
-        raise HTTPException(status_code=404, detail="项目不存在")
-    member = _ensure_member(db, user.id, workspace_id)
-    limit_bytes, limit_message = _upload_limit_for(user, member, workspace)
-    root = _workspace_file_root(workspace)
-    rel_dir = _safe_relative_path(directory)
-    _ensure_not_trash_path(rel_dir)
-    target_dir = _resolve_workspace_child(root, rel_dir)
-    if not target_dir.exists() or not target_dir.is_dir():
-        _raise_with_audit(
-            db,
-            user.id,
-            "workspace_file_upload",
-            400,
-            "目标文件夹不存在",
-            _audit_detail(workspace_id, rel_dir.as_posix(), actor_id=user.id, error="target directory missing"),
-        )
-
-    responses: list[WorkspaceFileMutationResponse] = []
-    uploaded_paths: list[str] = []
-    for upload in files:
-        filename = _safe_name(upload.filename or "untitled")
-        content = await upload.read()
-        if len(content) > limit_bytes:
-            _raise_with_audit(
-                db,
-                user.id,
-                "workspace_file_upload",
-                400,
-                limit_message,
-                _audit_detail(workspace_id, (rel_dir / filename).as_posix(), actor_id=user.id, error="file too large"),
-            )
-        conflict_path = _resolve_conflict_path(target_dir, filename, "keep_both")
-        if conflict_path is None:
-            responses.append(WorkspaceFileMutationResponse(ok=False, path=(rel_dir / filename).as_posix(), rag_status="skipped"))
-            continue
-        target_path = _resolve_workspace_child(root, conflict_path.relative_to(root))
-        if target_path.exists() and target_path.is_dir():
-            _raise_with_audit(
-                db,
-                user.id,
-                "workspace_file_upload",
-                400,
-                "不能覆盖文件夹",
-                _audit_detail(workspace_id, (rel_dir / filename).as_posix(), actor_id=user.id, error="target is directory"),
-            )
-        target_path.write_bytes(content)
-        rel_path = target_path.relative_to(root).as_posix()
-        meta = _upsert_workspace_file(
-            db,
-            workspace_id,
-            user.id,
-            rel_path,
-            filename,
-            upload.content_type or "application/octet-stream",
-            len(content),
-            target_path,
-        )
-        _write_workspace_audit(
-            db,
-            user.id,
-            "workspace_file_upload",
-            _audit_detail(workspace_id, rel_path, meta.id, actor_id=user.id, size=len(content)),
-        )
-        responses.append(WorkspaceFileMutationResponse(ok=True, path=rel_path, file_id=meta.id, rag_status=meta.rag_status))
-        uploaded_paths.append(rel_path)
-    agent_run = _write_workspace_file_agent_run(
+    return await workspace_file_uploads.upload_workspace_files(
         db,
-        user_id=user.id,
-        workspace=workspace,
-        source_type="workspace_file_upload",
-        title="上传项目文件",
-        path=rel_dir.as_posix(),
-        detail=f"上传 {len(uploaded_paths)} 个文件",
-        result={"file_count": len(uploaded_paths), "paths": uploaded_paths[:20]},
+        workspace_id,
+        directory,
+        files,
+        user,
+        ensure_member=_ensure_member,
+        upload_limit_for=_upload_limit_for,
+        workspace_file_root=_workspace_file_root,
+        safe_relative_path=_safe_relative_path,
+        ensure_not_trash_path=_ensure_not_trash_path,
+        resolve_workspace_child=_resolve_workspace_child,
+        safe_name=_safe_name,
+        resolve_conflict_path=_resolve_conflict_path,
+        raise_with_audit=_raise_with_audit,
+        audit_detail=_audit_detail,
+        upsert_workspace_file=_upsert_workspace_file,
+        write_workspace_audit=_write_workspace_audit,
+        write_workspace_file_agent_run=_write_workspace_file_agent_run,
+        serialize_agent_run=serialize_agent_run,
     )
-    db.commit()
-    return WorkspaceMultiUploadResponse(ok=True, files=responses, agent_run=serialize_agent_run(db, agent_run))
 
 
 @router.post("/{workspace_id}/files", response_model=WorkspaceFileMutationResponse)
@@ -582,75 +523,26 @@ def upload_workspace_file(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-    if not workspace:
-        raise HTTPException(status_code=404, detail="项目不存在")
-    member = _ensure_member(db, user.id, workspace_id)
-    limit_bytes, limit_message = _upload_limit_for(user, member, workspace)
-    root = _workspace_file_root(workspace)
-    directory = _safe_relative_path(req.directory)
-    _ensure_not_trash_path(directory)
-    filename = _safe_name(req.filename)
-    target_dir = _resolve_workspace_child(root, directory)
-    if not target_dir.exists() or not target_dir.is_dir():
-        raise HTTPException(status_code=400, detail="目标文件夹不存在")
-    target_path = _resolve_workspace_child(root, directory / filename)
-    if target_path.exists() and target_path.is_dir():
-        raise HTTPException(status_code=400, detail="不能覆盖文件夹")
-    try:
-        content = base64.b64decode(req.content_base64, validate=True)
-    except binascii.Error as exc:
-        raise HTTPException(status_code=400, detail="文件内容格式不正确") from exc
-    if len(content) > limit_bytes:
-        _raise_with_audit(
-            db,
-            user.id,
-            "workspace_file_upload",
-            400,
-            limit_message,
-            _audit_detail(workspace_id, (directory / filename).as_posix(), actor_id=user.id, error="file too large"),
-        )
-
-    conflict_path = _resolve_conflict_path(target_dir, filename, req.conflict_strategy)
-    if conflict_path is None:
-        skipped_path = (directory / filename).as_posix()
-        agent_run = _write_workspace_file_agent_run(
-            db,
-            user_id=user.id,
-            workspace=workspace,
-            source_type="workspace_file_upload",
-            title="上传项目文件",
-            path=skipped_path,
-            status="cancelled",
-            detail="目标位置已存在同名文件，按策略跳过",
-            result={"rag_status": "skipped"},
-        )
-        db.commit()
-        return WorkspaceFileMutationResponse(ok=False, path=skipped_path, rag_status="skipped", agent_run=serialize_agent_run(db, agent_run))
-    target_path = _resolve_workspace_child(root, conflict_path.relative_to(root))
-    if target_path.exists() and target_path.is_dir():
-        raise HTTPException(status_code=400, detail="不能覆盖文件夹")
-    target_path.write_bytes(content)
-    rel_path = target_path.relative_to(root).as_posix()
-    meta = _upsert_workspace_file(db, workspace_id, user.id, rel_path, filename, req.content_type, len(content), target_path)
-    _write_workspace_audit(
+    return workspace_file_uploads.upload_workspace_file(
         db,
-        user.id,
-        "workspace_file_upload",
-        _audit_detail(workspace_id, rel_path, meta.id, actor_id=user.id, size=len(content)),
+        workspace_id,
+        req,
+        user,
+        ensure_member=_ensure_member,
+        upload_limit_for=_upload_limit_for,
+        workspace_file_root=_workspace_file_root,
+        safe_relative_path=_safe_relative_path,
+        ensure_not_trash_path=_ensure_not_trash_path,
+        safe_name=_safe_name,
+        resolve_workspace_child=_resolve_workspace_child,
+        resolve_conflict_path=_resolve_conflict_path,
+        raise_with_audit=_raise_with_audit,
+        audit_detail=_audit_detail,
+        upsert_workspace_file=_upsert_workspace_file,
+        write_workspace_audit=_write_workspace_audit,
+        write_workspace_file_agent_run=_write_workspace_file_agent_run,
+        serialize_agent_run=serialize_agent_run,
     )
-    agent_run = _write_workspace_file_agent_run(
-        db,
-        user_id=user.id,
-        workspace=workspace,
-        source_type="workspace_file_upload",
-        title="上传项目文件",
-        path=rel_path,
-        detail=filename,
-        result={"file_id": meta.id, "rag_status": meta.rag_status, "size": len(content)},
-    )
-    db.commit()
-    return WorkspaceFileMutationResponse(ok=True, path=rel_path, file_id=meta.id, rag_status=meta.rag_status, agent_run=serialize_agent_run(db, agent_run))
 
 
 @router.post("/{workspace_id}/folders", response_model=WorkspaceFileMutationResponse)
