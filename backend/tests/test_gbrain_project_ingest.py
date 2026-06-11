@@ -11,7 +11,7 @@ import yaml
 
 import core.gbrain_project_ingest as project_ingest
 from core.email_structured_extraction import EmailStructuredExtractionResult
-from core.extractor_classifier import ExtractorClassification
+from app.features.preprocessing.classifier import ExtractorClassification
 from core.gbrain import GBrainSettings
 from core.gbrain_project_ingest import PROJECT_INGEST_MANIFEST_NAME, compile_project_workspace_sources
 from core.image_structured_extraction import ImageStructuredExtractionResult

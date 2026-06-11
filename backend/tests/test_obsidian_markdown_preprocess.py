@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from core.obsidian_markdown_preprocess import clean_obsidian_markdown, preprocess_obsidian_markdown_tree
+from app.features.preprocessing.obsidian_markdown import clean_obsidian_markdown, preprocess_obsidian_markdown_tree
 
 
 class ObsidianMarkdownPreprocessTests(unittest.TestCase):

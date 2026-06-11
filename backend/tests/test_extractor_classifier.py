@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-import core.extractor_classifier as classifier
+import app.features.preprocessing.classifier as classifier
 
 
 class ExtractorClassifierTests(unittest.TestCase):

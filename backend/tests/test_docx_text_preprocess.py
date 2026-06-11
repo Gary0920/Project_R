@@ -7,7 +7,7 @@ class DocxTextPreprocessTests(unittest.TestCase):
     def test_preprocess_docx_text_outputs_gbrain_ready_template(self):
         from docx import Document
 
-        from core.docx_text_preprocess import preprocess_docx_text
+        from app.features.preprocessing.docx_text import preprocess_docx_text
 
         with tempfile.TemporaryDirectory() as temp_dir:
             source = Path(temp_dir) / "项目会议.docx"

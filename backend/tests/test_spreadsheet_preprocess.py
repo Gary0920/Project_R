@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.spreadsheet_preprocess import (
+from app.features.preprocessing.spreadsheet import (
     extract_spreadsheet_markdown,
     _clean_cell,
     _is_material_code_column,

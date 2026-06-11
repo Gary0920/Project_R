@@ -8,8 +8,8 @@ from typing import Any, Callable
 import yaml
 
 from app.shared.llm.client import LLMConfigurationError
-from core.docx_text_preprocess import preprocess_docx_text
-from core.extractor_classifier import ExtractorClassification, classify_source_file
+from app.features.preprocessing.docx_text import preprocess_docx_text
+from app.features.preprocessing.classifier import ExtractorClassification, classify_source_file
 from core.email_structured_extraction import (
     EmailStructuredExtractionResult,
     PROMPT_VERSION as EMAIL_PROMPT_VERSION,
@@ -75,7 +75,7 @@ from core.image_structured_extraction import (
     SKILL_VERSION as IMAGE_PREPROCESS_VERSION,
     extract_image_structured_markdown,
 )
-from core.spreadsheet_preprocess import (
+from app.features.preprocessing.spreadsheet import (
     SpreadsheetExtractionResult,
     SKILL_NAME as SPREADSHEET_PREPROCESS_SKILL,
     SKILL_VERSION as SPREADSHEET_PREPROCESS_VERSION,
