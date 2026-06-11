@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 import yaml
 
-from core.llm import LLMConfigurationError
+from app.shared.llm.client import LLMConfigurationError
 from core.docx_text_preprocess import preprocess_docx_text
 from core.extractor_classifier import ExtractorClassification, classify_source_file
 from core.email_structured_extraction import (

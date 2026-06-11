@@ -2405,7 +2405,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         mock_client = MagicMock()
         mock_client.complete.return_value = mock_response
 
-        with patch("core.llm.get_llm_client", return_value=mock_client):
+        with patch("app.shared.llm.client.get_llm_client", return_value=mock_client):
             resp = workspaces_api.generate_meeting_minutes_and_actions(
                 workspace.id,
                 workspaces_api.MeetingGenerateRequest(folder_path=folder_path),
@@ -2474,7 +2474,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
 
         workspace, folder_path = self._create_meeting_with_transcript()
 
-        with patch("core.llm.get_llm_client", return_value=mock_client):
+        with patch("app.shared.llm.client.get_llm_client", return_value=mock_client):
             resp = workspaces_api.generate_meeting_minutes_and_actions(
                 workspace.id,
                 workspaces_api.MeetingGenerateRequest(folder_path=folder_path),
@@ -2547,7 +2547,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         mock_client = MagicMock()
         mock_client.complete.return_value = mock_response
 
-        with patch("core.llm.get_llm_client", return_value=mock_client):
+        with patch("app.shared.llm.client.get_llm_client", return_value=mock_client):
             resp = workspaces_api.generate_meeting_minutes_and_actions(
                 workspace.id,
                 workspaces_api.MeetingGenerateRequest(folder_path=folder_path),
@@ -2588,7 +2588,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         mock_client = MagicMock()
         mock_client.complete.return_value = mock_response
 
-        with patch("core.llm.get_llm_client", return_value=mock_client):
+        with patch("app.shared.llm.client.get_llm_client", return_value=mock_client):
             workspaces_api.generate_meeting_minutes_and_actions(
                 workspace.id,
                 workspaces_api.MeetingGenerateRequest(folder_path=folder_path),
@@ -2613,7 +2613,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         mock_client.complete.return_value = mock_response
 
         workspace, folder_path = self._create_meeting_with_transcript()
-        with patch("core.llm.get_llm_client", return_value=mock_client):
+        with patch("app.shared.llm.client.get_llm_client", return_value=mock_client):
             workspaces_api.generate_meeting_minutes_and_actions(
                 workspace.id,
                 workspaces_api.MeetingGenerateRequest(folder_path=folder_path),
@@ -2652,7 +2652,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         root = self.workspace_root(workspace)
 
         # First generate → v1
-        with patch("core.llm.get_llm_client", return_value=mock_client):
+        with patch("app.shared.llm.client.get_llm_client", return_value=mock_client):
             resp1 = workspaces_api.generate_meeting_minutes_and_actions(
                 workspace.id,
                 workspaces_api.MeetingGenerateRequest(folder_path=folder_path),
@@ -2664,7 +2664,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
 
         # Second generate with regenerate=True → v2
         mock_client.complete.return_value = mock_response_v2
-        with patch("core.llm.get_llm_client", return_value=mock_client):
+        with patch("app.shared.llm.client.get_llm_client", return_value=mock_client):
             resp2 = workspaces_api.generate_meeting_minutes_and_actions(
                 workspace.id,
                 workspaces_api.MeetingGenerateRequest(folder_path=folder_path, regenerate=True),
@@ -2691,7 +2691,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         workspace, folder_path = self._create_meeting_with_transcript()
         root = self.workspace_root(workspace)
 
-        with patch("core.llm.get_llm_client", side_effect=_raise_error):
+        with patch("app.shared.llm.client.get_llm_client", side_effect=_raise_error):
             resp = workspaces_api.generate_meeting_minutes_and_actions(
                 workspace.id,
                 workspaces_api.MeetingGenerateRequest(folder_path=folder_path),
@@ -2937,7 +2937,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         mock_client = MagicMock()
         mock_client.complete.return_value = mock_response
 
-        with patch("core.llm.get_llm_client", return_value=mock_client):
+        with patch("app.shared.llm.client.get_llm_client", return_value=mock_client):
             workspaces_api.generate_meeting_minutes_and_actions(
                 workspace.id,
                 workspaces_api.MeetingGenerateRequest(folder_path=folder_path),
@@ -3135,7 +3135,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         mock_resp.usage = {"input_tokens": 1, "output_tokens": 1}
         mock_client = MagicMock()
         mock_client.complete.return_value = mock_resp
-        with patch("core.llm.get_llm_client", return_value=mock_client):
+        with patch("app.shared.llm.client.get_llm_client", return_value=mock_client):
             workspaces_api.generate_meeting_minutes_and_actions(
                 workspace.id,
                 workspaces_api.MeetingGenerateRequest(folder_path=fp),
@@ -3236,7 +3236,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         # Generate twice to create v1 and v2
         mock_resp = MagicMock(); mock_resp.text = "# v1"; mock_resp.usage = {"input_tokens": 1, "output_tokens": 1}
         mock_client = MagicMock(); mock_client.complete.return_value = mock_resp
-        with patch("core.llm.get_llm_client", return_value=mock_client):
+        with patch("app.shared.llm.client.get_llm_client", return_value=mock_client):
             workspaces_api.generate_meeting_minutes_and_actions(
                 workspace.id, workspaces_api.MeetingGenerateRequest(folder_path=fp), self.user, self.db)
             mock_resp.text = "# v2"
@@ -3292,7 +3292,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         # Regenerate
         mock_resp = MagicMock(); mock_resp.text = "# v2"; mock_resp.usage = {"input_tokens": 1, "output_tokens": 1}
         mock_client = MagicMock(); mock_client.complete.return_value = mock_resp
-        with patch("core.llm.get_llm_client", return_value=mock_client):
+        with patch("app.shared.llm.client.get_llm_client", return_value=mock_client):
             workspaces_api.generate_meeting_minutes_and_actions(
                 workspace.id,
                 workspaces_api.MeetingGenerateRequest(folder_path=fp, regenerate=True),
@@ -3377,7 +3377,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         mock_resp.usage = {"input_tokens": 10, "output_tokens": 20}
         mock_client = MagicMock()
         mock_client.complete.return_value = mock_resp
-        with patch("core.llm.get_llm_client", return_value=mock_client):
+        with patch("app.shared.llm.client.get_llm_client", return_value=mock_client):
             gen_resp = workspaces_api.generate_meeting_minutes_and_actions(
                 workspace.id,
                 workspaces_api.MeetingGenerateRequest(folder_path=fp),
@@ -3391,7 +3391,7 @@ class WorkspaceFileTreeTests(unittest.TestCase):
 
         # 7. Re-run → v2
         mock_resp.text = "# 会议纪要\n\n## 一句话结论\n\nE2E v2。\n"
-        with patch("core.llm.get_llm_client", return_value=mock_client):
+        with patch("app.shared.llm.client.get_llm_client", return_value=mock_client):
             gen2_resp = workspaces_api.generate_meeting_minutes_and_actions(
                 workspace.id,
                 workspaces_api.MeetingGenerateRequest(folder_path=fp, regenerate=True),

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.llm import ProviderSettings
+from app.shared.llm.client import ProviderSettings
 
 
 TEXT_MODEL_PROFILE = "deepseek-flash"

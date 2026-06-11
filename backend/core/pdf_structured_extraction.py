@@ -10,7 +10,7 @@ from typing import Any
 
 from pypdf import PdfReader
 
-from core.llm import LLMClient, LLMConfigurationError, get_llm_client
+from app.shared.llm.client import LLMClient, LLMConfigurationError, get_llm_client
 from app.features.preprocessing.policy import ensure_mimo_v2_5_model, ensure_profile_allowed
 
 

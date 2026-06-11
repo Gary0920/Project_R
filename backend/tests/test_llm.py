@@ -2,7 +2,7 @@ import unittest
 import os
 from unittest.mock import patch
 
-from core.llm import (
+from app.shared.llm.client import (
     BaseProviderClient,
     LLMResponse,
     LLMProviderError,

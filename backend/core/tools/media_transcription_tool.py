@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from core.llm import get_llm_client
+from app.shared.llm.client import get_llm_client
 from core.media_transcription import (
     load_media_transcription_options,
     transcribe_media_to_markdown,

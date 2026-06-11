@@ -7,7 +7,7 @@ from core.image_structured_extraction import (
     _image_prompt,
     extract_image_structured_markdown,
 )
-from core.llm import LLMResponse, ProviderSettings
+from app.shared.llm.client import LLMResponse, ProviderSettings
 
 
 class _FakeImageLLMClient:

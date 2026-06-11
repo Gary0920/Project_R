@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from core.email_structured_extraction import EmailExtractionOptions, extract_email_structured_markdown
 from core.image_structured_extraction import ImageStructuredExtractionOptions, extract_image_structured_markdown
-from core.llm import LLMResponse, ProviderSettings
+from app.shared.llm.client import LLMResponse, ProviderSettings
 from core.media_transcription import MediaTranscriptionOptions, transcribe_media_to_markdown
 from core.pdf_structured_extraction import PDFExtractionOptions, extract_pdf_structured_markdown, load_pdf_extraction_options
 from app.features.preprocessing.policy import PreprocessModelPolicyError

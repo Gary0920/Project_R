@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from core.llm import LLMResponse, ProviderSettings
+from app.shared.llm.client import LLMResponse, ProviderSettings
 from core.media_transcription import MediaTranscriptionOptions, transcribe_media_to_markdown
 
 

@@ -10,7 +10,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.NamedTemporaryFile(delete=Fal
 
 import api.chat as chat_api
 import app.features.skills.execution as skill_execution
-from core.llm import LLMProviderError, LLMResponse
+from app.shared.llm.client import LLMProviderError, LLMResponse
 from app.shared.web_search.service import WebSearchResponse, WebSearchResult
 from fastapi import HTTPException
 from models import Base, SessionLocal, engine

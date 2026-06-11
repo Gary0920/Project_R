@@ -12,7 +12,7 @@ from starlette.datastructures import Headers
 os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.NamedTemporaryFile(delete=False).name}"
 
 import api.chat as chat_api
-from core.llm import LLMResponse, ProviderSettings
+from app.shared.llm.client import LLMResponse, ProviderSettings
 from models import Base, SessionLocal, engine
 from models.session import ChatSession
 from models.user import User

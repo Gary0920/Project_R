@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parents[3]
 load_dotenv(BASE_DIR / ".env")
 
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}

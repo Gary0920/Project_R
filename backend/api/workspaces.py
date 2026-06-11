@@ -2766,7 +2766,7 @@ def generate_meeting_minutes_and_actions(
 
     try:
         # LLM generation
-        from core.llm import get_llm_client
+        from app.shared.llm.client import get_llm_client
 
         minutes_md: str = ""
         actions_md: str = ""
@@ -3485,7 +3485,7 @@ async def transcribe_meeting_media(
 
         # Transcribe via core.media_transcription
         from core.media_transcription import transcribe_media_to_markdown, load_media_transcription_options
-        from core.llm import get_llm_client
+        from app.shared.llm.client import get_llm_client
 
         token_cost = 0
         options = load_media_transcription_options()
@@ -3705,7 +3705,7 @@ def retry_meeting_operation(
 
         try:
             from core.media_transcription import transcribe_media_to_markdown, load_media_transcription_options
-            from core.llm import get_llm_client
+            from app.shared.llm.client import get_llm_client
 
             token_cost = 0
             options = load_media_transcription_options()
@@ -3806,7 +3806,7 @@ def retry_meeting_operation(
             raise HTTPException(status_code=400, detail=f"转录未成功，需要先重试转录。原因：{failed_reason}")
 
         # Delegate to generate endpoint with regenerate=True (in-process via function call)
-        from core.llm import get_llm_client
+        from app.shared.llm.client import get_llm_client
 
         speaker_map_text = _read_file_safe(folder_dir / "02-转录文本" / "speaker-map-latest.md")
         term_corrections_text = _read_file_safe(folder_dir / "02-转录文本" / "term-corrections-latest.md")
