@@ -6,7 +6,6 @@ import mimetypes
 from datetime import datetime, timezone
 from pathlib import Path
 import shutil
-import subprocess
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
@@ -151,6 +150,23 @@ from app.features.workspaces.meetings.markdown import (
     transcript_source_label as _transcript_source_label,
     transcript_status_value as _transcript_status_value,
 )
+from app.features.workspaces.meetings.utils import (
+    SUPPORTED_MEDIA_EXTENSIONS as _SUPPORTED_MEDIA_EXTENSIONS,
+    acquire_meeting_run_lock as _acquire_meeting_run_lock,
+    build_speaker_map_markdown as _build_speaker_map_markdown,
+    build_term_corrections_markdown as _build_term_corrections_markdown,
+    duration_minutes as _duration_minutes,
+    estimate_media_info as _estimate_media_info,
+    next_version_number as _next_version_number,
+    parse_speakers_from_transcript as _parse_speakers_from_transcript,
+    parse_table_row_count as _parse_table_row_count,
+    read_file_safe as _read_file_safe,
+    read_meeting_meta as _read_meeting_meta,
+    release_meeting_run_lock as _release_meeting_run_lock,
+    size_mb as _size_mb,
+    speaker_timeline_rows as _speaker_timeline_rows,
+    write_meeting_meta as _write_meeting_meta,
+)
 from app.features.workspaces.files.service import (
     DEFAULT_UNFILED_DIR,
     DEFAULT_PROJECT_WORKSPACE_TEMPLATE_DIRS,
@@ -208,7 +224,6 @@ MEETING_TYPES = [
     "培训分享",
     "其他",
 ]
-MEETING_TYPE_META_FILENAME = ".meeting-meta.json"
 
 
 def _slugify(name: str) -> str:
@@ -1866,87 +1881,6 @@ def _extract_text_from_docx(file_bytes: bytes, filename: str = "") -> str:
 
 # ── Helper ───────────────────────────────────────────────────────────────
 
-def _read_meeting_meta(folder_dir: Path) -> dict[str, str]:
-    """Read meeting metadata from .meeting-meta.json in the meeting folder root.
-    Returns a dict with keys like 'meeting_type', 'topic', 'meeting_time'.
-    Defaults to empty values if the file doesn't exist."""
-    meta_path = folder_dir / MEETING_TYPE_META_FILENAME
-    if not meta_path.exists():
-        return {}
-    try:
-        data = json.loads(meta_path.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            return {k: str(v) for k, v in data.items()}
-    except (json.JSONDecodeError, OSError):
-        pass
-    return {}
-
-
-def _write_meeting_meta(folder_dir: Path, *, topic: str, meeting_time: str | None, meeting_type: str) -> None:
-    """Write meeting metadata to .meeting-meta.json in the meeting folder root."""
-    meta_path = folder_dir / MEETING_TYPE_META_FILENAME
-    data: dict[str, str] = {
-        "topic": topic,
-        "meeting_type": meeting_type,
-    }
-    if meeting_time:
-        data["meeting_time"] = meeting_time
-    meta_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-# ── Step 3: Meeting minutes & actions generation ─────────────────────────
-
-def _next_version_number(dir_path: Path, prefix: str) -> int:
-    """Find the next version number for a file series like prefix-v1.md, prefix-v2.md."""
-    highest = 0
-    if not dir_path.exists():
-        return 1
-    pattern = re.compile(rf"^{re.escape(prefix)}-v(\d+)\.md$", re.IGNORECASE)
-    for child in dir_path.iterdir():
-        if child.is_file():
-            m = pattern.match(child.name)
-            if m:
-                highest = max(highest, int(m.group(1)))
-    return highest + 1
-
-
-def _read_file_safe(path: Path) -> str:
-    """Read a file as string, return empty if missing."""
-    if not path.exists() or not path.is_file():
-        return ""
-    return path.read_text(encoding="utf-8")
-
-
-def _meeting_run_lock_path(root: Path, folder_dir: Path) -> Path:
-    return folder_dir / ".project-r-meeting-processing.lock"
-
-
-def _acquire_meeting_run_lock(root: Path, folder_dir: Path, *, operation: str, user_id: int) -> Path:
-    lock_path = _meeting_run_lock_path(root, folder_dir)
-    if lock_path.exists():
-        raise HTTPException(status_code=409, detail="当前会议已有处理中任务，请等待完成后再操作")
-    lock_path.write_text(
-        json.dumps(
-            {
-                "operation": operation,
-                "user_id": user_id,
-                "created_at": serialize_datetime_utc(datetime.now(timezone.utc)),
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-    return lock_path
-
-
-def _release_meeting_run_lock(lock_path: Path | None) -> None:
-    if lock_path and lock_path.exists():
-        try:
-            lock_path.unlink()
-        except OSError:
-            pass
-
-
 def _workspace_file_uploader(db: Session, workspace_id: int, rel_path: str) -> int | None:
     meta = (
         db.query(WorkspaceFile)
@@ -2035,24 +1969,6 @@ def _read_auxiliary_summaries(folder_dir: Path, source_filename: str = "", max_c
         suffix_note = "\n\n> 已截断，仅保留前部内容。" if len(text) > len(clipped) else ""
         sections.append(f"### {child.name}\n\n{clipped}{suffix_note}")
     return "\n\n".join(sections)
-
-
-def _parse_table_row_count(markdown_text: str, section_header: str) -> int:
-    """Count data rows in a table section (headers and separators excluded)."""
-    lines = markdown_text.split("\n")
-    in_section = False
-    data_count = 0
-    for line in lines:
-        if section_header in line and line.startswith("|"):
-            in_section = True
-            continue
-        if in_section:
-            if "---" in line:
-                continue
-            if not line.startswith("|"):
-                break
-            data_count += 1
-    return data_count
 
 
 @router.post("/{workspace_id}/meetings/generate", response_model=MeetingGenerateResponse)
@@ -2313,51 +2229,6 @@ def generate_meeting_minutes_and_actions(
 
 # ── Step 4: Speaker map & term corrections ───────────────────────────────
 
-def _parse_speakers_from_transcript(transcript_text: str) -> list[DetectedSpeaker]:
-    """Parse the 说话人概览 section of a transcript to extract speaker info."""
-    speakers: list[DetectedSpeaker] = []
-    in_section = False
-    for line in transcript_text.split("\n"):
-        if "说话人概览" in line and "##" in line:
-            in_section = True
-            continue
-        if in_section:
-            if "## " in line and "说话人概览" not in line:
-                break
-            if line.startswith("|") and "---" not in line and "说话人ID" not in line:
-                # Parse table row: | Speaker 1 | Speaker 1 | 未映射 | 60% | — | 待确认 |
-                parts = [p.strip() for p in line.split("|") if p.strip()]
-                if len(parts) >= 4:
-                    speakers.append(DetectedSpeaker(
-                        speaker_id=parts[0],
-                        display_name=parts[1] if len(parts) > 1 else parts[0],
-                        ratio=parts[3] if len(parts) > 3 else "—",
-                        duration=parts[4] if len(parts) > 4 else "—",
-                    ))
-    return speakers
-
-
-def _speaker_timeline_rows(transcript_text: str, limit: int = 30) -> list[str]:
-    rows: list[str] = []
-    in_section = False
-    for line in transcript_text.splitlines():
-        if line.startswith("## ") and "说话人时间轴" in line:
-            in_section = True
-            continue
-        if in_section and line.startswith("## "):
-            break
-        if not in_section or not line.startswith("|") or "---" in line or "行号" in line:
-            continue
-        parts = [part.strip() for part in line.split("|") if part.strip()]
-        if len(parts) >= 4:
-            rows.append(
-                f"| {_escape_pipe(parts[0])} | {_escape_pipe(parts[1])} | {_escape_pipe(parts[2])} | {_escape_pipe(parts[3])} |"
-            )
-        if len(rows) >= limit:
-            break
-    return rows
-
-
 @router.get("/{workspace_id}/meetings/speakers", response_model=MeetingSpeakersResponse)
 def get_meeting_speakers(
     workspace_id: int,
@@ -2385,35 +2256,6 @@ def get_meeting_speakers(
     text = transcript_path.read_text(encoding="utf-8")
     speakers = _parse_speakers_from_transcript(text)
     return MeetingSpeakersResponse(ok=True, detected_speakers=speakers)
-
-
-def _build_speaker_map_markdown(
-    speakers: list[SpeakerMapItem],
-    author: str,
-    timestamp: str,
-    timeline_rows: list[str] | None = None,
-) -> str:
-    """Build speaker-map-latest.md formal content."""
-    rows = "\n".join(
-        f"| {_escape_pipe(s.speaker_id)} | {_escape_pipe(s.display_name)} | 已映射 | {_escape_pipe(author)} | {timestamp} |"
-        for s in speakers
-    )
-    timeline = "\n".join(timeline_rows or ["| — | — | — | — |"])
-    return (
-        "# 说话人映射\n\n"
-        "## 映射状态\n\n"
-        f"- 修改人：{author}\n"
-        f"- 修改时间：{timestamp}\n"
-        f"- 映射状态：已确认\n\n"
-        "## 说话人映射表\n\n"
-        "| 说话人ID | 显示名称 | 映射状态 | 修改人 | 修改时间 |\n"
-        "|---|---|---|---|---|\n"
-        f"{rows}\n\n"
-        "## 时间轴辅助信息\n\n"
-        "| 行号 | 时间点 | 说话人ID | 内容摘要 |\n"
-        "|---|---|---|---|\n"
-        f"{timeline}\n"
-    )
 
 
 @router.post("/{workspace_id}/meetings/speaker-map", response_model=SpeakerMapResponse)
@@ -2465,22 +2307,6 @@ def save_meeting_speaker_map(
     db.commit()
     return SpeakerMapResponse(ok=True, meeting_folder_path=req.folder_path,
                                speaker_map_path=latest_rel, gbrain_ingest=False)
-
-
-def _build_term_corrections_markdown(corrections: list[TermCorrectionItem], timestamp: str) -> str:
-    rows = "\n".join(
-        f"| {_escape_pipe(c.original)} | {_escape_pipe(c.corrected)} | {_escape_pipe(c.type)} | {c.confidence} | 已确认 |"
-        for c in corrections
-    )
-    return (
-        "# 术语纠错\n\n"
-        f"- 修改时间：{timestamp}\n"
-        f"- 纠错数：{len(corrections)}\n\n"
-        "## 术语纠错表\n\n"
-        "| 原识别 | 建议修正 | 类型 | 置信度 | 状态 |\n"
-        "|---|---|---|---|---|\n"
-        f"{rows}\n"
-    )
 
 
 @router.post("/{workspace_id}/meetings/term-corrections", response_model=TermCorrectionsResponse)
@@ -2548,52 +2374,6 @@ def _validate_meeting_folder(workspace: "Workspace", folder_path: str) -> None:
 
 
 # ── Step 5: Media transcription ───────────────────────────────────────────
-
-_SUPPORTED_MEDIA_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".mp4", ".mov", ".avi", ".wmv", ".mkv", ".webm"}
-
-
-def _size_mb(path: Path) -> float:
-    return path.stat().st_size / (1024 * 1024) if path.exists() else 0.0
-
-
-def _duration_minutes(path: Path) -> int | None:
-    """Estimate media duration in minutes via ffprobe. Returns None if unavailable."""
-    try:
-        proc = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
-            capture_output=True, text=True, timeout=15,
-        )
-        return max(1, round(float(proc.stdout.strip()) / 60))
-    except Exception:
-        return None
-
-
-def _estimate_media_info(size_bytes: int, filename: str) -> dict:
-    """Estimate media cost/duration from file size and type. Returns preflight info."""
-    size_mb = size_bytes / (1024 * 1024)
-    is_audio_only = Path(filename).suffix.lower() in {".mp3", ".wav", ".m4a", ".ogg", ".flac"}
-    # Rough estimate: audio ~1 MB/min, video ~8 MB/min
-    if is_audio_only:
-        est_minutes = max(1, round(size_mb / 1.0))
-    else:
-        est_minutes = max(1, round(size_mb / 8.0))
-    is_long = est_minutes > 30
-    seg_count = max(1, (est_minutes + 299) // 300)  # 300s segments
-    warnings: list[str] = []
-    if is_long:
-        warnings.append(f"媒体时长超过 30 分钟（预估 {est_minutes} 分钟），将自动分段转录（{seg_count} 段）")
-    if size_mb > 500:
-        warnings.append("文件超过 500 MB，转录时间较长，请耐心等待")
-    cost_note = f"预估 {est_minutes} 分钟，将使用 MiMo V2.5 模型转录。{'长视频将自动分段处理。' if is_long else ''}"
-    return {
-        "size_mb": round(size_mb, 1),
-        "estimated_duration_minutes": est_minutes,
-        "is_long_media": is_long,
-        "estimated_segments": seg_count,
-        "estimated_cost_note": cost_note,
-        "warnings": warnings,
-    }
 
 
 @router.post("/{workspace_id}/meetings/transcribe/media", response_model=MediaTranscribeResponse)
