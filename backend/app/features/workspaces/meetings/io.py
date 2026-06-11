@@ -21,6 +21,18 @@ class VersionedLatestMarkdown:
     latest_rel: str
 
 
+@dataclass(frozen=True)
+class GeneratedMeetingMarkdowns:
+    minutes_version_path: Path
+    minutes_version_rel: str
+    minutes_latest_path: Path
+    minutes_latest_rel: str
+    actions_version_path: Path
+    actions_version_rel: str
+    actions_latest_path: Path
+    actions_latest_rel: str
+
+
 def extract_text_from_docx(file_bytes: bytes, filename: str = "") -> str:
     import io
 
@@ -108,6 +120,38 @@ def write_numbered_latest_markdown(
         version_rel=version_rel,
         latest_path=latest_path,
         latest_rel=latest_rel,
+    )
+
+
+def write_generated_meeting_markdowns(
+    *,
+    root: Path,
+    minutes_dir: Path,
+    actions_dir: Path,
+    minutes_version: int,
+    actions_version: int,
+    minutes_md: str,
+    actions_md: str,
+) -> GeneratedMeetingMarkdowns:
+    minutes_version_path = minutes_dir / f"minutes-v{minutes_version}.md"
+    minutes_version_path.write_text(minutes_md, encoding="utf-8")
+    minutes_latest_path = minutes_dir / "minutes-latest.md"
+    minutes_latest_path.write_text(minutes_md, encoding="utf-8")
+
+    actions_version_path = actions_dir / f"actions-v{actions_version}.md"
+    actions_version_path.write_text(actions_md, encoding="utf-8")
+    actions_latest_path = actions_dir / "actions-latest.md"
+    actions_latest_path.write_text(actions_md, encoding="utf-8")
+
+    return GeneratedMeetingMarkdowns(
+        minutes_version_path=minutes_version_path,
+        minutes_version_rel=minutes_version_path.relative_to(root).as_posix(),
+        minutes_latest_path=minutes_latest_path,
+        minutes_latest_rel=minutes_latest_path.relative_to(root).as_posix(),
+        actions_version_path=actions_version_path,
+        actions_version_rel=actions_version_path.relative_to(root).as_posix(),
+        actions_latest_path=actions_latest_path,
+        actions_latest_rel=actions_latest_path.relative_to(root).as_posix(),
     )
 
 

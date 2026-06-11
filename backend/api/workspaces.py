@@ -163,6 +163,7 @@ from app.features.workspaces.meetings.io import (
     notify_meeting_run_finished as _notify_meeting_run_finished,
     read_auxiliary_summaries as _read_auxiliary_summaries,
     write_numbered_latest_markdown as _write_numbered_latest_markdown,
+    write_generated_meeting_markdowns as _write_generated_meeting_markdowns,
     write_versioned_latest_markdown as _write_versioned_latest_markdown,
     workspace_file_uploader as _workspace_file_uploader,
 )
@@ -939,23 +940,23 @@ def generate_meeting_minutes_and_actions(
         if "转录状态：partial" not in minutes_md:
             minutes_md = minutes_md.rstrip() + partial_block
 
-    # Save minutes
-    minutes_v_path = minutes_dir / f"minutes-v{minutes_ver}.md"
-    minutes_v_path.write_text(minutes_md, encoding="utf-8")
-    minutes_v_rel = minutes_v_path.relative_to(root).as_posix()
-
-    minutes_latest_path = minutes_dir / "minutes-latest.md"
-    minutes_latest_path.write_text(minutes_md, encoding="utf-8")
-    minutes_latest_rel = minutes_latest_path.relative_to(root).as_posix()
-
-    # Save actions
-    actions_v_path = actions_dir / f"actions-v{actions_ver}.md"
-    actions_v_path.write_text(actions_md, encoding="utf-8")
-    actions_v_rel = actions_v_path.relative_to(root).as_posix()
-
-    actions_latest_path = actions_dir / "actions-latest.md"
-    actions_latest_path.write_text(actions_md, encoding="utf-8")
-    actions_latest_rel = actions_latest_path.relative_to(root).as_posix()
+    generated_files = _write_generated_meeting_markdowns(
+        root=root,
+        minutes_dir=minutes_dir,
+        actions_dir=actions_dir,
+        minutes_version=minutes_ver,
+        actions_version=actions_ver,
+        minutes_md=minutes_md,
+        actions_md=actions_md,
+    )
+    minutes_v_path = generated_files.minutes_version_path
+    minutes_v_rel = generated_files.minutes_version_rel
+    minutes_latest_path = generated_files.minutes_latest_path
+    minutes_latest_rel = generated_files.minutes_latest_rel
+    actions_v_path = generated_files.actions_version_path
+    actions_v_rel = generated_files.actions_version_rel
+    actions_latest_path = generated_files.actions_latest_path
+    actions_latest_rel = generated_files.actions_latest_rel
 
     # Record WorkspaceFile metadata
     _upsert_workspace_file(
@@ -1637,19 +1638,23 @@ def retry_meeting_operation(
             if "转录状态：partial" not in minutes_md:
                 minutes_md = minutes_md.rstrip() + partial_block
 
-        minutes_v_path = folder_dir / "04-会议纪要" / f"minutes-v{minutes_ver}.md"
-        minutes_v_path.write_text(minutes_md, encoding="utf-8")
-        minutes_latest_path = folder_dir / "04-会议纪要" / "minutes-latest.md"
-        minutes_latest_path.write_text(minutes_md, encoding="utf-8")
-        actions_v_path = folder_dir / "05-行动项" / f"actions-v{actions_ver}.md"
-        actions_v_path.write_text(actions_md, encoding="utf-8")
-        actions_latest_path = folder_dir / "05-行动项" / "actions-latest.md"
-        actions_latest_path.write_text(actions_md, encoding="utf-8")
-
-        minutes_v_rel = minutes_v_path.relative_to(root).as_posix()
-        minutes_latest_rel = minutes_latest_path.relative_to(root).as_posix()
-        actions_v_rel = actions_v_path.relative_to(root).as_posix()
-        actions_latest_rel = actions_latest_path.relative_to(root).as_posix()
+        generated_files = _write_generated_meeting_markdowns(
+            root=root,
+            minutes_dir=folder_dir / "04-会议纪要",
+            actions_dir=folder_dir / "05-行动项",
+            minutes_version=minutes_ver,
+            actions_version=actions_ver,
+            minutes_md=minutes_md,
+            actions_md=actions_md,
+        )
+        minutes_v_path = generated_files.minutes_version_path
+        minutes_v_rel = generated_files.minutes_version_rel
+        minutes_latest_path = generated_files.minutes_latest_path
+        minutes_latest_rel = generated_files.minutes_latest_rel
+        actions_v_path = generated_files.actions_version_path
+        actions_v_rel = generated_files.actions_version_rel
+        actions_latest_path = generated_files.actions_latest_path
+        actions_latest_rel = generated_files.actions_latest_rel
 
         _upsert_workspace_file(db, workspace_id, user.id, minutes_v_rel,
                                f"minutes-v{minutes_ver}.md", "text/markdown", len(minutes_md.encode("utf-8")), minutes_v_path)
