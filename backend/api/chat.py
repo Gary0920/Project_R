@@ -14,6 +14,10 @@ from api.auth import get_current_user
 from app.shared.time.utils import serialize_datetime_utc
 from app.features.agents.events import add_agent_event, create_agent_run, finish_agent_run, get_agent_run_for_message, serialize_agent_run
 from app.features.notifications.service import notify_file_generated, notify_knowledge_review_pending
+from app.features.chat.access import (
+    ensure_workspace_access as _ensure_workspace_access,
+    get_user_session as _get_user_session,
+)
 from app.features.chat.intent import IntentType, classify_intent
 from app.features.chat.schemas import (
     ActivateMessageVersionResponse,
@@ -68,7 +72,6 @@ from models.message import ChatMessage
 from models.session import ChatSession
 from models.skill_run import SkillRun
 from models.user import User
-from models.workspace import Workspace, WorkspaceGroupAccess, WorkspaceMember
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 HISTORY_LIMIT = 20
@@ -1258,69 +1261,6 @@ def delete_session_attachment(
     _get_user_session(db, user.id, session_id)
     session_attachments.delete_session_attachment(db, user.id, session_id, attachment_id)
     return {"ok": True}
-
-
-def _get_user_session(db: Session, user_id: int, session_id: int) -> ChatSession:
-    session = (
-        db.query(ChatSession)
-        .filter(ChatSession.id == session_id, ChatSession.user_id == user_id)
-        .first()
-    )
-    if not session:
-        raise HTTPException(status_code=404, detail="会话不存在")
-    return session
-
-
-def _workspace_membership(db: Session, user_id: int, workspace_id: int) -> WorkspaceMember | None:
-    return (
-        db.query(WorkspaceMember)
-        .filter(
-            WorkspaceMember.workspace_id == workspace_id,
-            WorkspaceMember.user_id == user_id,
-        )
-        .first()
-    )
-
-
-def _has_workspace_group_access(db: Session, user: User, workspace_id: int) -> bool:
-    group_name = (getattr(user, "work_group", "") or "").strip().lower()
-    if not group_name:
-        return False
-    return bool(
-        db.query(WorkspaceGroupAccess)
-        .filter(
-            WorkspaceGroupAccess.workspace_id == workspace_id,
-            WorkspaceGroupAccess.group_name == group_name,
-        )
-        .first()
-    )
-
-
-def _ensure_workspace_access(db: Session, user: User, workspace_id: int) -> None:
-    workspace = db.query(Workspace).filter(Workspace.id == workspace_id, Workspace.is_archived == False).first()
-    if not workspace:
-        raise HTTPException(status_code=404, detail="工作区不存在")
-    member = _workspace_membership(db, user.id, workspace_id)
-    if workspace.workspace_kind == "user":
-        if member:
-            return
-        raise HTTPException(status_code=403, detail="你尚未加入该项目")
-    if user.role == "admin":
-        return
-    if workspace.workspace_kind == "customer":
-        if member or _has_workspace_group_access(db, user, workspace_id):
-            return
-        raise HTTPException(status_code=403, detail="你尚未加入该项目")
-    if not workspace.is_hidden:
-        return
-    if member or _has_workspace_group_access(db, user, workspace_id):
-        return
-    raise HTTPException(status_code=403, detail="你尚未加入该项目")
-
-
-def _ensure_workspace_member(db: Session, user_id: int, workspace_id: int) -> None:
-    if not _workspace_membership(db, user_id, workspace_id):
-        raise HTTPException(status_code=403, detail="你尚未加入该项目")
 
 
 def _message_query(
