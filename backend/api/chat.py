@@ -29,6 +29,7 @@ from app.features.chat.context_trace import (
 from app.features.chat.document_generation import (
     create_generated_docx as _create_generated_docx_base,
     safe_document_title as _safe_document_title,
+    write_document_generation_agent_run as _write_document_generation_agent_run_base,
 )
 from app.features.chat.message_serialization import (
     attachment_only_prompt as _attachment_only_prompt,
@@ -1484,45 +1485,15 @@ def _write_document_generation_agent_run(
     user_prompt: str,
     generated_file: dict,
 ):
-    title = f"生成文件：{generated_file.get('filename') or _safe_document_title(user_prompt)}"
-    run = create_agent_run(
+    return _write_document_generation_agent_run_base(
         db,
         user_id=user_id,
-        session_id=session.id,
+        session=session,
         message_id=message_id,
-        workspace_id=session.workspace_id,
-        source_type="document_generation",
-        source_id=str(generated_file.get("id") or ""),
-        title=title,
-        status="running",
+        user_prompt=user_prompt,
+        generated_file=generated_file,
+        safe_event_detail=_safe_event_detail,
     )
-    add_agent_event(
-        db,
-        run,
-        event_type="plan",
-        title="识别文件生成任务",
-        detail=_safe_event_detail(user_prompt),
-        status="completed",
-    )
-    add_agent_event(
-        db,
-        run,
-        event_type="tool_call",
-        title="渲染 Word 文档",
-        detail=str(generated_file.get("filename") or ""),
-        status="completed",
-        payload={"tool": "document_generation.render_docx", "file_id": generated_file.get("id")},
-    )
-    add_agent_event(
-        db,
-        run,
-        event_type="result",
-        title="文件已生成",
-        detail=str(generated_file.get("filename") or ""),
-        status="completed",
-        payload={"generated_file": generated_file},
-    )
-    return finish_agent_run(db, run, status="completed", result={"generated_file": generated_file})
 
 
 def _write_skill_agent_run(
