@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
 from app.shared.time.schemas import UTCDateTimeModel
-from core.notification_service import notify_skill_blocked
+from app.features.notifications.service import notify_skill_blocked
 from app.features.skills.execution import execute_ready_run, generated_file_payload
 from app.features.skills.runner import SkillRunner, run_to_dict
 from models import get_db

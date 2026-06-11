@@ -10,7 +10,7 @@ import api.notifications as notifications_api
 import api.skills as skills_api
 import api.workspaces as workspaces_api
 import app.features.skills.execution as skill_execution
-from core.notification_service import notify_knowledge_review_pending, notify_user
+from app.features.notifications.service import notify_knowledge_review_pending, notify_user
 from app.features.skills.runner import SkillRunner
 from fastapi import HTTPException
 from models import Base, SessionLocal, engine

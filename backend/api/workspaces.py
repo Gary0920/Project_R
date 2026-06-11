@@ -35,7 +35,7 @@ from core.gbrain_graph import (
     build_source_graph,
 )
 from core.gbrain_project_ingest import PROJECT_INGEST_MANIFEST_NAME, compile_project_workspace_sources
-from core.notification_service import (
+from app.features.notifications.service import (
     notify_user,
     notify_workspace_bulk_delete_risk,
     notify_workspace_joined,

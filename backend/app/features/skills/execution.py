@@ -3,7 +3,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from core.notification_service import notify_skill_completed, notify_skill_failed
+from app.features.notifications.service import notify_skill_completed, notify_skill_failed
 from app.features.skills.dispatcher import SkillDispatchError, SkillDispatcher
 from models.generated_file import GeneratedFile
 from models.skill_run import SkillRun

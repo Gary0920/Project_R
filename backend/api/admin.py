@@ -17,7 +17,7 @@ from core.gbrain_citation_fixer_jobs import (
 from core.system_accounts import SYSTEM_ADMIN_USERNAME, ensure_system_admin, is_system_admin_user
 from core.gbrain import GBrainAdapter
 from core.knowledge_sources import approve_knowledge_review_to_gbrain
-from core.notification_service import notify_gbrain_maintenance_event
+from app.features.notifications.service import notify_gbrain_maintenance_event
 from app.features.skills.runner import SkillRunner
 from models import get_db
 from models.agent_run import AgentEvent, AgentRun

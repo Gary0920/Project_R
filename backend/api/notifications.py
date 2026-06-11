@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
 from app.shared.time.schemas import UTCDateTimeModel
-from core.notification_service import notify_system_risk_alert
+from app.features.notifications.service import notify_system_risk_alert
 from models import get_db
 from models.notification import Notification
 from models.user import User

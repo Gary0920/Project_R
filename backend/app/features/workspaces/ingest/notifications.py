@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.notification_service import notify_user
+from app.features.notifications.service import notify_user
 
 
 def notify_workspace_ingest_queued(

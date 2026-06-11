@@ -53,7 +53,7 @@ from core.gbrain_maintenance_worker import (
     restart_gbrain_maintenance_worker,
 )
 from core.knowledge_sources import KnowledgeSources
-from core.notification_service import notify_gbrain_maintenance_event
+from app.features.notifications.service import notify_gbrain_maintenance_event
 from models import get_db
 from models.audit_log import AuditLog
 from models.knowledge_review import KnowledgeReview
