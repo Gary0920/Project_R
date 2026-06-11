@@ -3091,7 +3091,7 @@ def _run_chat_text_skill_by_name(
 
     # ── Audio transcription special path ────────────────────────────
     if skill_name == "audio-transcription":
-        from core.tools.media_transcription_tool import (
+        from app.features.preprocessing.tools.media_transcription import (
             run_media_transcription_tool,
             MediaTranscriptionToolInput,
         )

@@ -1252,7 +1252,7 @@ class ChatPhase6Tests(unittest.TestCase):
         self.db.refresh(attachment)
         transcription_result = SimpleNamespace(text="这是模拟转录文本。")
 
-        with patch("core.tools.media_transcription_tool.run_media_transcription_tool", return_value=transcription_result):
+        with patch("app.features.preprocessing.tools.media_transcription.run_media_transcription_tool", return_value=transcription_result):
             response = chat_api.send_message(
                 self.session.id,
                 chat_api.SendMessageRequest(

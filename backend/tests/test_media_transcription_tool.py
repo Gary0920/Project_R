@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from core.tools.media_transcription_tool import (
+from app.features.preprocessing.tools.media_transcription import (
     MediaTranscriptionToolInput,
     MediaTranscriptionToolOutput,
     run_media_transcription_tool,
@@ -39,9 +39,9 @@ class MediaTranscriptionToolTests(unittest.TestCase):
         mock_result.segment_count = 1
         mock_result.warnings = ()
 
-        with patch("core.tools.media_transcription_tool.transcribe_media_to_markdown", return_value=mock_result), \
-             patch("core.tools.media_transcription_tool.load_media_transcription_options"), \
-             patch("core.tools.media_transcription_tool.get_llm_client"):
+        with patch("app.features.preprocessing.tools.media_transcription.transcribe_media_to_markdown", return_value=mock_result), \
+             patch("app.features.preprocessing.tools.media_transcription.load_media_transcription_options"), \
+             patch("app.features.preprocessing.tools.media_transcription.get_llm_client"):
             # Use a real file (this test script itself) as a "media file" after
             # patching out the actual transcription; the extension check is
             # skipped because we're monkey-patching transcribe_media_to_markdown
@@ -70,10 +70,10 @@ class MediaTranscriptionToolTests(unittest.TestCase):
             tmp.write(b"\x00" * 10)
             tmp_path = Path(tmp.name)
         try:
-            with patch("core.tools.media_transcription_tool.transcribe_media_to_markdown",
+            with patch("app.features.preprocessing.tools.media_transcription.transcribe_media_to_markdown",
                        side_effect=ConnectionError("API unavailable")), \
-                 patch("core.tools.media_transcription_tool.load_media_transcription_options"), \
-                 patch("core.tools.media_transcription_tool.get_llm_client"):
+                 patch("app.features.preprocessing.tools.media_transcription.load_media_transcription_options"), \
+                 patch("app.features.preprocessing.tools.media_transcription.get_llm_client"):
                 with self.assertRaises(RuntimeError) as ctx:
                     run_media_transcription_tool(
                         MediaTranscriptionToolInput(media_path=tmp_path)
