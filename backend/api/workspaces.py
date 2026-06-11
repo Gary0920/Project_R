@@ -162,6 +162,7 @@ from app.features.workspaces.meetings.io import (
     extract_text_from_docx as _extract_text_from_docx,
     notify_meeting_run_finished as _notify_meeting_run_finished,
     read_auxiliary_summaries as _read_auxiliary_summaries,
+    write_versioned_latest_markdown as _write_versioned_latest_markdown,
     workspace_file_uploader as _workspace_file_uploader,
 )
 from app.features.workspaces.meetings.markdown import (
@@ -678,17 +679,19 @@ def save_meeting_transcript(
         original_filename=req.original_filename,
     )
 
-    # Write transcript-v1.md
-    v1_path = _resolve_conflict_path(transcript_dir, "transcript-v1.md", "keep_both")
-    if v1_path is None:
-        raise HTTPException(status_code=500, detail="无法写入转录文件")
-    v1_path.write_text(transcript_md, encoding="utf-8")
-    v1_rel = v1_path.relative_to(root).as_posix()
-
-    # Write / overwrite transcript-latest.md
-    latest_path = transcript_dir / "transcript-latest.md"
-    latest_path.write_text(transcript_md, encoding="utf-8")
-    latest_rel = latest_path.relative_to(root).as_posix()
+    transcript_files = _write_versioned_latest_markdown(
+        root=root,
+        target_dir=transcript_dir,
+        version_filename="transcript-v1.md",
+        latest_filename="transcript-latest.md",
+        content=transcript_md,
+        resolve_conflict_path=_resolve_conflict_path,
+        error_detail="无法写入转录文件",
+    )
+    v1_path = transcript_files.version_path
+    v1_rel = transcript_files.version_rel
+    latest_path = transcript_files.latest_path
+    latest_rel = transcript_files.latest_rel
 
     # Record WorkspaceFile metadata for both files
     _upsert_workspace_file(
@@ -1280,15 +1283,19 @@ async def transcribe_meeting_media(
             warnings=warnings_list,
         )
 
-    v1_path = _resolve_conflict_path(transcript_dir, "transcript-v1.md", "keep_both")
-    if v1_path is None:
-        raise HTTPException(status_code=500, detail="无法写入转录文件")
-    v1_path.write_text(final_md, encoding="utf-8")
-    v1_rel = v1_path.relative_to(root).as_posix()
-
-    latest_path = transcript_dir / "transcript-latest.md"
-    latest_path.write_text(final_md, encoding="utf-8")
-    latest_rel = latest_path.relative_to(root).as_posix()
+    transcript_files = _write_versioned_latest_markdown(
+        root=root,
+        target_dir=transcript_dir,
+        version_filename="transcript-v1.md",
+        latest_filename="transcript-latest.md",
+        content=final_md,
+        resolve_conflict_path=_resolve_conflict_path,
+        error_detail="无法写入转录文件",
+    )
+    v1_path = transcript_files.version_path
+    v1_rel = transcript_files.version_rel
+    latest_path = transcript_files.latest_path
+    latest_rel = transcript_files.latest_rel
 
     # Record WorkspaceFile metadata
     media_meta = _upsert_workspace_file(db, workspace_id, user.id, media_rel,

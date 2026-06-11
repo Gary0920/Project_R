@@ -1,14 +1,24 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.features.notifications.service import notify_user
 from models.workspace import Workspace, WorkspaceFile
+
+
+@dataclass(frozen=True)
+class VersionedLatestMarkdown:
+    version_path: Path
+    version_rel: str
+    latest_path: Path
+    latest_rel: str
 
 
 def extract_text_from_docx(file_bytes: bytes, filename: str = "") -> str:
@@ -44,6 +54,34 @@ def workspace_file_uploader(db: Session, workspace_id: int, rel_path: str) -> in
         .first()
     )
     return meta.uploaded_by if meta else None
+
+
+def write_versioned_latest_markdown(
+    *,
+    root: Path,
+    target_dir: Path,
+    version_filename: str,
+    latest_filename: str,
+    content: str,
+    resolve_conflict_path: Callable[[Path, str, str], Path | None],
+    error_detail: str,
+) -> VersionedLatestMarkdown:
+    version_path = resolve_conflict_path(target_dir, version_filename, "keep_both")
+    if version_path is None:
+        raise HTTPException(status_code=500, detail=error_detail)
+    version_path.write_text(content, encoding="utf-8")
+    version_rel = version_path.relative_to(root).as_posix()
+
+    latest_path = target_dir / latest_filename
+    latest_path.write_text(content, encoding="utf-8")
+    latest_rel = latest_path.relative_to(root).as_posix()
+
+    return VersionedLatestMarkdown(
+        version_path=version_path,
+        version_rel=version_rel,
+        latest_path=latest_path,
+        latest_rel=latest_rel,
+    )
 
 
 def notify_meeting_run_finished(
