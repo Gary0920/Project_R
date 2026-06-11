@@ -32,7 +32,7 @@ def _edge_matches(graph: dict, expected: dict) -> bool:
 def main() -> int:
     sys.path.insert(0, str(BACKEND_DIR))
 
-    from core.gbrain_graph import build_entity_merge_candidates, build_source_graph
+    from app.features.knowledge.gbrain.graph import build_entity_merge_candidates, build_source_graph
 
     cases = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
     failures: list[str] = []

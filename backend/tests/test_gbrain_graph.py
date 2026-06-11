@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.gbrain_graph import build_entity_merge_candidates, build_source_graph
+from app.features.knowledge.gbrain.graph import build_entity_merge_candidates, build_source_graph
 
 
 class GBrainGraphTests(unittest.TestCase):

@@ -28,7 +28,7 @@ from core.gbrain import (
     project_source_paths_for_workspace,
 )
 from core.gbrain_customer_sources import CUSTOMER_WORKSPACE_INGEST_MANIFEST_NAME, compile_customer_workspace_sources
-from core.gbrain_graph import (
+from app.features.knowledge.gbrain.graph import (
     apply_entity_merge_candidate_action,
     build_entity_merge_candidate_preview,
     build_entity_merge_candidates,

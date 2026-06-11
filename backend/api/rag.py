@@ -41,7 +41,7 @@ from app.features.knowledge.gbrain.maintenance.dream_cycle import (
     run_dream_cycle_tick,
     save_dream_cycle_config,
 )
-from core.gbrain_graph import (
+from app.features.knowledge.gbrain.graph import (
     apply_entity_merge_candidate_action,
     build_entity_merge_candidate_preview,
     build_entity_merge_candidates,
