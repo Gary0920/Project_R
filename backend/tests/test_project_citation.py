@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from core.project_citation import (
+from app.features.knowledge.citations.project import (
     normalize_citation,
     format_citation,
     source_reference_to_dict,

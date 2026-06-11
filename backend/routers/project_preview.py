@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from starlette.responses import FileResponse, JSONResponse, Response
 
 from api.deps import get_current_user, get_db
-from core.project_citation import guess_file_kind_from_source
+from app.features.knowledge.citations.project import guess_file_kind_from_source
 from models.user import User
 
 router = APIRouter(prefix="/api/projects/{workspace_id}/preview", tags=["project-preview"])
