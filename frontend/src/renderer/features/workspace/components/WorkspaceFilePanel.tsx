@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
 
 import { WorkspaceAgentRunToast } from "./WorkspaceAgentRunToast";
 import {
@@ -62,7 +62,6 @@ import {
   uploadWorkspaceFiles,
 } from "../api";
 import {
-  clampGraphCanvasScale,
   crmEntityLabel,
   crmRelationLabel,
   crmShortSource,
@@ -105,6 +104,7 @@ import {
 } from "../workspaceMeetingUtils";
 import { useWorkspaceFilePreview } from "../hooks/useWorkspaceFilePreview";
 import { useWorkspacePreviewWidth } from "../hooks/useWorkspacePreviewWidth";
+import { useKnowledgeGraphCanvas } from "../hooks/useKnowledgeGraphCanvas";
 import type { ApiClientOptions } from "../../../shared/api/client";
 import type { AgentRunResponse, DetectedSpeaker, GBrainEntityMergeCandidate, GBrainEntityMergePreviewResponse, MeetingFolderResponse, MeetingGenerateResponse, MeetingRetryResponse, MediaPreflightResponse, SaveMeetingTranscriptResponse, WorkspaceEntityMergeCandidatesResponse, WorkspaceFileItemResponse, WorkspaceKnowledgeGraphResponse, WorkspaceNativeGraphContextResponse } from "../../../shared/api/types";
 import { parseApiDate } from "../../../shared/utils/time";
@@ -186,8 +186,6 @@ export function WorkspaceFilePanel({
   const [knowledgeGraph, setKnowledgeGraph] = useState<WorkspaceKnowledgeGraphResponse | null>(null);
   const [knowledgeGraphOpen, setKnowledgeGraphOpen] = useState(false);
   const [knowledgeGraphCanvasOpen, setKnowledgeGraphCanvasOpen] = useState(false);
-  const [knowledgeGraphCanvasView, setKnowledgeGraphCanvasView] = useState({ x: 0, y: 0, scale: 1 });
-  const [knowledgeGraphCanvasPanning, setKnowledgeGraphCanvasPanning] = useState(false);
   const [knowledgeGraphLoading, setKnowledgeGraphLoading] = useState(false);
   const [knowledgeGraphError, setKnowledgeGraphError] = useState<string | null>(null);
   const [graphSearchTerm, setGraphSearchTerm] = useState("");
@@ -229,7 +227,6 @@ export function WorkspaceFilePanel({
   const layoutRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const graphCanvasPanRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
   const { filePreview, closeFilePreview, openFilePreview } = useWorkspaceFilePreview({
     apiOptions,
     workspaceId,
@@ -370,43 +367,19 @@ export function WorkspaceFilePanel({
     layoutRef,
     resetKey: filePreview?.item.path,
   });
+  const {
+    knowledgeGraphCanvasView,
+    knowledgeGraphCanvasPanning,
+    resetKnowledgeGraphCanvasView,
+    zoomKnowledgeGraphCanvas,
+    handleKnowledgeGraphCanvasWheel,
+    handleKnowledgeGraphCanvasPanStart,
+  } = useKnowledgeGraphCanvas();
 
   useEffect(() => {
     if (!standaloneCustomerIntelligence || workspaceKind !== "customer" || !workspaceId) return;
     void handleOpenKnowledgeGraph();
   }, [standaloneCustomerIntelligence, workspaceKind, workspaceId]);
-
-  useEffect(() => {
-    if (!knowledgeGraphCanvasPanning) return;
-    const previousCursor = document.body.style.cursor;
-    const previousUserSelect = document.body.style.userSelect;
-    document.body.style.cursor = "grabbing";
-    document.body.style.userSelect = "none";
-
-    function handleMouseMove(event: globalThis.MouseEvent) {
-      const drag = graphCanvasPanRef.current;
-      if (!drag) return;
-      setKnowledgeGraphCanvasView((view) => ({
-        ...view,
-        x: drag.originX + (event.clientX - drag.startX) / Math.max(0.7, view.scale),
-        y: drag.originY + (event.clientY - drag.startY) / Math.max(0.7, view.scale),
-      }));
-    }
-
-    function handleMouseUp() {
-      graphCanvasPanRef.current = null;
-      setKnowledgeGraphCanvasPanning(false);
-    }
-
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
-    return () => {
-      document.body.style.cursor = previousCursor;
-      document.body.style.userSelect = previousUserSelect;
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, [knowledgeGraphCanvasPanning]);
 
   useEffect(() => {
     function closeFloatingMenus() {
@@ -1281,10 +1254,6 @@ export function WorkspaceFilePanel({
     onCustomerIntelligenceClose?.();
   }
 
-  function resetKnowledgeGraphCanvasView() {
-    setKnowledgeGraphCanvasView({ x: 0, y: 0, scale: 1 });
-  }
-
   function toggleTimelineGroup(label: string) {
     setCollapsedTimelineGroups((prev) => {
       const next = new Set(prev);
@@ -1303,33 +1272,6 @@ export function WorkspaceFilePanel({
 
   function expandAllTimelineGroups() {
     setCollapsedTimelineGroups(new Set());
-  }
-
-  function zoomKnowledgeGraphCanvas(delta: number) {
-    setKnowledgeGraphCanvasView((view) => ({
-      ...view,
-      scale: clampGraphCanvasScale(view.scale + delta),
-    }));
-  }
-
-  function handleKnowledgeGraphCanvasWheel(event: WheelEvent<HTMLDivElement>) {
-    event.preventDefault();
-    const delta = event.deltaY > 0 ? -0.12 : 0.12;
-    zoomKnowledgeGraphCanvas(delta);
-  }
-
-  function handleKnowledgeGraphCanvasPanStart(event: MouseEvent<HTMLDivElement>) {
-    if (event.button !== 0) return;
-    const target = event.target;
-    if (target instanceof Element && target.closest(".workspace-knowledge-map-node, button")) return;
-    event.preventDefault();
-    graphCanvasPanRef.current = {
-      startX: event.clientX,
-      startY: event.clientY,
-      originX: knowledgeGraphCanvasView.x,
-      originY: knowledgeGraphCanvasView.y,
-    };
-    setKnowledgeGraphCanvasPanning(true);
   }
 
   function activateFileItem(item: WorkspaceFileItemResponse) {
