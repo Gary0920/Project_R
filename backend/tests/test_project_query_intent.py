@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from core.project_query_intent import (
+from app.features.knowledge.project_query.intent import (
     classify_project_query,
     ProjectQueryIntent,
 )

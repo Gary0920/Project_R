@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from core.project_query_intent import ProjectQueryIntent
+from app.features.knowledge.project_query.intent import ProjectQueryIntent
 
 
 SLUG_TO_KIND_RULES: list[tuple[re.Pattern, str]] = [

@@ -252,8 +252,8 @@ class KnowledgeSources:
         intent_result: dict[str, Any] | None = None
         if sources and workspace and str(workspace.workspace_kind or "project") == "project":
             try:
-                from core.project_query_intent import classify_project_query
-                from core.project_query_ranking import adjust_project_ranking, apply_ranking_to_sources
+                from app.features.knowledge.project_query.intent import classify_project_query
+                from app.features.knowledge.project_query.ranking import adjust_project_ranking, apply_ranking_to_sources
 
                 intent = classify_project_query(content)
                 if intent.confidence != "low":

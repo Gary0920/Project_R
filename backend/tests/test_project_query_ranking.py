@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from core.project_query_intent import classify_project_query, ProjectQueryIntent
-from core.project_query_ranking import (
+from app.features.knowledge.project_query.intent import classify_project_query, ProjectQueryIntent
+from app.features.knowledge.project_query.ranking import (
     infer_file_kind_from_slug,
     infer_file_kind_from_source,
     adjust_project_ranking,
