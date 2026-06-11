@@ -19,7 +19,7 @@ from core.gbrain import (
     project_source_paths_for_workspace,
     resolve_gbrain_source_paths,
 )
-from core.gbrain_ingest import _split_frontmatter, approve_pending_review_markdown
+from app.features.knowledge.gbrain.ingest import _split_frontmatter, approve_pending_review_markdown
 from models.workspace import Workspace, WorkspaceFile
 
 logger = logging.getLogger(__name__)

@@ -8,7 +8,7 @@ from unittest.mock import patch
 import yaml
 
 from core.gbrain import GBrainSettings
-from core.gbrain_ingest import approve_pending_review_markdown, compile_company_wiki_sources
+from app.features.knowledge.gbrain.ingest import approve_pending_review_markdown, compile_company_wiki_sources
 from app.features.preprocessing.pdf_structured import PDFStructuredExtractionResult
 
 

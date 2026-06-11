@@ -18,7 +18,7 @@ from core.gbrain import (
     ensure_customer_gbrain_environment,
     load_gbrain_settings,
 )
-from core.gbrain_ingest import _commit_derived_changes, _relative_posix, _split_frontmatter, _write_markdown
+from app.features.knowledge.gbrain.ingest import _commit_derived_changes, _relative_posix, _split_frontmatter, _write_markdown
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[4]

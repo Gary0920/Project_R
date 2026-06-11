@@ -11,7 +11,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.features.preprocessing.docx_text import preprocess_docx_text
-from core.gbrain_ingest import _sha256_file, _write_markdown
+from app.features.knowledge.gbrain.ingest import _sha256_file, _write_markdown
 
 
 def main() -> int:

@@ -17,7 +17,7 @@ from app.features.preprocessing.email_structured import (
     extract_email_attachments,
     extract_email_structured_markdown,
 )
-from core.gbrain_ingest import _sha256_file, _write_markdown
+from app.features.knowledge.gbrain.ingest import _sha256_file, _write_markdown
 
 
 def main() -> int:

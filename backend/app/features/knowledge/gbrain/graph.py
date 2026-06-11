@@ -15,7 +15,7 @@ from core.gbrain import (
     resolve_gbrain_source_paths,
 )
 from app.features.knowledge.gbrain.customer_sources import CUSTOMER_REFERENCE_DERIVED
-from core.gbrain_ingest import _relative_posix, _split_frontmatter, _write_markdown
+from app.features.knowledge.gbrain.ingest import _relative_posix, _split_frontmatter, _write_markdown
 
 
 LINK_FIELDS: dict[str, str] = {

@@ -25,7 +25,7 @@ from core.gbrain import (
     project_source_id_for_workspace,
     project_source_paths_for_workspace,
 )
-from core.gbrain_ingest import (
+from app.features.knowledge.gbrain.ingest import (
     DOCX_EXTENSIONS,
     MEDIA_EXTENSIONS,
     MEDIA_TRANSCRIPTION_REQUIRED,

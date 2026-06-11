@@ -47,7 +47,7 @@ from app.features.knowledge.gbrain.graph import (
     build_entity_merge_candidates,
     build_source_graph,
 )
-from core.gbrain_ingest import compile_company_wiki_sources
+from app.features.knowledge.gbrain.ingest import compile_company_wiki_sources
 from app.features.knowledge.gbrain.maintenance.worker import (
     get_gbrain_maintenance_worker_status,
     restart_gbrain_maintenance_worker,

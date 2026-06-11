@@ -10,7 +10,7 @@ from app.shared.llm.client import LLMResponse, ProviderSettings
 from app.features.preprocessing.media_transcription import MediaTranscriptionOptions, transcribe_media_to_markdown
 from app.features.preprocessing.pdf_structured import PDFExtractionOptions, extract_pdf_structured_markdown, load_pdf_extraction_options
 from app.features.preprocessing.policy import PreprocessModelPolicyError
-import core.gbrain_ingest as company_ingest
+import app.features.knowledge.gbrain.ingest as company_ingest
 import core.gbrain_project_ingest as project_ingest
 
 
