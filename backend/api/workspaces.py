@@ -107,15 +107,10 @@ from app.features.workspaces.files.storage import (
     candidate_storage_path,
     ensure_not_trash_path,
     ensure_storage_path,
-    is_trash_relative_path,
     normalize_brand,
     normalize_workspace_kind,
-    project_brand_dirs,
-    project_brand_names,
     safe_username,
     slugify,
-    target_storage_path,
-    workspace_dirs,
     workspace_file_root,
 )
 from app.features.workspaces.files.tree import (
@@ -146,7 +141,6 @@ from app.features.workspaces.permissions import (
 from app.features.workspaces.registry import (
     ensure_crm_workspace,
     ensure_default_workspace as ensure_default_workspace_core,
-    find_crm_workspace,
     find_existing_project_folder,
     register_existing_project_folder,
     sync_project_folders,
@@ -305,14 +299,6 @@ def _safe_username(username: str) -> str:
     return safe_username(username)
 
 
-def _project_brand_names() -> list[str]:
-    return project_brand_names(_storage_config())
-
-
-def _project_brand_dirs() -> list[tuple[str, Path]]:
-    return project_brand_dirs(_storage_config())
-
-
 def _normalize_brand(brand: str) -> str:
     return normalize_brand(brand, _storage_config())
 
@@ -321,20 +307,8 @@ def _normalize_workspace_kind(kind: str | None, brand: str | None = None) -> str
     return normalize_workspace_kind(kind, brand, _storage_config())
 
 
-def _workspace_dirs(workspace: Workspace) -> tuple[str, ...]:
-    return workspace_dirs(workspace, _storage_config())
-
-
-def _is_trash_relative_path(path: Path) -> bool:
-    return is_trash_relative_path(path)
-
-
 def _ensure_not_trash_path(path: Path) -> None:
     ensure_not_trash_path(path)
-
-
-def _target_storage_path(workspace: Workspace, owner: User | None = None) -> Path:
-    return target_storage_path(workspace, _storage_config())
 
 
 def _ensure_storage_path(workspace: Workspace, *, create_user_scaffold: bool = False) -> str:
@@ -395,10 +369,6 @@ def _register_existing_project_folder(
     add_member: bool = False,
 ) -> Workspace | None:
     return register_existing_project_folder(db, user, brand, project_dir, _storage_config(), add_member=add_member)
-
-
-def _find_crm_workspace(db: Session) -> Workspace | None:
-    return find_crm_workspace(db, crm_workspace_slug=CRM_WORKSPACE_SLUG, crm_workspace_name=CRM_WORKSPACE_NAME)
 
 
 def _ensure_crm_workspace(db: Session, user: User, *, add_member: bool = False) -> Workspace:
