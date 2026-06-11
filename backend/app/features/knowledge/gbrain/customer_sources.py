@@ -21,7 +21,7 @@ from core.gbrain import (
 from core.gbrain_ingest import _commit_derived_changes, _relative_posix, _split_frontmatter, _write_markdown
 
 
-BACKEND_DIR = Path(__file__).resolve().parents[1]
+BACKEND_DIR = Path(__file__).resolve().parents[4]
 CUSTOMER_REFERENCE_ROOT = BACKEND_DIR / "workspace_data" / "customer" / "reference"
 CUSTOMER_REFERENCE_DERIVED = CUSTOMER_REFERENCE_ROOT / "derived"
 CUSTOMER_REFERENCE_MANIFESTS = CUSTOMER_REFERENCE_ROOT / "manifests"

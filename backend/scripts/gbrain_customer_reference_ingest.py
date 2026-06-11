@@ -27,7 +27,7 @@ def main() -> int:
     _load_dotenv(BACKEND_DIR / ".env")
     sys.path.insert(0, str(BACKEND_DIR))
 
-    from core.gbrain_customer_sources import compile_customer_reference_sources, ensure_and_sync_customer_reference
+    from app.features.knowledge.gbrain.customer_sources import compile_customer_reference_sources, ensure_and_sync_customer_reference
 
     manifest = compile_customer_reference_sources()
     print(json.dumps({"manifest_summary": manifest.get("summary")}, ensure_ascii=False, indent=2))

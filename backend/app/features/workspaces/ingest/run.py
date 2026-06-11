@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from core.gbrain_customer_sources import CUSTOMER_WORKSPACE_INGEST_MANIFEST_NAME
+from app.features.knowledge.gbrain.customer_sources import CUSTOMER_WORKSPACE_INGEST_MANIFEST_NAME
 from core.gbrain_project_ingest import PROJECT_INGEST_MANIFEST_NAME
 from app.shared.time.utils import serialize_datetime_utc
 

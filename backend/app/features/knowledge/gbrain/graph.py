@@ -14,7 +14,7 @@ from core.gbrain import (
     load_gbrain_settings,
     resolve_gbrain_source_paths,
 )
-from core.gbrain_customer_sources import CUSTOMER_REFERENCE_DERIVED
+from app.features.knowledge.gbrain.customer_sources import CUSTOMER_REFERENCE_DERIVED
 from core.gbrain_ingest import _relative_posix, _split_frontmatter, _write_markdown
 
 

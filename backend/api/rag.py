@@ -21,7 +21,7 @@ from core.gbrain import (
     project_source_id_for_workspace,
     project_source_paths_for_workspace,
 )
-from core.gbrain_customer_sources import CUSTOMER_REFERENCE_DERIVED
+from app.features.knowledge.gbrain.customer_sources import CUSTOMER_REFERENCE_DERIVED
 from app.features.knowledge.gbrain.maintenance.citation_fixer_jobs import (
     load_citation_fixer_job_state,
     poll_citation_fixer_jobs,

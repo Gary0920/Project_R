@@ -50,7 +50,7 @@ def main() -> int:
     sys.path.insert(0, str(BACKEND_DIR))
 
     from core.gbrain import CRM_CUSTOMER_SOURCE_ID, GBrainAdapter
-    from core.gbrain_customer_sources import search_customer_intelligence_sources
+    from app.features.knowledge.gbrain.customer_sources import search_customer_intelligence_sources
 
     adapter = GBrainAdapter()
     source_path = BACKEND_DIR / "workspace_data" / "_preprocessed" / "customer" / "crm" / "gbrain-ready"
