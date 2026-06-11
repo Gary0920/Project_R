@@ -175,6 +175,15 @@ export function getFileKind(name: string) {
   return "file";
 }
 
+export type WorkspaceFilePreview = {
+  item: WorkspaceFileItemResponse;
+  kind: ReturnType<typeof getFileKind>;
+  status: "loading" | "ready" | "failed";
+  objectUrl?: string;
+  text?: string;
+  error?: string;
+};
+
 export function countPendingIngestFiles(items: WorkspaceFileItemResponse[]): number {
   let count = 0;
   for (const item of items) {

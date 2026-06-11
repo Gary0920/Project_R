@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
 
 import { WorkspaceAgentRunToast } from "./WorkspaceAgentRunToast";
+import { WorkspaceFilePreviewSidecar } from "./WorkspaceFilePreviewSidecar";
 import {
   clearWorkspaceTrash,
   applyWorkspaceEntityMergeCandidateAction,
@@ -71,6 +72,7 @@ import {
   MEETING_WORKFLOW_DIRS,
   PREVIEW_DEFAULT_WIDTH,
   readPreviewWidth,
+  type WorkspaceFilePreview,
   WORKSPACE_DRAG_MIME,
   writePreviewWidth,
 } from "../workspaceFilePanelUtils";
@@ -118,15 +120,6 @@ type WorkspaceConfirmation = {
   confirmLabel: string;
   tone: "warning" | "danger";
   onConfirm: () => Promise<void>;
-};
-
-type WorkspaceFilePreview = {
-  item: WorkspaceFileItemResponse;
-  kind: ReturnType<typeof getFileKind>;
-  status: "loading" | "ready" | "failed";
-  objectUrl?: string;
-  text?: string;
-  error?: string;
 };
 
 type WorkspaceFileContextMenu = {
@@ -2857,53 +2850,13 @@ export function WorkspaceFilePanel({
       />
     ) : null}
     {filePreview ? (
-      <aside className={`workspace-file-preview-sidecar is-${filePreview.kind} ${previewResizing ? "is-resizing" : ""}`} aria-label="文件预览">
-        <div
-          aria-label="调整预览面板宽度"
-          aria-orientation="vertical"
-          className="workspace-file-preview-resize-handle"
-          onMouseDown={handlePreviewResizeStart}
-          role="separator"
-          title="拖动调整预览面板宽度"
-        />
-        <header className="workspace-file-preview-sidecar-header">
-          <div>
-            <strong>预览</strong>
-            <span>{filePreview.item.name}</span>
-          </div>
-          <div className="workspace-file-preview-actions">
-            <button aria-label="下载文件" className="workspace-file-action" onClick={() => void downloadWorkspaceFile(filePreview.item)} title="下载文件" type="button"><ArchiveIcon /></button>
-            <button aria-label="关闭预览" className="workspace-file-action" onClick={closeFilePreview} title="关闭预览" type="button"><XmarkIcon /></button>
-          </div>
-        </header>
-        <div className="workspace-file-preview-stage">
-          {filePreview.status === "loading" ? <span>正在加载预览...</span> : null}
-          {filePreview.status === "failed" ? <span>{filePreview.error || "文件预览失败"}</span> : null}
-          {filePreview.status === "ready" && filePreview.kind === "image" && filePreview.objectUrl ? (
-            <img alt={filePreview.item.name} src={filePreview.objectUrl} />
-          ) : null}
-          {filePreview.status === "ready" && filePreview.kind === "pdf" && filePreview.objectUrl ? (
-            <iframe src={filePreview.objectUrl} title={filePreview.item.name} />
-          ) : null}
-          {filePreview.status === "ready" && filePreview.text != null ? (
-            <pre>{filePreview.text}</pre>
-          ) : null}
-          {filePreview.status === "ready" && !["image", "pdf"].includes(filePreview.kind) && filePreview.text == null ? (
-            <span>当前格式暂不支持内嵌预览。</span>
-          ) : null}
-        </div>
-        <section className="workspace-file-preview-details" aria-label="详细信息">
-          <h3>详细信息</h3>
-          <dl>
-            <div><dt>类型</dt><dd>{filePreview.kind === "image" ? "图片文件" : filePreview.kind === "pdf" ? "PDF 文件" : filePreview.kind === "code" ? "文本/代码文件" : "文件"}</dd></div>
-            <div><dt>大小</dt><dd>{formatSize(filePreview.item.size)}</dd></div>
-            <div><dt>上传人</dt><dd>{filePreview.item.uploader_name || (filePreview.item.uploaded_by ? `用户 #${filePreview.item.uploaded_by}` : "-")}</dd></div>
-            <div><dt>位置</dt><dd title={filePreview.item.path}>{filePreview.item.path}</dd></div>
-            <div><dt>修改日期</dt><dd>{filePreview.item.updated_at ? parseApiDate(filePreview.item.updated_at).toLocaleString("zh-CN") : "-"}</dd></div>
-            <div><dt>入库状态</dt><dd>{getRagStatusMeta(filePreview.item.rag_status).label}</dd></div>
-          </dl>
-        </section>
-      </aside>
+      <WorkspaceFilePreviewSidecar
+        preview={filePreview}
+        resizing={previewResizing}
+        onClose={closeFilePreview}
+        onDownload={downloadWorkspaceFile}
+        onResizeStart={handlePreviewResizeStart}
+      />
     ) : null}
     </>
     ) : null}
