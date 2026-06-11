@@ -1,11 +1,11 @@
 import { FormEvent, useState, useRef, useEffect, useCallback } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 
-import { apiRequest, ApiError } from "../api/client";
-import type { LoginResponse } from "../api/types";
-import { setAuthAtom } from "../atoms/auth-atoms";
-import { serverUrlAtom } from "../atoms/server-atoms";
-import { APP_NAME } from "../constants/app";
+import { apiRequest, ApiError } from "../shared/api/client";
+import type { LoginResponse } from "../shared/api/types";
+import { setAuthAtom } from "../features/auth/state";
+import { serverUrlAtom } from "../shared/state/server";
+import { APP_NAME } from "../shared/config/app";
 
 /* ------------------------------------------------------------------ */
 /*  Animation helpers (pure functions, no React deps)                   */

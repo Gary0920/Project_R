@@ -1,10 +1,10 @@
 import { useAtom, useSetAtom } from "jotai";
 import { useEffect, useRef, useState } from "react";
 
-import { apiRequest } from "../api/client";
-import type { HealthResponse } from "../api/types";
-import { serverUrlAtom, setServerUrlAtom } from "../atoms/server-atoms";
-import { APP_NAME, DEFAULT_API_BASE_URL } from "../constants/app";
+import { apiRequest } from "../shared/api/client";
+import type { HealthResponse } from "../shared/api/types";
+import { serverUrlAtom, setServerUrlAtom } from "../shared/state/server";
+import { APP_NAME, DEFAULT_API_BASE_URL } from "../shared/config/app";
 
 type CheckState = "idle" | "checking" | "ok" | "error";
 

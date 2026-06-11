@@ -1,7 +1,7 @@
 import { ClipboardEvent, DragEvent, KeyboardEvent, MouseEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 
-import { ApiError, type ApiClientOptions } from "../api/client";
+import { ApiError, type ApiClientOptions } from "../shared/api/client";
 import {
   activateChatMessageVersion,
   archiveChatSession,
@@ -22,8 +22,8 @@ import {
   submitMessageFeedback,
   updateChatSession,
   uploadSessionAttachmentFile,
-} from "../api/chat";
-import { getLLMHealth } from "../api/health";
+} from "../features/chat/api";
+import { getLLMHealth } from "../shared/api/health";
 import {
   getNotificationCounts,
   listNotifications,
@@ -31,13 +31,13 @@ import {
   markNotificationRead,
   type NotificationView,
   updateNotificationActionStatus,
-} from "../api/notifications";
-import { listCompanyPrompts } from "../api/prompts";
-import { listSkills } from "../api/skills";
-import { getLatestClientUpdate } from "../api/updates";
-import { fetchWorkspaceFileBlob } from "../api/workspaces";
-import { authTokenAtom, clearAuthAtom, currentUserAtom } from "../atoms/auth-atoms";
-import { parseApiDate } from "../utils/time";
+} from "../features/notifications/api";
+import { listCompanyPrompts } from "../features/prompts/api";
+import { listSkills } from "../features/skills/api";
+import { getLatestClientUpdate } from "../features/updates/api";
+import { fetchWorkspaceFileBlob } from "../features/workspace/api";
+import { authTokenAtom, clearAuthAtom, currentUserAtom } from "../features/auth/state";
+import { parseApiDate } from "../shared/utils/time";
 import {
   activeMessagesAtom,
   activeSessionAtom,
@@ -47,12 +47,12 @@ import {
   chatMessagesBySessionAtom,
   chatSessionsAtom,
   type ChatMessage,
-} from "../atoms/chat-atoms";
-import { serverUrlAtom } from "../atoms/server-atoms";
-import { activeModeAtom } from "../atoms/ui-atoms";
-import { activeTabIdAtom, tabsAtom } from "../atoms/tab-atoms";
-import { activeWorkspaceIdAtom, workspacesAtom } from "../atoms/workspace-atoms";
-import { notificationsAtom, pendingNotificationCountAtom, unreadNotificationCountAtom } from "../atoms/notification-atoms";
+} from "../features/chat/state";
+import { serverUrlAtom } from "../shared/state/server";
+import { activeModeAtom } from "../shared/state/ui";
+import { activeTabIdAtom, tabsAtom } from "../features/chat/tabs-state";
+import { activeWorkspaceIdAtom, workspacesAtom } from "../features/workspace/state";
+import { notificationsAtom, pendingNotificationCountAtom, unreadNotificationCountAtom } from "../features/notifications/state";
 import type {
   ChatSearchResultResponse,
   ChatSessionResponse,
@@ -70,20 +70,20 @@ import type {
   SkillResponse,
   SkillRunResponse,
   WorkspaceFileItemResponse,
-} from "../api/types";
-import { APP_NAME } from "../constants/app";
-import { useContextMenu, type ContextMenuItemDef } from "../components/ContextMenu";
-import { getPromptOptionId, PromptPanel, type PromptOption } from "../components/PromptPanel";
-import { ScratchPad } from "../components/ScratchPad";
-import { SearchDialog } from "../components/SearchDialog";
-import { SettingsModal } from "../components/SettingsModal";
-import { TabBar } from "../components/TabBar";
-import { WorkspaceSelector } from "../components/WorkspaceSelector";
-import { WorkspaceFilePanel } from "../components/WorkspaceFilePanel";
-import { copyText, downloadGeneratedFile } from "../components/chat/ChatMessageList";
-import { AppWorkspaceChrome } from "../components/chat/AppWorkspaceChrome";
-import { ChatConversationPane } from "../components/chat/ChatConversationPane";
-import { PROJECT_R_BUILTIN_PROMPT } from "../constants/prompts";
+} from "../shared/api/types";
+import { APP_NAME } from "../shared/config/app";
+import { useContextMenu, type ContextMenuItemDef } from "../shared/components/ContextMenu";
+import { getPromptOptionId, PromptPanel, type PromptOption } from "../features/prompts/components/PromptPanel";
+import { ScratchPad } from "../features/chat/components/ScratchPad";
+import { SearchDialog } from "../features/chat/components/SearchDialog";
+import { SettingsModal } from "../features/settings/components/SettingsModal";
+import { TabBar } from "../features/chat/components/TabBar";
+import { WorkspaceSelector } from "../features/workspace/components/WorkspaceSelector";
+import { WorkspaceFilePanel } from "../features/workspace/components/WorkspaceFilePanel";
+import { copyText, downloadGeneratedFile } from "../features/chat/components/ChatMessageList";
+import { AppWorkspaceChrome } from "../features/chat/components/AppWorkspaceChrome";
+import { ChatConversationPane } from "../features/chat/components/ChatConversationPane";
+import { PROJECT_R_BUILTIN_PROMPT } from "../features/prompts/constants";
 type SplitPaneKey = "left" | "right";
 type UtilityPanel = "workspace" | "customer-intelligence" | "prompt" | "skills" | "source" | "crm";
 type RenameScope = "header" | "sidebar";
