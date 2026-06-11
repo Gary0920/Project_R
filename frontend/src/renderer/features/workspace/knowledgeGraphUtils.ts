@@ -78,6 +78,13 @@ export function nativeResultItems(payload: Record<string, unknown> | undefined, 
     });
 }
 
+export function nativeResultCount(payload: Record<string, unknown> | undefined) {
+  const result = payload?.result;
+  if (Array.isArray(result)) return result.length;
+  if (result && typeof result === "object") return Object.keys(result).length;
+  return payload?.status === "ok" ? 0 : 0;
+}
+
 export function graphEventTimestamp(date?: string) {
   if (!date) return null;
   const parsed = Date.parse(date);

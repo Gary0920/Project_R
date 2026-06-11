@@ -47,6 +47,7 @@ import {
   graphEventTimestamp,
   graphForceLayout,
   graphPreviewSourcePath,
+  nativeResultCount,
   nativeResultItems,
   normalizeGraphSourcePath,
 } from "../knowledgeGraphUtils";
@@ -142,13 +143,6 @@ type WorkspaceClipboardItem = {
   action: "copy" | "cut";
   item: WorkspaceFileItemResponse;
 };
-
-function nativeResultCount(payload: Record<string, unknown> | undefined) {
-  const result = payload?.result;
-  if (Array.isArray(result)) return result.length;
-  if (result && typeof result === "object") return Object.keys(result).length;
-  return payload?.status === "ok" ? 0 : 0;
-}
 
 export function WorkspaceFilePanel({
   apiOptions,
