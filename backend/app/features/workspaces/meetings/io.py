@@ -84,6 +84,33 @@ def write_versioned_latest_markdown(
     )
 
 
+def write_numbered_latest_markdown(
+    *,
+    root: Path,
+    target_dir: Path,
+    prefix: str,
+    latest_filename: str,
+    content: str,
+    next_version_number: Callable[[Path, str], int],
+) -> VersionedLatestMarkdown:
+    version_number = next_version_number(target_dir, prefix)
+    version_filename = f"{prefix}-v{version_number}.md"
+    version_path = target_dir / version_filename
+    version_path.write_text(content, encoding="utf-8")
+    version_rel = version_path.relative_to(root).as_posix()
+
+    latest_path = target_dir / latest_filename
+    latest_path.write_text(content, encoding="utf-8")
+    latest_rel = latest_path.relative_to(root).as_posix()
+
+    return VersionedLatestMarkdown(
+        version_path=version_path,
+        version_rel=version_rel,
+        latest_path=latest_path,
+        latest_rel=latest_rel,
+    )
+
+
 def notify_meeting_run_finished(
     db: Session,
     *,

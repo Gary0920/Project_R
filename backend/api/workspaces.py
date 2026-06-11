@@ -162,6 +162,7 @@ from app.features.workspaces.meetings.io import (
     extract_text_from_docx as _extract_text_from_docx,
     notify_meeting_run_finished as _notify_meeting_run_finished,
     read_auxiliary_summaries as _read_auxiliary_summaries,
+    write_numbered_latest_markdown as _write_numbered_latest_markdown,
     write_versioned_latest_markdown as _write_versioned_latest_markdown,
     workspace_file_uploader as _workspace_file_uploader,
 )
@@ -1097,32 +1098,46 @@ def save_meeting_speaker_map(
     now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     author_name = user.nickname or user.username
 
-    # Version numbering
-    ver = _next_version_number(transcript_dir, "speaker-map")
-
     transcript_text = _read_file_safe(folder_dir / "02-转录文本" / "transcript-latest.md")
     timeline_rows = _speaker_timeline_rows(transcript_text)
     md = _build_speaker_map_markdown(req.speakers, author_name, now_ts, timeline_rows)
 
-    v_path = transcript_dir / f"speaker-map-v{ver}.md"
-    v_path.write_text(md, encoding="utf-8")
-    latest_path = transcript_dir / "speaker-map-latest.md"
-    latest_path.write_text(md, encoding="utf-8")
+    speaker_map_files = _write_numbered_latest_markdown(
+        root=root,
+        target_dir=transcript_dir,
+        prefix="speaker-map",
+        latest_filename="speaker-map-latest.md",
+        content=md,
+        next_version_number=_next_version_number,
+    )
 
-    v_rel = v_path.relative_to(root).as_posix()
-    latest_rel = latest_path.relative_to(root).as_posix()
-
-    _upsert_workspace_file(db, workspace_id, user.id, v_rel,
-                           f"speaker-map-v{ver}.md", "text/markdown", len(md.encode("utf-8")), v_path)
-    _upsert_workspace_file(db, workspace_id, user.id, latest_rel,
-                           "speaker-map-latest.md", "text/markdown", len(md.encode("utf-8")), latest_path)
+    _upsert_workspace_file(
+        db,
+        workspace_id,
+        user.id,
+        speaker_map_files.version_rel,
+        speaker_map_files.version_path.name,
+        "text/markdown",
+        len(md.encode("utf-8")),
+        speaker_map_files.version_path,
+    )
+    _upsert_workspace_file(
+        db,
+        workspace_id,
+        user.id,
+        speaker_map_files.latest_rel,
+        "speaker-map-latest.md",
+        "text/markdown",
+        len(md.encode("utf-8")),
+        speaker_map_files.latest_path,
+    )
 
     _write_workspace_audit(db, user.id, "meeting_speaker_map_save",
                            _audit_detail(workspace_id, req.folder_path, actor_id=user.id,
                                          gbrain_ingest=False))
     db.commit()
     return SpeakerMapResponse(ok=True, meeting_folder_path=req.folder_path,
-                               speaker_map_path=latest_rel, gbrain_ingest=False)
+                               speaker_map_path=speaker_map_files.latest_rel, gbrain_ingest=False)
 
 
 @router.post("/{workspace_id}/meetings/term-corrections", response_model=TermCorrectionsResponse)
@@ -1146,29 +1161,45 @@ def save_meeting_term_corrections(
     transcript_dir.mkdir(parents=True, exist_ok=True)
 
     now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    ver = _next_version_number(transcript_dir, "term-corrections")
 
     md = _build_term_corrections_markdown(req.corrections, now_ts)
 
-    v_path = transcript_dir / f"term-corrections-v{ver}.md"
-    v_path.write_text(md, encoding="utf-8")
-    latest_path = transcript_dir / "term-corrections-latest.md"
-    latest_path.write_text(md, encoding="utf-8")
+    corrections_files = _write_numbered_latest_markdown(
+        root=root,
+        target_dir=transcript_dir,
+        prefix="term-corrections",
+        latest_filename="term-corrections-latest.md",
+        content=md,
+        next_version_number=_next_version_number,
+    )
 
-    v_rel = v_path.relative_to(root).as_posix()
-    latest_rel = latest_path.relative_to(root).as_posix()
-
-    _upsert_workspace_file(db, workspace_id, user.id, v_rel,
-                           f"term-corrections-v{ver}.md", "text/markdown", len(md.encode("utf-8")), v_path)
-    _upsert_workspace_file(db, workspace_id, user.id, latest_rel,
-                           "term-corrections-latest.md", "text/markdown", len(md.encode("utf-8")), latest_path)
+    _upsert_workspace_file(
+        db,
+        workspace_id,
+        user.id,
+        corrections_files.version_rel,
+        corrections_files.version_path.name,
+        "text/markdown",
+        len(md.encode("utf-8")),
+        corrections_files.version_path,
+    )
+    _upsert_workspace_file(
+        db,
+        workspace_id,
+        user.id,
+        corrections_files.latest_rel,
+        "term-corrections-latest.md",
+        "text/markdown",
+        len(md.encode("utf-8")),
+        corrections_files.latest_path,
+    )
 
     _write_workspace_audit(db, user.id, "meeting_term_corrections_save",
                            _audit_detail(workspace_id, req.folder_path, actor_id=user.id,
                                          gbrain_ingest=False))
     db.commit()
     return TermCorrectionsResponse(ok=True, meeting_folder_path=req.folder_path,
-                                    corrections_path=latest_rel, gbrain_ingest=False)
+                                    corrections_path=corrections_files.latest_rel, gbrain_ingest=False)
 
 
 def _validate_meeting_folder(workspace: "Workspace", folder_path: str) -> None:
