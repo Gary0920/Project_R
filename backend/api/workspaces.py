@@ -169,6 +169,7 @@ from app.features.workspaces.meetings.io import (
 )
 from app.features.workspaces.meetings.markdown import (
     MEETING_SYSTEM_PROMPT as _MEETING_SYSTEM_PROMPT,
+    append_partial_transcript_generation_notice as _append_partial_transcript_generation_notice,
     build_actions_prompt as _build_actions_prompt,
     build_fallback_actions as _build_fallback_actions,
     build_fallback_minutes as _build_fallback_minutes,
@@ -932,13 +933,7 @@ def generate_meeting_minutes_and_actions(
     finally:
         _release_meeting_run_lock(lock_path)
 
-    if transcription_status == "partial":
-        partial_block = (
-            "\n\n> 转录状态：partial。以下纪要和行动项仅基于已成功转录片段生成。"
-            "缺失片段可能导致结论不完整，请人工复核。\n"
-        )
-        if "转录状态：partial" not in minutes_md:
-            minutes_md = minutes_md.rstrip() + partial_block
+    minutes_md = _append_partial_transcript_generation_notice(minutes_md, transcription_status)
 
     generated_files = _write_generated_meeting_markdowns(
         root=root,
@@ -1633,10 +1628,7 @@ def retry_meeting_operation(
         finally:
             _release_meeting_run_lock(lock_path)
 
-        if transcription_status == "partial":
-            partial_block = "\n\n> 转录状态：partial。以下纪要和行动项仅基于已成功转录片段生成。缺失片段可能导致结论不完整，请人工复核。\n"
-            if "转录状态：partial" not in minutes_md:
-                minutes_md = minutes_md.rstrip() + partial_block
+        minutes_md = _append_partial_transcript_generation_notice(minutes_md, transcription_status)
 
         generated_files = _write_generated_meeting_markdowns(
             root=root,

@@ -46,6 +46,16 @@ def transcript_metadata_value(transcript_text: str, field_name: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+def append_partial_transcript_generation_notice(minutes_md: str, transcription_status: str) -> str:
+    if transcription_status != "partial" or "转录状态：partial" in minutes_md:
+        return minutes_md
+    partial_block = (
+        "\n\n> 转录状态：partial。以下纪要和行动项仅基于已成功转录片段生成。"
+        "缺失片段可能导致结论不完整，请人工复核。\n"
+    )
+    return minutes_md.rstrip() + partial_block
+
+
 def detect_speakers(text: str) -> tuple[list[dict], list[dict]]:
     lines = [line.strip() for line in text.split("\n") if line.strip()]
     if not lines:
