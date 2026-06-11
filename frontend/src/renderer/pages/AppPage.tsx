@@ -141,6 +141,21 @@ import {
   type SkillSlashCandidate,
   type SlashCommandMatch,
 } from "../features/chat/slashCommands";
+import {
+  WORKSPACE_PANEL_DEFAULT_WIDTH,
+  WORKSPACE_PANEL_PREVIEW_WIDTH,
+  auxiliaryPanelMaxWidth,
+  clampAuxiliaryPanelWidth,
+  clampSidebarWidth,
+  clampWorkspacePanelWidth,
+  readAuxiliaryPanelWidth,
+  readSidebarWidth,
+  readWorkspacePanelWidth,
+  workspacePanelMaxWidth,
+  writeAuxiliaryPanelWidth,
+  writeSidebarWidth,
+  writeWorkspacePanelWidth,
+} from "../features/chat/panelWidths";
 import { PROJECT_R_BUILTIN_PROMPT } from "../features/prompts/constants";
 type SplitPaneKey = "left" | "right";
 type UtilityPanel = "workspace" | "customer-intelligence" | "prompt" | "skills" | "source" | "crm";
@@ -166,19 +181,6 @@ type ModelOption = {
 
 const PROMPT_SELECTION_KEY = "project_r_session_prompt_selection";
 const SETTINGS_PREFERENCES_KEY = "project-r:settings-preferences";
-const SIDEBAR_WIDTH_KEY = "project-r:chat-sidebar-width";
-const SIDEBAR_MIN_WIDTH = 220;
-const SIDEBAR_DEFAULT_WIDTH = 268;
-const SIDEBAR_MAX_WIDTH = 420;
-const WORKSPACE_PANEL_WIDTH_KEY = "project-r:workspace-panel-width";
-const WORKSPACE_PANEL_MIN_WIDTH = 320;
-const WORKSPACE_PANEL_DEFAULT_WIDTH = 480;
-const WORKSPACE_PANEL_PREVIEW_WIDTH = 720;
-const WORKSPACE_PANEL_MAX_WIDTH = 880;
-const AUXILIARY_PANEL_WIDTH_KEY = "project-r:auxiliary-side-panel-width";
-const AUXILIARY_PANEL_MIN_WIDTH = 300;
-const AUXILIARY_PANEL_DEFAULT_WIDTH = 380;
-const AUXILIARY_PANEL_MAX_WIDTH = 720;
 const MODEL_COPY: Record<string, { label: string; description: string }> = {
   deepseek: { label: "DeepSeek", description: "文本对话、推理输出" },
   claude: { label: "Claude", description: "复杂推理与长文处理" },
@@ -263,84 +265,6 @@ function writeWebSearchPreference(enabled: boolean) {
     localStorage.setItem(SETTINGS_PREFERENCES_KEY, JSON.stringify({ ...preferences, webSearchEnabled: enabled }));
   } catch {
     localStorage.setItem(SETTINGS_PREFERENCES_KEY, JSON.stringify({ webSearchEnabled: enabled }));
-  }
-}
-
-function sidebarMaxWidth() {
-  if (typeof window === "undefined") return SIDEBAR_MAX_WIDTH;
-  return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, window.innerWidth - 640));
-}
-
-function clampSidebarWidth(value: number) {
-  return Math.min(sidebarMaxWidth(), Math.max(SIDEBAR_MIN_WIDTH, Math.round(value)));
-}
-
-function readSidebarWidth() {
-  try {
-    const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
-    return Number.isFinite(stored) ? clampSidebarWidth(stored) : SIDEBAR_DEFAULT_WIDTH;
-  } catch {
-    return SIDEBAR_DEFAULT_WIDTH;
-  }
-}
-
-function writeSidebarWidth(width: number) {
-  try {
-    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
-  } catch {
-    // localStorage may be unavailable in restricted shells.
-  }
-}
-
-function workspacePanelMaxWidth() {
-  if (typeof window === "undefined") return WORKSPACE_PANEL_MAX_WIDTH;
-  return Math.max(WORKSPACE_PANEL_MIN_WIDTH, Math.min(WORKSPACE_PANEL_MAX_WIDTH, window.innerWidth - 420));
-}
-
-function clampWorkspacePanelWidth(value: number) {
-  return Math.min(workspacePanelMaxWidth(), Math.max(WORKSPACE_PANEL_MIN_WIDTH, Math.round(value)));
-}
-
-function readWorkspacePanelWidth() {
-  try {
-    const stored = Number(localStorage.getItem(WORKSPACE_PANEL_WIDTH_KEY));
-    return Number.isFinite(stored) ? clampWorkspacePanelWidth(stored) : clampWorkspacePanelWidth(WORKSPACE_PANEL_DEFAULT_WIDTH);
-  } catch {
-    return clampWorkspacePanelWidth(WORKSPACE_PANEL_DEFAULT_WIDTH);
-  }
-}
-
-function writeWorkspacePanelWidth(width: number) {
-  try {
-    localStorage.setItem(WORKSPACE_PANEL_WIDTH_KEY, String(width));
-  } catch {
-    // localStorage may be unavailable in restricted shells.
-  }
-}
-
-function auxiliaryPanelMaxWidth() {
-  if (typeof window === "undefined") return AUXILIARY_PANEL_MAX_WIDTH;
-  return Math.max(AUXILIARY_PANEL_MIN_WIDTH, Math.min(AUXILIARY_PANEL_MAX_WIDTH, window.innerWidth - 420));
-}
-
-function clampAuxiliaryPanelWidth(value: number) {
-  return Math.min(auxiliaryPanelMaxWidth(), Math.max(AUXILIARY_PANEL_MIN_WIDTH, Math.round(value)));
-}
-
-function readAuxiliaryPanelWidth() {
-  try {
-    const stored = Number(localStorage.getItem(AUXILIARY_PANEL_WIDTH_KEY));
-    return Number.isFinite(stored) ? clampAuxiliaryPanelWidth(stored) : clampAuxiliaryPanelWidth(AUXILIARY_PANEL_DEFAULT_WIDTH);
-  } catch {
-    return clampAuxiliaryPanelWidth(AUXILIARY_PANEL_DEFAULT_WIDTH);
-  }
-}
-
-function writeAuxiliaryPanelWidth(width: number) {
-  try {
-    localStorage.setItem(AUXILIARY_PANEL_WIDTH_KEY, String(width));
-  } catch {
-    // localStorage may be unavailable in restricted shells.
   }
 }
 
