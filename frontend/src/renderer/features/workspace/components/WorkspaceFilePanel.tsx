@@ -81,7 +81,6 @@ import {
   filterSystemWorkspaceItems,
   findDirectory,
   formatSize,
-  getFileKind,
   getItemsAtPath,
   getParentPath,
   getRagStatusMeta,
@@ -97,7 +96,6 @@ import {
   MEETING_WORKFLOW_DIRS,
   PREVIEW_DEFAULT_WIDTH,
   readPreviewWidth,
-  type WorkspaceFilePreview,
   WORKSPACE_DRAG_MIME,
   writePreviewWidth,
 } from "../workspaceFilePanelUtils";
@@ -109,6 +107,7 @@ import {
   isMeetingTranscriptSourceFile,
   isMeetingWorkflowSubdirName,
 } from "../workspaceMeetingUtils";
+import { useWorkspaceFilePreview } from "../hooks/useWorkspaceFilePreview";
 import type { ApiClientOptions } from "../../../shared/api/client";
 import type { AgentRunResponse, DetectedSpeaker, GBrainEntityMergeCandidate, GBrainEntityMergePreviewResponse, MeetingFolderResponse, MeetingGenerateResponse, MeetingRetryResponse, MediaPreflightResponse, SaveMeetingTranscriptResponse, WorkspaceEntityMergeCandidatesResponse, WorkspaceFileItemResponse, WorkspaceKnowledgeGraphResponse, WorkspaceNativeGraphContextResponse } from "../../../shared/api/types";
 import { parseApiDate } from "../../../shared/utils/time";
@@ -187,7 +186,6 @@ export function WorkspaceFilePanel({
   const [agentRunToastLeaving, setAgentRunToastLeaving] = useState(false);
   const [pendingConfirmation, setPendingConfirmation] = useState<WorkspaceConfirmation | null>(null);
   const [confirmationBusy, setConfirmationBusy] = useState(false);
-  const [filePreview, setFilePreview] = useState<WorkspaceFilePreview | null>(null);
   const [knowledgeGraph, setKnowledgeGraph] = useState<WorkspaceKnowledgeGraphResponse | null>(null);
   const [knowledgeGraphOpen, setKnowledgeGraphOpen] = useState(false);
   const [knowledgeGraphCanvasOpen, setKnowledgeGraphCanvasOpen] = useState(false);
@@ -236,8 +234,17 @@ export function WorkspaceFilePanel({
   const layoutRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const previewObjectUrlRef = useRef<string | null>(null);
   const graphCanvasPanRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
+  const { filePreview, closeFilePreview, openFilePreview } = useWorkspaceFilePreview({
+    apiOptions,
+    workspaceId,
+    onBeforeOpen: () => {
+      setKnowledgeGraphOpen(false);
+      setKnowledgeGraphCanvasOpen(false);
+    },
+    onPreviewOpen,
+    onPreviewClose,
+  });
 
   const displayItems = useMemo(() => filterSystemWorkspaceItems(items), [items]);
   const visibleItems = useMemo(() => viewMode === "trash" ? items : getItemsAtPath(displayItems, currentPath), [currentPath, displayItems, items, viewMode]);
@@ -467,15 +474,6 @@ export function WorkspaceFilePanel({
     return () => {
       document.removeEventListener("click", closeFloatingMenus);
       document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (previewObjectUrlRef.current) {
-        URL.revokeObjectURL(previewObjectUrlRef.current);
-        previewObjectUrlRef.current = null;
-      }
     };
   }, []);
 
@@ -1176,52 +1174,6 @@ export function WorkspaceFilePanel({
       setError(confirmError instanceof Error ? confirmError.message : "操作失败");
     } finally {
       setConfirmationBusy(false);
-    }
-  }
-
-  function closeFilePreview() {
-    if (previewObjectUrlRef.current) {
-      URL.revokeObjectURL(previewObjectUrlRef.current);
-      previewObjectUrlRef.current = null;
-    }
-    setFilePreview(null);
-    onPreviewClose?.();
-  }
-
-  async function openFilePreview(item: WorkspaceFileItemResponse) {
-    if (!workspaceId || item.type === "directory") return;
-    onPreviewOpen?.();
-    setKnowledgeGraphOpen(false);
-    setKnowledgeGraphCanvasOpen(false);
-    if (previewObjectUrlRef.current) {
-      URL.revokeObjectURL(previewObjectUrlRef.current);
-      previewObjectUrlRef.current = null;
-    }
-    const kind = getFileKind(item.name);
-    setFilePreview({ item, kind, status: "loading" });
-    try {
-      const blob = await fetchWorkspaceFileBlob(apiOptions, workspaceId, item.path);
-      if (kind === "image" || kind === "pdf") {
-        const objectUrl = URL.createObjectURL(blob);
-        previewObjectUrlRef.current = objectUrl;
-        setFilePreview({ item, kind, status: "ready", objectUrl });
-        return;
-      }
-      if (kind === "code" || item.name.toLowerCase().endsWith(".txt") || item.name.toLowerCase().endsWith(".md")) {
-        const text = await blob.text();
-        setFilePreview({ item, kind, status: "ready", text: text.slice(0, 60_000) });
-        return;
-      }
-      const objectUrl = URL.createObjectURL(blob);
-      previewObjectUrlRef.current = objectUrl;
-      setFilePreview({ item, kind, status: "ready", objectUrl });
-    } catch (previewError: unknown) {
-      setFilePreview({
-        item,
-        kind,
-        status: "failed",
-        error: previewError instanceof Error ? previewError.message : "文件预览失败",
-      });
     }
   }
 
