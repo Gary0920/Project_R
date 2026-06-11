@@ -2,6 +2,7 @@ import { ClipboardEvent, DragEvent, KeyboardEvent, MouseEvent, ReactNode, useEff
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 
 import { ApiError, type ApiClientOptions } from "../shared/api/client";
+import { createApiOptions } from "../shared/api/options";
 import {
   activateChatMessageVersion,
   archiveChatSession,
@@ -156,6 +157,7 @@ import {
   writeWorkspacePanelWidth,
 } from "../features/chat/panelWidths";
 import { toModelOption } from "../features/chat/modelOptions";
+import { makeLocalMessage } from "../features/chat/localMessages";
 import {
   PROMPT_SELECTION_KEY,
   composeSystemPrompt,
@@ -176,51 +178,6 @@ type SourcePreview = {
   source: ChatSourceResponse;
   sessionId?: number | null;
 };
-
-export function createApiOptions(
-  baseUrl: string,
-  token: string | null,
-  onUnauthorized: () => void,
-) {
-  return { baseUrl, token, onUnauthorized };
-}
-
-function makeLocalMessage(
-  sessionId: number,
-  role: "user" | "assistant",
-  content: string,
-  extras: Partial<ChatMessage> = {},
-): ChatMessage {
-  const now = new Date().toISOString();
-  return {
-    id: -Date.now() - Math.floor(Math.random() * 1000),
-    session_id: sessionId,
-    role,
-    content,
-    provider: null,
-    model: null,
-    token_input: null,
-    token_output: null,
-    token_total: null,
-    status: "success",
-    error_message: null,
-    rag_used: false,
-    is_excluded: false,
-    version_group_id: null,
-    version_index: 1,
-    version_count: 1,
-    active_version: true,
-    versions: [],
-    feedback_rating: null,
-    feedback_comment: null,
-    sources: [],
-    attachments: [],
-    agent_run: null,
-    context_trace: null,
-    created_at: now,
-    ...extras,
-  };
-}
 
 export function AppPage() {
   const serverUrl = useAtomValue(serverUrlAtom);

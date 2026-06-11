@@ -15,7 +15,7 @@ import {
   type Workspace,
 } from "../state";
 import type { WorkspaceSearchResult } from "../../../shared/api/types";
-import { createApiOptions } from "../../../pages/AppPage";
+import { createApiOptions } from "../../../shared/api/options";
 import { parseApiDate } from "../../../shared/utils/time";
 import {
   ChevronDownIcon,
