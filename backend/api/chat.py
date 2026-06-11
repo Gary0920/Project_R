@@ -34,6 +34,11 @@ from app.features.chat.message_serialization import (
     message_to_response_dict as _message_to_response_dict_base,
 )
 from app.features.chat.vision import attach_vision_images_to_latest_user_message as _attach_vision_images_to_latest_user_message
+from app.features.chat.web_search_context import (
+    maybe_run_web_search as _maybe_run_web_search_base,
+    run_web_search_skill as _run_web_search_skill_base,
+    web_search_context_extra as _web_search_context_extra,
+)
 from app.features.chat.schemas import (
     ActivateMessageVersionResponse,
     AttachmentResponse,
@@ -70,13 +75,6 @@ from app.features.prompts.system_prompt import (
     TEXT_TRANSFORMATION_PROMPT_IDS,
     compose_system_prompt,
     should_reduce_knowledge_context,
-)
-from app.shared.web_search.service import (
-    WEB_SEARCH_SKILL_NAME,
-    WebSearchResponse,
-    format_web_search_prompt,
-    search_web,
-    web_results_to_sources,
 )
 from models import get_db
 from models.audit_log import AuditLog
@@ -2373,41 +2371,17 @@ def _maybe_run_web_search(
     *,
     source_start_index: int = 1,
 ) -> tuple[list[dict], str, dict | None]:
-    if not enabled:
-        return [], "", None
-    response = _run_web_search_skill(query)
-    sources = web_results_to_sources(response)
-    prompt = format_web_search_prompt(response, start_index=source_start_index)
-    return sources, prompt, _web_search_trace(response, len(sources))
+    return _maybe_run_web_search_base(
+        query,
+        enabled,
+        source_start_index=source_start_index,
+        logger=logger,
+        runner=_run_web_search_skill,
+    )
 
 
-def _run_web_search_skill(query: str) -> WebSearchResponse:
-    try:
-        return search_web(query)
-    except Exception as exc:  # pragma: no cover - defensive guard for provider bugs.
-        logger.warning("web search skill failed unexpectedly", exc_info=True)
-        return WebSearchResponse(
-            query=" ".join(query.split()).strip(),
-            provider="unknown",
-            warnings=[f"unexpected_error:{type(exc).__name__}"],
-        )
-
-
-def _web_search_trace(response: WebSearchResponse, result_count: int) -> dict:
-    return {
-        "enabled": True,
-        "skill_name": WEB_SEARCH_SKILL_NAME,
-        "query": response.query,
-        "provider": response.provider,
-        "result_count": result_count,
-        "warnings": response.warnings,
-    }
-
-
-def _web_search_context_extra(trace: dict | None) -> dict:
-    if not trace:
-        return {}
-    return {"web_search": trace}
+def _run_web_search_skill(query: str):
+    return _run_web_search_skill_base(query, logger=logger)
 
 
 def _search_workspace_sources(db: Session, workspace_id: int | None, content: str) -> list[dict]:
