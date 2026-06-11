@@ -20,6 +20,13 @@ from app.features.chat.access import (
 from app.features.chat import attachment_api as chat_attachment_api
 from app.features.chat import feedback_api as chat_feedback_api
 from app.features.chat.intent import IntentType, classify_intent
+from app.features.chat.context_trace import (
+    build_context_trace,
+    generated_file_context,
+    gbrain_think_trace,
+    safe_trace_list,
+    skill_context_extra,
+)
 from app.features.chat.schemas import (
     ActivateMessageVersionResponse,
     AttachmentResponse,
@@ -418,7 +425,7 @@ def regenerate_message(
         rag_used=bool(response_sources) if req.web_search else target.rag_used,
         sources_json=json.dumps(response_sources, ensure_ascii=False) if req.web_search else target.sources_json,
         context_json=json.dumps(
-            _build_context_trace(
+            build_context_trace(
                 session=session,
                 req=req,
                 attachments=[],
@@ -549,7 +556,7 @@ def edit_message(
         rag_used=bool(response_sources),
         sources_json=json.dumps(response_sources, ensure_ascii=False),
         context_json=json.dumps(
-            _build_context_trace(
+            build_context_trace(
                 session=session,
                 req=req,
                 attachments=[],
@@ -798,7 +805,7 @@ def send_message(
             user_message.id,
             content,
             active_skill_response,
-            context_trace=_build_context_trace(
+            context_trace=build_context_trace(
                 session=session,
                 req=req,
                 attachments=selected_attachments,
@@ -807,7 +814,7 @@ def send_message(
                 provider="project_r",
                 model="skill_runner",
                 requested_model=requested_model,
-                extra=_skill_context_extra(active_skill_response),
+                extra=skill_context_extra(active_skill_response),
             ),
         )
 
@@ -834,7 +841,7 @@ def send_message(
                 user_message.id,
                 content,
                 skill_response,
-                context_trace=_build_context_trace(
+                context_trace=build_context_trace(
                     session=session,
                     req=req,
                     attachments=selected_attachments,
@@ -843,7 +850,7 @@ def send_message(
                     provider="project_r",
                     model="skill_runner",
                     requested_model=requested_model,
-                    extra=_skill_context_extra(skill_response),
+                    extra=skill_context_extra(skill_response),
                 ),
             )
     if effective_intent == IntentType.SKILL_TRIGGER:
@@ -870,7 +877,7 @@ def send_message(
                 user_message.id,
                 content,
                 skill_response,
-                context_trace=_build_context_trace(
+                context_trace=build_context_trace(
                     session=session,
                     req=req,
                     attachments=selected_attachments,
@@ -879,7 +886,7 @@ def send_message(
                     provider="project_r",
                     model="skill_runner",
                     requested_model=requested_model,
-                    extra=_skill_context_extra(skill_response),
+                    extra=skill_context_extra(skill_response),
                 ),
             )
 
@@ -990,7 +997,7 @@ def send_message(
     generated_file = None
     if effective_intent == IntentType.DOCUMENT_GENERATION:
         generated_file = _create_generated_docx(db, user.id, session_id, content, llm_response.text)
-    context_trace = _build_context_trace(
+    context_trace = build_context_trace(
         session=session,
         req=req,
         attachments=selected_attachments,
@@ -1001,7 +1008,7 @@ def send_message(
         requested_model=requested_model,
         reduce_knowledge_context=reduce_knowledge_context,
         extra={
-            "generated_file": _generated_file_context(generated_file),
+            "generated_file": generated_file_context(generated_file),
             **_web_search_context_extra(web_search_trace),
         },
     )
@@ -1629,137 +1636,6 @@ def _create_generated_docx(
     }
 
 
-def _build_context_trace(
-    *,
-    session: ChatSession,
-    req: SendMessageRequest | None,
-    attachments: list[SessionAttachment],
-    sources: list[dict],
-    intent: IntentType,
-    provider: str | None,
-    model: str | None,
-    requested_model: str | None = None,
-    reduce_knowledge_context: bool = False,
-    extra: dict | None = None,
-) -> dict:
-    system_prompt = getattr(req, "system_prompt", None) if req else None
-    return {
-        "schema_version": 1,
-        "workspace_id": session.workspace_id,
-        "intent": intent.value if isinstance(intent, IntentType) else str(intent),
-        "model": {
-            "provider": provider,
-            "model": model,
-            "requested_model": requested_model,
-            "thinking": bool(getattr(req, "thinking", False)) if req else False,
-            "web_search": bool(getattr(req, "web_search", False)) if req else False,
-        },
-        "prompt": {
-            "selected_prompt_id": getattr(req, "selected_prompt_id", None) if req else None,
-            "selected_skill": getattr(req, "selected_skill", None) if req else None,
-            "system_prompt_provided": bool(system_prompt and system_prompt.strip()),
-            "system_prompt_preview": _trace_preview(system_prompt, 220),
-        },
-        "attachments": [_attachment_trace_dict(attachment) for attachment in attachments],
-        "knowledge": {
-            "reduce_context": reduce_knowledge_context,
-            "source_count": len(sources),
-            "sources": [_source_trace_dict(source, index) for index, source in enumerate(sources[:12], start=1)],
-        },
-        **(extra or {}),
-    }
-
-
-def _attachment_trace_dict(attachment: SessionAttachment) -> dict:
-    return {
-        "id": attachment.id,
-        "session_id": attachment.session_id,
-        "message_id": attachment.message_id,
-        "name": attachment.original_name,
-        "content_type": attachment.content_type,
-        "size": attachment.size,
-    }
-
-
-def _source_trace_dict(source: dict, index: int) -> dict:
-    return {
-        "index": index,
-        "file": source.get("file"),
-        "source_title": source.get("source_title"),
-        "section_path": source.get("section_path"),
-        "score": source.get("score"),
-        "source_file": source.get("source_file"),
-        "source_locator": source.get("source_locator"),
-    }
-
-
-def _safe_trace_list(value: object, *, limit: int = 6, item_limit: int = 220) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    result: list[str] = []
-    for item in value[:limit]:
-        text = str(item or "").strip()
-        if text:
-            result.append(text[:item_limit])
-    return result
-
-
-def _gbrain_think_trace(think_result: dict) -> dict:
-    metadata = think_result.get("metadata") if isinstance(think_result.get("metadata"), dict) else {}
-    gaps = _safe_trace_list(metadata.get("gaps"))
-    conflicts = _safe_trace_list(metadata.get("conflicts"))
-    warnings = _safe_trace_list(metadata.get("warnings"))
-    diagnostics = metadata.get("diagnostics") if isinstance(metadata.get("diagnostics"), dict) else {}
-    return {
-        "source_id": think_result.get("source_id"),
-        "status": think_result.get("status"),
-        "model": think_result.get("model"),
-        "gap_count": len(metadata.get("gaps") if isinstance(metadata.get("gaps"), list) else []),
-        "conflict_count": len(metadata.get("conflicts") if isinstance(metadata.get("conflicts"), list) else []),
-        "warning_count": len(metadata.get("warnings") if isinstance(metadata.get("warnings"), list) else []),
-        "gaps": gaps,
-        "conflicts": conflicts,
-        "warnings": warnings,
-        "diagnostics": {
-            "trace_id": diagnostics.get("trace_id"),
-            "pipeline": diagnostics.get("pipeline"),
-        },
-    }
-
-
-def _skill_context_extra(skill_response: dict) -> dict:
-    skill_run = skill_response.get("skill_run") or {}
-    skill = skill_run.get("skill") or {}
-    return {
-        "skill": {
-            "run_id": skill_run.get("id"),
-            "skill_name": skill_run.get("skill_name"),
-            "display_name": skill.get("display_name"),
-            "status": skill_run.get("status"),
-            "missing_input_count": len(skill_run.get("missing_inputs") or []),
-        },
-        "generated_file": _generated_file_context(skill_response.get("generated_file")),
-    }
-
-
-def _generated_file_context(generated_file: dict | None) -> dict | None:
-    if not generated_file:
-        return None
-    return {
-        "id": generated_file.get("id"),
-        "filename": generated_file.get("filename"),
-        "mime_type": generated_file.get("mime_type"),
-        "download_url": generated_file.get("download_url"),
-    }
-
-
-def _trace_preview(value: str | None, limit: int = 160) -> str:
-    text = (value or "").strip()
-    if len(text) <= limit:
-        return text
-    return text[:limit].rstrip() + "..."
-
-
 def _write_document_generation_agent_run(
     db: Session,
     *,
@@ -1995,9 +1871,9 @@ def _write_gbrain_think_agent_run(
             "model": think_result.get("model"),
             "status": think_result.get("status"),
             "source_count": len(response_sources),
-            "gaps": _safe_trace_list((think_result.get("metadata") or {}).get("gaps") if isinstance(think_result.get("metadata"), dict) else []),
-            "conflicts": _safe_trace_list((think_result.get("metadata") or {}).get("conflicts") if isinstance(think_result.get("metadata"), dict) else []),
-            "warnings": _safe_trace_list((think_result.get("metadata") or {}).get("warnings") if isinstance(think_result.get("metadata"), dict) else []),
+            "gaps": safe_trace_list((think_result.get("metadata") or {}).get("gaps") if isinstance(think_result.get("metadata"), dict) else []),
+            "conflicts": safe_trace_list((think_result.get("metadata") or {}).get("conflicts") if isinstance(think_result.get("metadata"), dict) else []),
+            "warnings": safe_trace_list((think_result.get("metadata") or {}).get("warnings") if isinstance(think_result.get("metadata"), dict) else []),
         },
     )
     if response_sources:
@@ -2019,7 +1895,7 @@ def _write_gbrain_think_agent_run(
             "model": think_result.get("model"),
             "source_id": think_result.get("source_id"),
             "source_count": len(response_sources),
-            "gbrain_think": _gbrain_think_trace(think_result),
+            "gbrain_think": gbrain_think_trace(think_result),
         },
         error_message=error_message,
     )
@@ -2265,7 +2141,7 @@ def _run_gbrain_think_response(
     think_result = KNOWLEDGE_SOURCES.think(db, knowledge_query, workspace_id=session.workspace_id)
     response_sources = _serialize_sources(think_result.get("sources", []))
     ok = bool(think_result.get("ok"))
-    context_trace = _build_context_trace(
+    context_trace = build_context_trace(
         session=session,
         req=None,
         attachments=[],
@@ -2278,7 +2154,7 @@ def _run_gbrain_think_response(
             "knowledge_query": knowledge_query,
             "gbrain_source_id": think_result.get("source_id"),
             "gbrain_status": think_result.get("status"),
-            "gbrain_think": _gbrain_think_trace(think_result),
+            "gbrain_think": gbrain_think_trace(think_result),
         },
     )
     assistant_message = ChatMessage(
@@ -2406,7 +2282,7 @@ def _run_chat_text_skill_by_name(
                 user_message_id,
                 content,
                 skill_response,
-                context_trace=_build_context_trace(
+                context_trace=build_context_trace(
                     session=session,
                     req=req,
                     attachments=selected_attachments,
@@ -2415,7 +2291,7 @@ def _run_chat_text_skill_by_name(
                     provider="project_r",
                     model="audio-transcription",
                     requested_model=req.model_profile or req.provider,
-                    extra=_skill_context_extra(skill_response),
+                    extra=skill_context_extra(skill_response),
                 ),
             )
 
@@ -2445,7 +2321,7 @@ def _run_chat_text_skill_by_name(
             user_message_id,
             content,
             skill_response,
-            context_trace=_build_context_trace(
+            context_trace=build_context_trace(
                 session=session,
                 req=req,
                 attachments=selected_attachments,
@@ -2454,7 +2330,7 @@ def _run_chat_text_skill_by_name(
                 provider="project_r",
                 model="audio-transcription",
                 requested_model=req.model_profile or req.provider,
-                extra=_skill_context_extra(skill_response),
+                extra=skill_context_extra(skill_response),
             ),
         )
 
@@ -2508,7 +2384,7 @@ def _run_chat_text_skill_by_name(
 
     usage = llm_response.usage
     skill_payload = run_to_dict(run, skill)
-    context_trace = _build_context_trace(
+    context_trace = build_context_trace(
         session=session,
         req=req,
         attachments=selected_attachments,
@@ -2519,7 +2395,7 @@ def _run_chat_text_skill_by_name(
         requested_model=requested_model,
         reduce_knowledge_context=reduce_knowledge_context,
         extra={
-            **_skill_context_extra({"skill_run": skill_payload}),
+            **skill_context_extra({"skill_run": skill_payload}),
             **_web_search_context_extra(web_search_trace),
         },
     )
