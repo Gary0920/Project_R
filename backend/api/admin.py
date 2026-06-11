@@ -14,7 +14,7 @@ from core.gbrain_citation_fixer_jobs import (
     load_citation_fixer_job_state,
     record_citation_fixer_job,
 )
-from core.system_accounts import SYSTEM_ADMIN_USERNAME, ensure_system_admin, is_system_admin_user
+from app.features.auth.system_accounts import SYSTEM_ADMIN_USERNAME, ensure_system_admin, is_system_admin_user
 from core.gbrain import GBrainAdapter
 from core.knowledge_sources import approve_knowledge_review_to_gbrain
 from app.features.notifications.service import notify_gbrain_maintenance_event

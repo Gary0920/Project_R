@@ -43,7 +43,7 @@ def init_db():
     _ensure_sqlite_columns()
     db = SessionLocal()
     try:
-        from core.system_accounts import ensure_system_admin
+        from app.features.auth.system_accounts import ensure_system_admin
 
         ensure_system_admin(db)
     finally:

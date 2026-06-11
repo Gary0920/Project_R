@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.shared.time.schemas import UTCDateTimeModel
-from core.system_accounts import SYSTEM_ADMIN_USERNAME, ensure_system_admin, is_system_admin_user
+from app.features.auth.system_accounts import SYSTEM_ADMIN_USERNAME, ensure_system_admin, is_system_admin_user
 from models import BASE_DIR, get_db
 from models.audit_log import AuditLog
 from models.message import ChatMessage
