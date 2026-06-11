@@ -91,6 +91,22 @@ from app.features.workspaces.schemas import (
 from app.features.workspaces.files.signature import (
     record_file_signature as _record_file_signature,
 )
+from app.features.workspaces.files.storage import (
+    WorkspaceStorageConfig,
+    candidate_storage_path,
+    ensure_not_trash_path,
+    ensure_storage_path,
+    is_trash_relative_path,
+    normalize_brand,
+    normalize_workspace_kind,
+    project_brand_dirs,
+    project_brand_names,
+    safe_username,
+    slugify,
+    target_storage_path,
+    workspace_dirs,
+    workspace_file_root,
+)
 from app.features.workspaces.files.tree import (
     build_deleted_file_items as _build_deleted_file_items,
     build_file_tree as _build_file_tree,
@@ -234,119 +250,68 @@ MEETING_TYPES = [
 ]
 
 
+def _storage_config() -> WorkspaceStorageConfig:
+    return WorkspaceStorageConfig(
+        workspaces_root=WORKSPACES_ROOT,
+        project_root_name=PROJECT_ROOT_NAME,
+        customer_root_name=CUSTOMER_ROOT_NAME,
+        project_brands=PROJECT_BRANDS,
+        customer_brand=CUSTOMER_BRAND,
+        crm_workspace_slug=CRM_WORKSPACE_SLUG,
+        crm_raw_dir=CRM_RAW_DIR,
+    )
+
+
 def _slugify(name: str) -> str:
-    slug = re.sub(r"[^\w一-鿿-]", "-", name.strip()).strip("-")
-    return re.sub(r"-{2,}", "-", slug) or "workspace"
+    return slugify(name)
 
 
 def _safe_username(username: str) -> str:
-    return _slugify(username).replace("/", "-") or "user"
+    return safe_username(username)
 
 
 def _project_brand_names() -> list[str]:
-    names = set(PROJECT_BRANDS)
-    for brand, _ in _project_brand_dirs():
-        names.add(brand)
-    return sorted(names)
+    return project_brand_names(_storage_config())
 
 
 def _project_brand_dirs() -> list[tuple[str, Path]]:
-    project_root = (WORKSPACES_ROOT / PROJECT_ROOT_NAME).resolve()
-    entries: dict[str, Path] = {}
-    for brand in PROJECT_BRANDS:
-        entries[brand] = (project_root / brand).resolve()
-    if project_root.exists():
-        for child in project_root.iterdir():
-            if child.is_dir() and not child.is_symlink():
-                normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", child.name.strip()).strip("-._")
-                if normalized:
-                    entries[normalized.upper()] = child.resolve()
-    return sorted(entries.items(), key=lambda item: item[0])
+    return project_brand_dirs(_storage_config())
 
 
 def _normalize_brand(brand: str) -> str:
-    normalized = brand.strip().upper()
-    if not re.fullmatch(r"[A-Z0-9][A-Z0-9._-]{0,63}", normalized or ""):
-        raise HTTPException(status_code=400, detail="项目品牌不合法")
-    if normalized not in _project_brand_names():
-        raise HTTPException(status_code=400, detail="项目品牌不合法")
-    return normalized
+    return normalize_brand(brand, _storage_config())
 
 
 def _normalize_workspace_kind(kind: str | None, brand: str | None = None) -> str:
-    normalized = (kind or "").strip().lower()
-    if (brand or "").strip().upper() == CUSTOMER_BRAND:
-        normalized = "customer"
-    if not normalized:
-        normalized = "project"
-    if normalized not in {"project", "customer"}:
-        raise HTTPException(status_code=400, detail="工作区类型不合法")
-    return normalized
+    return normalize_workspace_kind(kind, brand, _storage_config())
 
 
 def _workspace_dirs(workspace: Workspace) -> tuple[str, ...]:
-    if workspace.workspace_kind == "project":
-        return DEFAULT_PROJECT_WORKSPACE_TEMPLATE_DIRS
-    if workspace.workspace_kind == "customer":
-        return (CRM_RAW_DIR,)
-    return ()
+    return workspace_dirs(workspace, _storage_config())
 
 
 def _is_trash_relative_path(path: Path) -> bool:
-    return bool(path.parts) and path.parts[0] == TRASH_DIRNAME
+    return is_trash_relative_path(path)
 
 
 def _ensure_not_trash_path(path: Path) -> None:
-    if _is_trash_relative_path(path):
-        raise HTTPException(status_code=400, detail="回收站不能作为普通文件夹操作")
+    ensure_not_trash_path(path)
 
 
 def _target_storage_path(workspace: Workspace, owner: User | None = None) -> Path:
-    if workspace.workspace_kind == "user":
-        return WORKSPACES_ROOT.resolve()
-    if workspace.workspace_kind == "customer":
-        return (WORKSPACES_ROOT / CUSTOMER_ROOT_NAME / CRM_WORKSPACE_SLUG).resolve()
-    brand = _normalize_brand(workspace.brand or "BFI")
-    return (WORKSPACES_ROOT / PROJECT_ROOT_NAME / brand / workspace.slug).resolve()
+    return target_storage_path(workspace, _storage_config())
 
 
 def _ensure_storage_path(workspace: Workspace, *, create_user_scaffold: bool = False) -> str:
-    if workspace.workspace_kind == "user":
-        return ""
-    root = WORKSPACES_ROOT.resolve()
-    target = _target_storage_path(workspace)
-    path = Path(workspace.storage_path) if workspace.storage_path else target
-    resolved = path.resolve()
-    legacy_path = (WORKSPACES_ROOT / workspace.slug).resolve()
-    if workspace.workspace_kind == "project" and resolved == legacy_path and legacy_path.exists() and not target.exists():
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(legacy_path), str(target))
-        path = target
-        resolved = target.resolve()
-    if not resolved.is_relative_to(root) or (
-        workspace.workspace_kind == "project"
-        and not resolved.is_relative_to((WORKSPACES_ROOT / PROJECT_ROOT_NAME).resolve())
-    ):
-        path = target
-    if workspace.workspace_kind == "customer" and path.resolve() != target:
-        path = target
-    path.mkdir(parents=True, exist_ok=True)
-    for dirname in _workspace_dirs(workspace):
-        (path / dirname).mkdir(parents=True, exist_ok=True)
-    (path / TRASH_DIRNAME).mkdir(exist_ok=True)
-    return str(path)
+    return ensure_storage_path(workspace, _storage_config(), create_user_scaffold=create_user_scaffold)
 
 
 def _workspace_file_root(workspace: Workspace) -> Path:
-    if workspace.workspace_kind == "user":
-        raise HTTPException(status_code=400, detail="个人工作台不提供后端文件区")
-    return Path(_ensure_storage_path(workspace)).resolve()
+    return workspace_file_root(workspace, _storage_config())
 
 
 def _candidate_storage_path(slug: str, brand: str, workspace_kind: str = "project") -> Path:
-    if workspace_kind == "customer":
-        return (WORKSPACES_ROOT / CUSTOMER_ROOT_NAME / CRM_WORKSPACE_SLUG).resolve()
-    return (WORKSPACES_ROOT / PROJECT_ROOT_NAME / brand / slug).resolve()
+    return candidate_storage_path(slug, brand, workspace_kind, _storage_config())
 
 
 def _workspace_response(
