@@ -6,7 +6,6 @@ import mimetypes
 from datetime import datetime, timezone
 from pathlib import Path
 import shutil
-import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -46,6 +45,15 @@ from app.features.workspaces.audit import (
 from app.features.workspaces.gbrain_graph import (
     workspace_gbrain_graph_scope as _workspace_gbrain_graph_scope,
     workspace_profile_cards as _workspace_profile_cards,
+)
+from app.features.workspaces.knowledge_ingest_api import (
+    compile_customer_workspace_sources_for_request as _compile_customer_workspace_sources_for_request_core,
+    compile_project_workspace_sources_for_request as _compile_project_workspace_sources_for_request_core,
+    execute_workspace_knowledge_ingest as _execute_workspace_knowledge_ingest_core,
+    new_workspace_ingest_run_id as _new_workspace_ingest_run_id_core,
+    normalize_workspace_ingest_request as _normalize_workspace_ingest_request_core,
+    run_workspace_knowledge_ingest_job as _run_workspace_knowledge_ingest_job_core,
+    serialize_ingest_job as _serialize_ingest_job_core,
 )
 from app.features.workspaces.schemas import (
     CopyWorkspacePathRequest,
@@ -145,48 +153,17 @@ from app.features.workspaces.registry import (
     register_existing_project_folder,
     sync_project_folders,
 )
-from app.features.workspaces.ingest.projection import (
-    finalize_workspace_ingest_projection as _finalize_workspace_ingest_projection,
-    update_workspace_file_rag_statuses_from_manifest as _update_workspace_file_rag_statuses_from_manifest,
-)
-from app.features.workspaces.ingest.executor import execute_workspace_ingest_core
 from app.features.workspaces.ingest.agent_runs import (
-    add_workspace_ingest_result_event,
-    add_workspace_ingest_started_event,
     create_queued_workspace_ingest_agent_run,
-    fail_workspace_ingest_agent_run,
-    finish_workspace_ingest_agent_run,
-    get_or_create_workspace_ingest_agent_run as _get_or_create_workspace_ingest_agent_run,
-    serialize_workspace_ingest_agent_run as _serialize_workspace_ingest_agent_run,
     write_immediate_workspace_ingest_agent_run as _write_immediate_workspace_ingest_agent_run,
 )
-from app.features.workspaces.ingest.audit import workspace_ingest_audit_fields
 from app.features.workspaces.ingest.jobs import (
-    mark_workspace_ingest_job_completed,
-    mark_workspace_ingest_job_failed,
     mark_workspace_ingest_job_queued,
-    mark_workspace_ingest_job_running,
     workspace_ingest_job_run_id as _workspace_ingest_job_run_id,
-    workspace_ingest_request_detail as _workspace_ingest_request_detail,
-    workspace_ingest_request_from_job as _workspace_ingest_request_from_job,
     workspace_ingest_request_label as _workspace_ingest_request_label,
-    workspace_ingest_run_id_from_job as _workspace_ingest_run_id_from_job,
 )
 from app.features.workspaces.ingest.notifications import (
-    notify_workspace_ingest_failed,
-    notify_workspace_ingest_finished as _notify_workspace_ingest_finished,
     notify_workspace_ingest_queued,
-)
-from app.features.workspaces.ingest.run import (
-    derive_workspace_ingest_run_status as _derive_workspace_ingest_run_status,
-    finalize_workspace_ingest_manifest as _finalize_workspace_ingest_manifest,
-    overall_workspace_ingest_rag_status as _overall_project_ingest_status,
-    workspace_ingest_manifest_counts as _workspace_ingest_manifest_counts,
-    workspace_ingest_result_payload as _workspace_ingest_result_payload,
-    workspace_ingest_run_payload as _workspace_ingest_run_payload,
-    workspace_ingest_run_status_label as _workspace_ingest_run_status_label,
-    workspace_ingest_status_event as _workspace_ingest_status_event,
-    workspace_ingest_summary_text as _workspace_ingest_summary_text,
 )
 from app.features.workspaces.meetings.io import (
     extract_text_from_docx as _extract_text_from_docx,
@@ -3196,72 +3173,33 @@ def _normalize_workspace_ingest_request(
     user: User,
     req: WorkspaceKnowledgeIngestRequest | None,
 ) -> dict:
-    requested_path = (req.path if req else "").replace("\\", "/").strip("/")
-    recursive = True if req is None else bool(req.recursive)
-    root = _workspace_file_root(workspace)
-    rel = _safe_relative_path(requested_path) if requested_path else Path()
-    _ensure_not_trash_path(rel)
-    target = _resolve_workspace_child(root, rel)
-    if not target.exists():
-        raise HTTPException(status_code=404, detail="录入路径不存在")
-    rel_path = target.relative_to(root).as_posix()
-    if rel_path == ".":
-        rel_path = ""
-    is_file = target.is_file()
-    is_directory = target.is_dir()
-    if not is_file and not is_directory:
-        raise HTTPException(status_code=400, detail="录入路径不是文件或文件夹")
-
-    is_admin = _is_workspace_admin(db, user, workspace.id)
-    if workspace.workspace_kind == "customer" and not is_admin:
-        raise HTTPException(status_code=403, detail="客户资料录入仅允许系统管理员或客户工作区管理员执行")
-    if workspace.workspace_kind == "project":
-        if is_admin:
-            pass
-        elif is_file and not recursive:
-            meta = (
-                db.query(WorkspaceFile)
-                .filter(
-                    WorkspaceFile.workspace_id == workspace.id,
-                    WorkspaceFile.relative_path == rel_path,
-                    WorkspaceFile.deleted_at.is_(None),
-                )
-                .first()
-            )
-            if not meta or meta.uploaded_by != user.id:
-                raise HTTPException(status_code=403, detail="普通成员只能录入自己上传的单个文件")
-        else:
-            raise HTTPException(status_code=403, detail="递归录入文件夹仅允许系统管理员或项目管理员执行")
-    if not is_directory:
-        recursive = False
-    return {
-        "path": rel_path,
-        "recursive": recursive,
-        "target_type": "directory" if is_directory else "file",
-    }
+    return _normalize_workspace_ingest_request_core(
+        db,
+        workspace,
+        user,
+        req,
+        workspace_file_root=_workspace_file_root,
+        safe_relative_path=_safe_relative_path,
+        ensure_not_trash_path=_ensure_not_trash_path,
+        resolve_workspace_child=_resolve_workspace_child,
+        is_workspace_admin=_is_workspace_admin,
+    )
 
 
 def _compile_project_workspace_sources_for_request(workspace: Workspace, source_path: str, recursive: bool) -> dict:
-    try:
-        return compile_project_workspace_sources(workspace, source_path=source_path, recursive=recursive)
-    except TypeError:
-        if source_path or not recursive:
-            raise
-        return compile_project_workspace_sources(workspace)
+    return _compile_project_workspace_sources_for_request_core(
+        compile_project_workspace_sources, workspace, source_path, recursive
+    )
 
 
 def _compile_customer_workspace_sources_for_request(workspace: Workspace, source_path: str, recursive: bool) -> dict:
-    try:
-        return compile_customer_workspace_sources(workspace, source_path=source_path, recursive=recursive)
-    except TypeError:
-        if source_path or not recursive:
-            raise
-        return compile_customer_workspace_sources(workspace)
+    return _compile_customer_workspace_sources_for_request_core(
+        compile_customer_workspace_sources, workspace, source_path, recursive
+    )
 
 
 def _new_workspace_ingest_run_id(workspace: Workspace) -> str:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    return f"workspace-{workspace.id}-{stamp}-{uuid.uuid4().hex[:8]}"
+    return _new_workspace_ingest_run_id_core(workspace)
 
 
 def _execute_workspace_knowledge_ingest(
@@ -3274,128 +3212,32 @@ def _execute_workspace_knowledge_ingest(
     run_id: str | None = None,
     initial_status_history: list[dict] | None = None,
 ) -> dict:
-    run_id = run_id or _new_workspace_ingest_run_id(workspace)
-    started_at = datetime.now(timezone.utc)
-    status_history = list(initial_status_history or [])
-    if not any(item.get("status") == "preprocessing" for item in status_history if isinstance(item, dict)):
-        status_history.append(_workspace_ingest_status_event("preprocessing", "开始预处理源文件", started_at))
-    payload = execute_workspace_ingest_core(
+    return _execute_workspace_knowledge_ingest_core(
         db,
         workspace,
         actor_user_id,
+        compile_project=compile_project_workspace_sources,
+        compile_customer=compile_customer_workspace_sources,
+        adapter_factory=GBrainAdapter,
         source_path=source_path,
         recursive=recursive,
         run_id=run_id,
-        started_at=started_at,
-        status_history=status_history,
-        compile_project=_compile_project_workspace_sources_for_request,
-        compile_customer=_compile_customer_workspace_sources_for_request,
-        adapter_factory=GBrainAdapter,
+        initial_status_history=initial_status_history,
     )
-    _write_workspace_audit(
-        db,
-        actor_user_id,
-        "workspace_knowledge_refresh",
-        _audit_detail(
-            workspace.id,
-            actor_id=actor_user_id,
-            **workspace_ingest_audit_fields(payload, source_path=source_path, recursive=recursive),
-        ),
-    )
-    if workspace.workspace_kind in {"project", "customer"}:
-        _notify_workspace_ingest_finished(
-            db,
-            workspace=workspace,
-            actor_user_id=actor_user_id,
-            ok=bool(payload.get("ok")),
-            indexed_files=int(payload.get("indexed_files", 0)),
-            failed_files=int(payload.get("failed_files", 0)),
-            pending_extractor_capability_files=int(payload.get("pending_extractor_capability_files", 0)),
-            pending_transcription_files=int(payload.get("pending_transcription_files", 0)),
-            gbrain_error=payload.get("gbrain_error"),
-        )
-    return payload
 
 
 def _run_workspace_knowledge_ingest_job(job_id: int) -> None:
-    db = SessionLocal()
-    try:
-        job = db.query(WorkspaceIngestJob).filter(WorkspaceIngestJob.id == job_id).first()
-        if not job or job.status not in {"queued", "failed"}:
-            return
-        workspace = db.query(Workspace).filter(Workspace.id == job.workspace_id).first()
-        ingest_request = _workspace_ingest_request_from_job(job)
-        run_id = _workspace_ingest_run_id_from_job(job)
-        initial_history = mark_workspace_ingest_job_running(
-            job,
-            workspace=workspace,
-            ingest_request=ingest_request,
-            run_id=run_id,
-        )
-        agent_run = _get_or_create_workspace_ingest_agent_run(db, job, workspace)
-        agent_run.status = "running"
-        add_workspace_ingest_started_event(db, agent_run, workspace, ingest_request)
-        db.commit()
-
-        if not workspace:
-            raise ValueError("workspace no longer exists")
-        payload = _execute_workspace_knowledge_ingest(
-            db,
-            workspace,
-            job.requested_by,
-            source_path=str(ingest_request.get("path") or ""),
-            recursive=bool(ingest_request.get("recursive", True)),
-            run_id=run_id,
-            initial_status_history=initial_history,
-        )
-        mark_workspace_ingest_job_completed(job, payload)
-        add_workspace_ingest_result_event(db, agent_run, payload)
-        finish_workspace_ingest_agent_run(db, agent_run, payload)
-        db.commit()
-    except Exception as exc:
-        db.rollback()
-        job = db.query(WorkspaceIngestJob).filter(WorkspaceIngestJob.id == job_id).first()
-        if job:
-            workspace = db.query(Workspace).filter(Workspace.id == job.workspace_id).first()
-            request = _workspace_ingest_request_from_job(job)
-            run_id = _workspace_ingest_run_id_from_job(job)
-            mark_workspace_ingest_job_failed(
-                job,
-                workspace=workspace,
-                request=request,
-                run_id=run_id,
-                error=str(exc),
-            )
-            agent_run = _get_or_create_workspace_ingest_agent_run(db, job, workspace)
-            fail_workspace_ingest_agent_run(db, agent_run, workspace_id=job.workspace_id, error=str(exc))
-            notify_workspace_ingest_failed(
-                db,
-                job=job,
-                workspace=workspace,
-                error=str(exc),
-            )
-            db.commit()
-    finally:
-        db.close()
+    return _run_workspace_knowledge_ingest_job_core(
+        job_id,
+        session_factory=SessionLocal,
+        compile_project=compile_project_workspace_sources,
+        compile_customer=compile_customer_workspace_sources,
+        adapter_factory=GBrainAdapter,
+    )
 
 
 def _serialize_ingest_job(db: Session, job: WorkspaceIngestJob) -> WorkspaceKnowledgeIngestJobResponse:
-    try:
-        result = json.loads(job.result_json or "{}")
-    except json.JSONDecodeError:
-        result = {}
-    return WorkspaceKnowledgeIngestJobResponse(
-        id=job.id,
-        workspace_id=job.workspace_id,
-        requested_by=job.requested_by,
-        status=job.status,
-        result=result if isinstance(result, dict) else {},
-        error_message=job.error_message,
-        created_at=job.created_at,
-        started_at=job.started_at,
-        finished_at=job.finished_at,
-        agent_run=_serialize_workspace_ingest_agent_run(db, job),
-    )
+    return _serialize_ingest_job_core(db, job)
 
 
 @router.put("/{workspace_id}", response_model=WorkspaceResponse)
