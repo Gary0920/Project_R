@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
 from app.shared.time.utils import serialize_datetime_utc
-from app.features.agents.events import add_agent_event, create_agent_run, finish_agent_run, serialize_agent_run
+from app.features.agents.events import serialize_agent_run
 from app.features.knowledge.gbrain import (
     GBrainAdapter,
     customer_source_id_for_workspace,
@@ -35,6 +35,13 @@ from app.features.notifications.service import (
     notify_user,
     notify_workspace_bulk_delete_risk,
     notify_workspace_joined,
+)
+from app.features.workspaces.audit import (
+    audit_detail as _audit_detail,
+    mark_workspace_rag_pending as _mark_workspace_rag_pending,
+    raise_with_audit as _raise_with_audit,
+    write_workspace_audit as _write_workspace_audit,
+    write_workspace_file_agent_run as _write_workspace_file_agent_run,
 )
 from app.features.workspaces.gbrain_graph import (
     workspace_gbrain_graph_scope as _workspace_gbrain_graph_scope,
@@ -243,7 +250,6 @@ from app.features.workspaces.files.service import (
     upload_limit_for,
 )
 from models import SessionLocal, get_db
-from models.audit_log import AuditLog
 from models.attachment import SessionAttachment
 from models.workspace import Workspace, WorkspaceMember, WorkspaceGroupAccess, WorkspaceFile
 from models.workspace_ingest_job import WorkspaceIngestJob
@@ -402,91 +408,6 @@ def _ensure_crm_workspace(db: Session, user: User, *, add_member: bool = False) 
 
 def _sync_project_folders(db: Session, user: User) -> None:
     sync_project_folders(db, user, _storage_config())
-
-
-def _audit_detail(workspace_id: int, path: str = "", file_id: int | None = None, **extra) -> str:
-    return json.dumps(
-        {"workspace_id": workspace_id, "path": path, "file_id": file_id, **extra},
-        ensure_ascii=False,
-    )
-
-
-def _write_workspace_audit(db: Session, user_id: int, action: str, detail: str, success: bool = True) -> None:
-    db.add(AuditLog(user_id=user_id, action=action, detail=detail[:1000], success=success))
-
-
-def _write_workspace_file_agent_run(
-    db: Session,
-    *,
-    user_id: int,
-    workspace: Workspace,
-    source_type: str,
-    title: str,
-    path: str,
-    status: str = "completed",
-    detail: str = "",
-    result: dict | None = None,
-):
-    payload = {
-        "workspace_id": workspace.id,
-        "workspace_name": workspace.name,
-        "path": path,
-        **(result or {}),
-    }
-    run = create_agent_run(
-        db,
-        user_id=user_id,
-        workspace_id=workspace.id,
-        source_type=source_type,
-        source_id=str(path or workspace.id),
-        title=title,
-        status="running",
-    )
-    add_agent_event(
-        db,
-        run,
-        event_type="permission_check",
-        title="已校验项目权限",
-        detail=workspace.name,
-        status="completed",
-        payload={"workspace_id": workspace.id},
-    )
-    add_agent_event(
-        db,
-        run,
-        event_type="tool_call",
-        title=title,
-        detail=detail or path,
-        status=status,
-        payload=payload,
-    )
-    return finish_agent_run(
-        db,
-        run,
-        status=status,
-        result=payload,
-        error_message="" if status != "failed" else detail,
-    )
-
-
-def _raise_with_audit(
-    db: Session,
-    user_id: int,
-    action: str,
-    status_code: int,
-    message: str,
-    detail: str,
-) -> None:
-    _write_workspace_audit(db, user_id, action, detail, success=False)
-    db.commit()
-    raise HTTPException(status_code=status_code, detail=message)
-
-
-def _mark_workspace_rag_pending(db: Session, workspace_id: int) -> None:
-    # A3 keeps ingest state at file/run granularity. Historical callers still
-    # invoke this after broad file mutations, but bulk-flipping the whole
-    # workspace would mark unrelated synced files as dirty.
-    return
 
 
 def _upload_limit_for(user: User, member: WorkspaceMember, workspace: Workspace | None = None) -> tuple[int, str]:
