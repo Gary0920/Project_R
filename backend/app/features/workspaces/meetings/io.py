@@ -155,6 +155,56 @@ def write_generated_meeting_markdowns(
     )
 
 
+def upsert_generated_meeting_file_metadata(
+    *,
+    workspace_id: int,
+    user_id: int,
+    generated_files: GeneratedMeetingMarkdowns,
+    minutes_md: str,
+    actions_md: str,
+    upsert_workspace_file: Callable[[int, int, int, str, str, str, int, Path], WorkspaceFile],
+    rag_status: str | None = None,
+) -> None:
+    records = [
+        (
+            generated_files.minutes_version_rel,
+            generated_files.minutes_version_path.name,
+            len(minutes_md.encode("utf-8")),
+            generated_files.minutes_version_path,
+        ),
+        (
+            generated_files.minutes_latest_rel,
+            "minutes-latest.md",
+            len(minutes_md.encode("utf-8")),
+            generated_files.minutes_latest_path,
+        ),
+        (
+            generated_files.actions_version_rel,
+            generated_files.actions_version_path.name,
+            len(actions_md.encode("utf-8")),
+            generated_files.actions_version_path,
+        ),
+        (
+            generated_files.actions_latest_rel,
+            "actions-latest.md",
+            len(actions_md.encode("utf-8")),
+            generated_files.actions_latest_path,
+        ),
+    ]
+    for rel_path, filename, size, path in records:
+        meta = upsert_workspace_file(
+            workspace_id,
+            user_id,
+            rel_path,
+            filename,
+            "text/markdown",
+            size,
+            path,
+        )
+        if rag_status is not None:
+            meta.rag_status = rag_status
+
+
 def notify_meeting_run_finished(
     db: Session,
     *,

@@ -162,6 +162,7 @@ from app.features.workspaces.meetings.io import (
     extract_text_from_docx as _extract_text_from_docx,
     notify_meeting_run_finished as _notify_meeting_run_finished,
     read_auxiliary_summaries as _read_auxiliary_summaries,
+    upsert_generated_meeting_file_metadata as _upsert_generated_meeting_file_metadata,
     write_numbered_latest_markdown as _write_numbered_latest_markdown,
     write_generated_meeting_markdowns as _write_generated_meeting_markdowns,
     write_versioned_latest_markdown as _write_versioned_latest_markdown,
@@ -901,11 +902,17 @@ def generate_meeting_minutes_and_actions(
     actions_latest_path = generated_files.actions_latest_path
     actions_latest_rel = generated_files.actions_latest_rel
 
-    # Record WorkspaceFile metadata
-    _upsert_workspace_file(
-        db, workspace_id, user.id, minutes_v_rel,
-        f"minutes-v{minutes_ver}.md", "text/markdown", len(minutes_md.encode("utf-8")), minutes_v_path,
-    ).rag_status = "partial" if transcription_status == "partial" else "not_ingested"
+    _upsert_generated_meeting_file_metadata(
+        workspace_id=workspace_id,
+        user_id=user.id,
+        generated_files=generated_files,
+        minutes_md=minutes_md,
+        actions_md=actions_md,
+        upsert_workspace_file=lambda workspace_id_arg, user_id_arg, rel_path, filename, mime_type, size, path: _upsert_workspace_file(
+            db, workspace_id_arg, user_id_arg, rel_path, filename, mime_type, size, path
+        ),
+        rag_status="partial" if transcription_status == "partial" else "not_ingested",
+    )
     # Mark previously synced files as needs_reingest
     for prefix_dir, prefix_name in [(minutes_dir, "minutes"), (actions_dir, "actions")]:
         if not prefix_dir.exists():
@@ -918,19 +925,6 @@ def generate_meeting_minutes_and_actions(
                     WorkspaceFile.relative_path == cr).first()
                 if cmeta and cmeta.rag_status in ("synced", "gbrain_ready", "sync_pending"):
                     cmeta.rag_status = "needs_reingest"
-
-    _upsert_workspace_file(
-        db, workspace_id, user.id, minutes_latest_rel,
-        "minutes-latest.md", "text/markdown", len(minutes_md.encode("utf-8")), minutes_latest_path,
-    ).rag_status = "partial" if transcription_status == "partial" else "not_ingested"
-    _upsert_workspace_file(
-        db, workspace_id, user.id, actions_v_rel,
-        f"actions-v{actions_ver}.md", "text/markdown", len(actions_md.encode("utf-8")), actions_v_path,
-    ).rag_status = "partial" if transcription_status == "partial" else "not_ingested"
-    _upsert_workspace_file(
-        db, workspace_id, user.id, actions_latest_rel,
-        "actions-latest.md", "text/markdown", len(actions_md.encode("utf-8")), actions_latest_path,
-    ).rag_status = "partial" if transcription_status == "partial" else "not_ingested"
 
     total_tokens = token_input + token_output
 
@@ -1578,14 +1572,16 @@ def retry_meeting_operation(
         actions_latest_path = generated_files.actions_latest_path
         actions_latest_rel = generated_files.actions_latest_rel
 
-        _upsert_workspace_file(db, workspace_id, user.id, minutes_v_rel,
-                               f"minutes-v{minutes_ver}.md", "text/markdown", len(minutes_md.encode("utf-8")), minutes_v_path)
-        _upsert_workspace_file(db, workspace_id, user.id, minutes_latest_rel,
-                               "minutes-latest.md", "text/markdown", len(minutes_md.encode("utf-8")), minutes_latest_path)
-        _upsert_workspace_file(db, workspace_id, user.id, actions_v_rel,
-                               f"actions-v{actions_ver}.md", "text/markdown", len(actions_md.encode("utf-8")), actions_v_path)
-        _upsert_workspace_file(db, workspace_id, user.id, actions_latest_rel,
-                               "actions-latest.md", "text/markdown", len(actions_md.encode("utf-8")), actions_latest_path)
+        _upsert_generated_meeting_file_metadata(
+            workspace_id=workspace_id,
+            user_id=user.id,
+            generated_files=generated_files,
+            minutes_md=minutes_md,
+            actions_md=actions_md,
+            upsert_workspace_file=lambda workspace_id_arg, user_id_arg, rel_path, filename, mime_type, size, path: _upsert_workspace_file(
+                db, workspace_id_arg, user_id_arg, rel_path, filename, mime_type, size, path
+            ),
+        )
 
         _write_workspace_audit(db, user.id, "meeting_minutes_generate_retry",
                                _audit_detail(workspace_id, req.folder_path, actor_id=user.id,
