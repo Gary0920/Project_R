@@ -15,11 +15,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from api.agent_models import AgentRunResponse
+from app.features.agents.schemas import AgentRunResponse
 from api.auth import get_current_user
 from app.shared.time.schemas import UTCDateTimeModel
 from app.shared.time.utils import serialize_datetime_utc
-from core.agent_events import add_agent_event, create_agent_run, finish_agent_run, serialize_agent_run
+from app.features.agents.events import add_agent_event, create_agent_run, finish_agent_run, serialize_agent_run
 from core.gbrain import (
     GBrainAdapter,
     customer_source_id_for_workspace,
