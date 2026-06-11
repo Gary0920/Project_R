@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 
 import { WorkspaceAgentRunToast } from "./WorkspaceAgentRunToast";
 import {
@@ -92,7 +92,6 @@ import {
   makeBreadcrumb,
   MEETING_ROOT_PATH,
   MEETING_WORKFLOW_DIRS,
-  WORKSPACE_DRAG_MIME,
 } from "../workspaceFilePanelUtils";
 import {
   inferMeetingFolder,
@@ -105,6 +104,7 @@ import {
 import { useWorkspaceFilePreview } from "../hooks/useWorkspaceFilePreview";
 import { useWorkspacePreviewWidth } from "../hooks/useWorkspacePreviewWidth";
 import { useKnowledgeGraphCanvas } from "../hooks/useKnowledgeGraphCanvas";
+import { useWorkspaceFileDragDrop } from "../hooks/useWorkspaceFileDragDrop";
 import type { ApiClientOptions } from "../../../shared/api/client";
 import type { AgentRunResponse, DetectedSpeaker, GBrainEntityMergeCandidate, GBrainEntityMergePreviewResponse, MeetingFolderResponse, MeetingGenerateResponse, MeetingRetryResponse, MediaPreflightResponse, SaveMeetingTranscriptResponse, WorkspaceEntityMergeCandidatesResponse, WorkspaceFileItemResponse, WorkspaceKnowledgeGraphResponse, WorkspaceNativeGraphContextResponse } from "../../../shared/api/types";
 import { parseApiDate } from "../../../shared/utils/time";
@@ -220,8 +220,6 @@ export function WorkspaceFilePanel({
   const [termEditOriginal, setTermEditOriginal] = useState("");
   const [termEditCorrected, setTermEditCorrected] = useState("");
   const [clipboardItem, setClipboardItem] = useState<WorkspaceClipboardItem | null>(null);
-  const [draggedItem, setDraggedItem] = useState<WorkspaceFileItemResponse | null>(null);
-  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<WorkspaceUploadProgressState>({ active: false, current: 0, total: 0, filename: "" });
   const [compactActions, setCompactActions] = useState(false);
   const layoutRef = useRef<HTMLDivElement | null>(null);
@@ -1319,6 +1317,24 @@ export function WorkspaceFilePanel({
     return true;
   }
 
+  const {
+    draggedItem,
+    dropTargetPath,
+    setDropTargetPath,
+    handleFileDragStart,
+    handleFileDragEnd,
+    handleDirectoryDragOver,
+    handleDirectoryDrop,
+    handleDrop,
+  } = useWorkspaceFileDragDrop({
+    currentPath,
+    canModifyWorkspaceItem,
+    canMoveItemTo,
+    executeMove,
+    handleUpload,
+    setDragOver,
+  });
+
   function openFileContextMenu(event: MouseEvent<HTMLDivElement>, item: WorkspaceFileItemResponse) {
     event.preventDefault();
     event.stopPropagation();
@@ -1367,61 +1383,6 @@ export function WorkspaceFilePanel({
   function runContextAction(action: () => void) {
     setContextMenu(null);
     action();
-  }
-
-  function handleFileDragStart(event: DragEvent<HTMLDivElement>, item: WorkspaceFileItemResponse) {
-    if (!canModifyWorkspaceItem(item)) {
-      event.preventDefault();
-      return;
-    }
-    setDraggedItem(item);
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData(WORKSPACE_DRAG_MIME, item.path);
-    event.dataTransfer.setData("text/plain", item.path);
-  }
-
-  function handleFileDragEnd() {
-    setDraggedItem(null);
-    setDropTargetPath(null);
-  }
-
-  function handleDirectoryDragOver(event: DragEvent<HTMLDivElement | HTMLButtonElement>, targetPath: string) {
-    if (isTrashPath(targetPath)) return;
-    if (!draggedItem || !hasWorkspaceDrag(event) || !canMoveItemTo(draggedItem, targetPath)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.dataTransfer.dropEffect = "move";
-    setDragOver(false);
-    setDropTargetPath(targetPath);
-  }
-
-  async function handleDirectoryDrop(event: DragEvent<HTMLDivElement | HTMLButtonElement>, targetPath: string) {
-    event.preventDefault();
-    event.stopPropagation();
-    setDragOver(false);
-    setDropTargetPath(null);
-    if (isTrashPath(targetPath)) return;
-    const files = Array.from(event.dataTransfer.files);
-    if (files.length > 0) {
-      await handleUpload(files, targetPath);
-      return;
-    }
-    if (!draggedItem || !canMoveItemTo(draggedItem, targetPath)) return;
-    await executeMove(draggedItem, targetPath);
-    setDraggedItem(null);
-  }
-
-  function handleDrop(event: DragEvent<HTMLElement>) {
-    event.preventDefault();
-    event.stopPropagation();
-    setDragOver(false);
-    setDropTargetPath(null);
-    if (draggedItem && hasWorkspaceDrag(event)) {
-      if (canMoveItemTo(draggedItem, currentPath)) void executeMove(draggedItem, currentPath);
-      setDraggedItem(null);
-      return;
-    }
-    void handleUpload(Array.from(event.dataTransfer.files), currentPath);
   }
 
   const isPersonalWorkspace = workspaceKind === "user";
