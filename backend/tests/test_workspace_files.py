@@ -8,6 +8,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.NamedTemporaryFile(delete=Fal
 
 import api.workspaces as workspaces_api
 from fastapi import HTTPException
+from core.workspace_ingest_projection import update_workspace_file_rag_statuses_from_manifest
 from models import Base, SessionLocal, engine
 from models.audit_log import AuditLog
 from models.generated_file import GeneratedFile
@@ -1808,6 +1809,47 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         self.assertEqual(persisted["run_status"], "sync_pending")
         meta = self.db.query(WorkspaceFile).filter(WorkspaceFile.id == uploaded.file_id).first()
         self.assertEqual(meta.rag_status, "sync_pending")
+
+    def test_workspace_ingest_projection_creates_missing_file_metadata(self):
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 投影补元数据"),
+            self.user,
+            self.db,
+        )
+        root = self.workspace_root(workspace)
+        source_dir = root / workspaces_api.DEFAULT_WORKSPACE_DIRS[2]
+        source_dir.mkdir(parents=True, exist_ok=True)
+        source_path = source_dir / "manual-file.md"
+        source_path.write_text("# Manual File\n\nFact", encoding="utf-8")
+        rel_path = source_path.relative_to(root).as_posix()
+        manifest = {
+            "items": [
+                {
+                    "source_file": rel_path,
+                    "status": "compiled",
+                    "source_sha256": "abc",
+                    "target_file": "meetings/manual-file.md",
+                }
+            ]
+        }
+
+        indexed = update_workspace_file_rag_statuses_from_manifest(
+            self.db,
+            self.db.query(Workspace).filter(Workspace.id == workspace.id).one(),
+            manifest,
+            sync_ok=True,
+            actor_user_id=self.user.id,
+        )
+
+        self.assertEqual(indexed, 1)
+        meta = (
+            self.db.query(WorkspaceFile)
+            .filter(WorkspaceFile.workspace_id == workspace.id, WorkspaceFile.relative_path == rel_path)
+            .one()
+        )
+        self.assertEqual(meta.rag_status, "synced")
+        self.assertEqual(meta.uploaded_by, self.user.id)
+        self.assertTrue(meta.source_hash)
 
     def test_synced_file_is_marked_source_changed_without_auto_reprocess(self):
         workspace = workspaces_api.create_workspace(

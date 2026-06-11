@@ -99,6 +99,19 @@ def workspace_ingest_run_status_label(status: str) -> str:
     }.get(status, status)
 
 
+def workspace_ingest_manifest_counts(manifest: dict | None) -> dict[str, int | str]:
+    manifest = manifest if isinstance(manifest, dict) else {}
+    summary = manifest.get("summary") if isinstance(manifest.get("summary"), dict) else {}
+    return {
+        "source_id": str(manifest.get("source_id") or ""),
+        "compiled_files": int(summary.get("compiled", 0) or 0),
+        "pending_extractor_capability_files": int(summary.get("pending_extractor_capability", 0) or 0),
+        "pending_transcription_files": int(summary.get("pending_transcription", 0) or 0),
+        "skipped_files": int(summary.get("skipped", 0) or 0),
+        "failed_files": int(summary.get("failed", 0) or 0),
+    }
+
+
 def workspace_ingest_item_run_status(item: dict, *, sync_ok: bool) -> str:
     status = str(item.get("status") or "")
     if status == "compiled":
@@ -110,6 +123,21 @@ def workspace_ingest_item_run_status(item: dict, *, sync_ok: bool) -> str:
     if status in {"skipped", "ignored"}:
         return "ignored"
     return "failed" if status else "ignored"
+
+
+def workspace_ingest_item_rag_status(item: dict, *, sync_ok: bool) -> str:
+    status = str(item.get("status") or "")
+    if status == "compiled":
+        return "synced" if sync_ok else "sync_pending"
+    if status == "pending_extractor_capability":
+        return "pending_extractor_capability"
+    if status == "pending_transcription":
+        return "pending_transcription"
+    if status == "failed":
+        return "failed"
+    if status == "skipped":
+        return "skipped"
+    return "pending"
 
 
 def workspace_ingest_manifest_name(workspace: Any) -> str:
@@ -227,3 +255,27 @@ def workspace_ingest_summary_text(payload: dict) -> str:
         f"待转写 {payload.get('pending_transcription_files', 0)} 个，"
         f"失败 {payload.get('failed_files', 0)} 个"
     )
+
+
+def overall_workspace_ingest_rag_status(
+    *,
+    ok: bool,
+    indexed_files: int,
+    failed_files: int,
+    pending_extractor_capability_files: int,
+    pending_transcription_files: int,
+    skipped_files: int,
+) -> str:
+    if failed_files > 0:
+        return "failed"
+    if not ok:
+        return "pending"
+    if indexed_files > 0:
+        return "indexed"
+    if pending_transcription_files > 0:
+        return "pending_transcription"
+    if pending_extractor_capability_files > 0:
+        return "pending_extractor_capability"
+    if skipped_files > 0:
+        return "skipped"
+    return "indexed"

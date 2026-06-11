@@ -2,7 +2,6 @@ import json
 import re
 import base64
 import binascii
-import hashlib
 import mimetypes
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,10 +40,47 @@ from core.notification_service import (
     notify_workspace_bulk_delete_risk,
     notify_workspace_joined,
 )
+from core.workspace_file_signature import (
+    file_signature as _file_signature,
+    record_file_signature as _record_file_signature,
+)
+from core.workspace_ingest_projection import (
+    finalize_workspace_ingest_projection as _finalize_workspace_ingest_projection,
+    update_workspace_file_rag_statuses_from_manifest as _update_workspace_file_rag_statuses_from_manifest,
+)
+from core.workspace_ingest_executor import execute_workspace_ingest_core
+from core.workspace_ingest_agent_runs import (
+    add_workspace_ingest_result_event,
+    add_workspace_ingest_started_event,
+    create_queued_workspace_ingest_agent_run,
+    fail_workspace_ingest_agent_run,
+    finish_workspace_ingest_agent_run,
+    get_or_create_workspace_ingest_agent_run as _get_or_create_workspace_ingest_agent_run,
+    serialize_workspace_ingest_agent_run as _serialize_workspace_ingest_agent_run,
+    write_immediate_workspace_ingest_agent_run as _write_immediate_workspace_ingest_agent_run,
+)
+from core.workspace_ingest_audit import workspace_ingest_audit_fields
+from core.workspace_ingest_jobs import (
+    mark_workspace_ingest_job_completed,
+    mark_workspace_ingest_job_failed,
+    mark_workspace_ingest_job_queued,
+    mark_workspace_ingest_job_running,
+    workspace_ingest_job_run_id as _workspace_ingest_job_run_id,
+    workspace_ingest_request_detail as _workspace_ingest_request_detail,
+    workspace_ingest_request_from_job as _workspace_ingest_request_from_job,
+    workspace_ingest_request_label as _workspace_ingest_request_label,
+    workspace_ingest_run_id_from_job as _workspace_ingest_run_id_from_job,
+)
+from core.workspace_ingest_notifications import (
+    notify_workspace_ingest_failed,
+    notify_workspace_ingest_finished as _notify_workspace_ingest_finished,
+    notify_workspace_ingest_queued,
+)
 from core.workspace_ingest_run import (
-    WORKSPACE_INGEST_RUN_STATUSES,
     derive_workspace_ingest_run_status as _derive_workspace_ingest_run_status,
     finalize_workspace_ingest_manifest as _finalize_workspace_ingest_manifest,
+    overall_workspace_ingest_rag_status as _overall_project_ingest_status,
+    workspace_ingest_manifest_counts as _workspace_ingest_manifest_counts,
     workspace_ingest_result_payload as _workspace_ingest_result_payload,
     workspace_ingest_run_payload as _workspace_ingest_run_payload,
     workspace_ingest_run_status_label as _workspace_ingest_run_status_label,
@@ -75,7 +111,6 @@ from core.workspace_files import (
     upload_limit_for,
 )
 from models import SessionLocal, get_db
-from models.agent_run import AgentRun
 from models.audit_log import AuditLog
 from models.attachment import SessionAttachment
 from models.workspace import Workspace, WorkspaceMember, WorkspaceGroupAccess, WorkspaceFile
@@ -967,26 +1002,6 @@ def _mark_workspace_rag_pending(db: Session, workspace_id: int) -> None:
     # invoke this after broad file mutations, but bulk-flipping the whole
     # workspace would mark unrelated synced files as dirty.
     return
-
-
-def _file_signature(path: Path) -> dict[str, str | int]:
-    stat = path.stat()
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return {
-        "source_hash": digest.hexdigest(),
-        "source_size": stat.st_size,
-        "source_mtime": str(stat.st_mtime_ns),
-    }
-
-
-def _record_file_signature(meta: WorkspaceFile, path: Path) -> None:
-    signature = _file_signature(path)
-    meta.source_hash = str(signature["source_hash"])
-    meta.source_size = int(signature["source_size"])
-    meta.source_mtime = str(signature["source_mtime"])
 
 
 def _source_status_for_file(meta: WorkspaceFile | None, path: Path | None = None) -> str:
@@ -4879,56 +4894,14 @@ def enqueue_workspace_knowledge_ingest(
     db.add(job)
     db.flush()
     run_id = _workspace_ingest_job_run_id(job)
-    job.result_json = json.dumps(
-        {
-            "request": ingest_request,
-            "run": _workspace_ingest_run_payload(
-                run_id=run_id,
-                status="queued",
-                workspace=workspace,
-                source_id=None,
-                source_path=ingest_request["path"],
-                recursive=ingest_request["recursive"],
-                started_at=None,
-                finished_at=None,
-                error=None,
-                status_history=[
-                    _workspace_ingest_status_event("queued", "任务已排队", job.created_at),
-                ],
-            ),
-            "run_status": "queued",
-            "run_id": run_id,
-        },
-        ensure_ascii=False,
-    )
-    agent_run = create_agent_run(
+    mark_workspace_ingest_job_queued(job, workspace=workspace, ingest_request=ingest_request, run_id=run_id)
+    create_queued_workspace_ingest_agent_run(db, job, workspace, ingest_request)
+    notify_workspace_ingest_queued(
         db,
-        user_id=user.id,
-        workspace_id=workspace.id,
-        source_type="workspace_ingest",
-        source_id=job.id,
-        title=f"录入工作区知识库：{workspace.name}",
-        status="queued",
-    )
-    add_agent_event(
-        db,
-        agent_run,
-        event_type="queued",
-        title="工作区录入任务已排队",
-        detail=_workspace_ingest_request_detail(workspace, ingest_request),
-        status="queued",
-        payload={"workspace_id": workspace.id, "workspace_name": workspace.name, **ingest_request},
-    )
-    notify_user(
-        db,
-        user.id,
-        category="workspace",
-        severity="info",
-        title="工作区知识库录入已排队",
-        content=f"{workspace.name}：后台正在处理{_workspace_ingest_request_label(ingest_request)}，完成后会再次通知你。",
-        action_status="pending",
-        action_kind="open_workspace",
-        action_payload={"workspace_id": workspace.id, "ingest_job_id": job.id},
+        workspace=workspace,
+        actor_user_id=user.id,
+        job_id=job.id,
+        request_label=_workspace_ingest_request_label(ingest_request),
     )
     db.commit()
     db.refresh(job)
@@ -5252,35 +5225,6 @@ def _normalize_workspace_ingest_request(
     }
 
 
-def _workspace_ingest_request_label(request: dict) -> str:
-    path = str(request.get("path") or "")
-    if not path:
-        return "当前工作区资料"
-    if request.get("target_type") == "file":
-        return f"文件「{path}」"
-    return f"文件夹「{path}」"
-
-
-def _workspace_ingest_request_detail(workspace: Workspace, request: dict) -> str:
-    mode = "递归录入" if request.get("recursive") else "单文件录入"
-    return f"{workspace.name}：{mode} {_workspace_ingest_request_label(request)}"
-
-
-def _workspace_ingest_request_from_job(job: WorkspaceIngestJob) -> dict:
-    try:
-        payload = json.loads(job.result_json or "{}")
-    except json.JSONDecodeError:
-        payload = {}
-    request = payload.get("request") if isinstance(payload, dict) else {}
-    if not isinstance(request, dict):
-        request = {}
-    return {
-        "path": str(request.get("path") or ""),
-        "recursive": bool(request.get("recursive", True)),
-        "target_type": str(request.get("target_type") or "directory"),
-    }
-
-
 def _compile_project_workspace_sources_for_request(workspace: Workspace, source_path: str, recursive: bool) -> dict:
     try:
         return compile_project_workspace_sources(workspace, source_path=source_path, recursive=recursive)
@@ -5304,24 +5248,6 @@ def _new_workspace_ingest_run_id(workspace: Workspace) -> str:
     return f"workspace-{workspace.id}-{stamp}-{uuid.uuid4().hex[:8]}"
 
 
-def _workspace_ingest_job_run_id(job: WorkspaceIngestJob) -> str:
-    return f"workspace-ingest-job-{job.id}"
-
-
-def _workspace_ingest_run_id_from_job(job: WorkspaceIngestJob) -> str:
-    try:
-        payload = json.loads(job.result_json or "{}")
-    except json.JSONDecodeError:
-        payload = {}
-    if isinstance(payload, dict):
-        run = payload.get("run")
-        if isinstance(run, dict) and run.get("run_id"):
-            return str(run["run_id"])
-        if payload.get("run_id"):
-            return str(payload["run_id"])
-    return _workspace_ingest_job_run_id(job)
-
-
 def _execute_workspace_knowledge_ingest(
     db: Session,
     workspace: Workspace,
@@ -5337,195 +5263,19 @@ def _execute_workspace_knowledge_ingest(
     status_history = list(initial_status_history or [])
     if not any(item.get("status") == "preprocessing" for item in status_history if isinstance(item, dict)):
         status_history.append(_workspace_ingest_status_event("preprocessing", "开始预处理源文件", started_at))
-    indexed = 0
-    rag_status = "indexed"
-    ok = True
-    compiled_files = 0
-    pending_extractor_capability_files = 0
-    pending_transcription_files = 0
-    skipped_files = 0
-    failed_files = 0
-    pending_reviews_created = 0
-    gbrain_source_id = None
-    gbrain_status = None
-    gbrain_sync_status = None
-    gbrain_think_status = None
-    gbrain_error = None
-    gbrain_think_ok = True
-    manifest = None
-    run_status = "preprocessing"
-    if workspace.workspace_kind == "project":
-        manifest = _compile_project_workspace_sources_for_request(workspace, source_path, recursive)
-        summary = manifest.get("summary") or {}
-        compiled_files = int(summary.get("compiled", 0) or 0)
-        pending_extractor_capability_files = int(summary.get("pending_extractor_capability", 0) or 0)
-        pending_transcription_files = int(summary.get("pending_transcription", 0) or 0)
-        skipped_files = int(summary.get("skipped", 0) or 0)
-        failed_files = int(summary.get("failed", 0) or 0)
-        gbrain_source_id = str(manifest.get("source_id") or "")
-        source_ok = True
-        if compiled_files > 0:
-            status_history.append(_workspace_ingest_status_event("gbrain_ready", "已生成 GBrain-ready Markdown"))
-            adapter = GBrainAdapter()
-            source_result = adapter.ensure_project_source(workspace)
-            source_ok = bool(source_result.get("ok"))
-            gbrain_status = str((source_result.get("source") or {}).get("status") or source_result.get("registration", {}).get("status") or "")
-            if source_ok:
-                sync_result = adapter.sync_project_source(workspace, no_pull=True)
-                gbrain_sync_status = str(sync_result.get("status") or "")
-                if sync_result.get("status") != "ok":
-                    gbrain_error = str(sync_result.get("error") or "GBrain project source sync failed")
-                elif gbrain_source_id:
-                    settings = getattr(adapter, "settings", None)
-                    if settings is None or not hasattr(adapter, "ensure_think_source_client"):
-                        gbrain_think_status = "not_checked"
-                    elif not settings.think_enabled:
-                        gbrain_think_status = "disabled"
-                    elif not settings.think_source_scope_verified:
-                        gbrain_think_status = "source_scope_unverified"
-                    elif not settings.think_project_clients_enabled:
-                        gbrain_think_status = "project_clients_disabled"
-                    else:
-                        think_client_result = adapter.ensure_think_source_client(gbrain_source_id)
-                        gbrain_think_status = str(think_client_result.get("status") or "")
-                        if not think_client_result.get("ok") and not gbrain_error:
-                            gbrain_think_ok = False
-                            gbrain_error = str(
-                                think_client_result.get("error")
-                                or "GBrain project think OAuth client preparation failed"
-                            )
-            else:
-                gbrain_error = str(source_result.get("registration", {}).get("error") or "")
-        else:
-            gbrain_status = "not_required_no_compiled_files"
-            gbrain_sync_status = "not_required_no_compiled_files"
-            gbrain_think_status = "not_required_no_compiled_files"
-        sync_ok = compiled_files == 0 or gbrain_sync_status == "ok"
-        ok = bool(failed_files == 0 and source_ok and sync_ok and gbrain_think_ok)
-        run_status = _derive_workspace_ingest_run_status(
-            compiled_files=compiled_files,
-            failed_files=failed_files,
-            pending_extractor_capability_files=pending_extractor_capability_files,
-            pending_transcription_files=pending_transcription_files,
-            skipped_files=skipped_files,
-            sync_ok=sync_ok,
-            ok=ok,
-        )
-        status_history.append(_workspace_ingest_status_event(run_status, _workspace_ingest_run_status_label(run_status)))
-        _finalize_workspace_ingest_manifest(
-            workspace,
-            manifest,
-            run_id=run_id,
-            run_status=run_status,
-            source_path=source_path,
-            recursive=recursive,
-            started_at=started_at,
-            finished_at=datetime.now(timezone.utc),
-            status_history=status_history,
-            sync_ok=sync_ok,
-            gbrain_sync_status=gbrain_sync_status,
-            gbrain_error=gbrain_error,
-            gbrain_think_status=gbrain_think_status,
-        )
-        indexed = _update_workspace_file_rag_statuses_from_manifest(db, workspace, manifest, sync_ok, actor_user_id)
-        rag_status = _overall_project_ingest_status(
-            ok=ok,
-            indexed_files=indexed,
-            failed_files=failed_files,
-            pending_extractor_capability_files=pending_extractor_capability_files,
-            pending_transcription_files=pending_transcription_files,
-            skipped_files=skipped_files,
-        )
-    elif workspace.workspace_kind == "customer":
-        manifest = _compile_customer_workspace_sources_for_request(workspace, source_path, recursive)
-        summary = manifest.get("summary") or {}
-        compiled_files = int(summary.get("compiled", 0) or 0)
-        pending_extractor_capability_files = int(summary.get("pending_extractor_capability", 0) or 0)
-        pending_transcription_files = int(summary.get("pending_transcription", 0) or 0)
-        skipped_files = int(summary.get("skipped", 0) or 0)
-        failed_files = int(summary.get("failed", 0) or 0)
-        gbrain_source_id = str(manifest.get("source_id") or "")
-        source_ok = True
-        if compiled_files > 0:
-            status_history.append(_workspace_ingest_status_event("gbrain_ready", "已生成 GBrain-ready Markdown"))
-            adapter = GBrainAdapter()
-            source_result = adapter.ensure_customer_source(workspace)
-            source_ok = bool(source_result.get("ok"))
-            gbrain_status = str((source_result.get("source") or {}).get("status") or source_result.get("registration", {}).get("status") or "")
-            if source_ok:
-                sync_result = adapter.sync_customer_source(workspace, no_pull=True)
-                gbrain_sync_status = str(sync_result.get("status") or "")
-                if sync_result.get("status") != "ok":
-                    gbrain_error = str(sync_result.get("error") or "GBrain customer source sync failed")
-                elif gbrain_source_id:
-                    settings = getattr(adapter, "settings", None)
-                    if settings is None or not hasattr(adapter, "ensure_think_source_client"):
-                        gbrain_think_status = "not_checked"
-                    elif not settings.think_enabled:
-                        gbrain_think_status = "disabled"
-                    elif not settings.think_source_scope_verified:
-                        gbrain_think_status = "source_scope_unverified"
-                    elif not settings.think_project_clients_enabled:
-                        gbrain_think_status = "customer_clients_disabled"
-                    else:
-                        think_client_result = adapter.ensure_think_source_client(gbrain_source_id)
-                        gbrain_think_status = str(think_client_result.get("status") or "")
-                        if not think_client_result.get("ok") and not gbrain_error:
-                            gbrain_think_ok = False
-                            gbrain_error = str(
-                                think_client_result.get("error")
-                                or "GBrain customer think OAuth client preparation failed"
-                            )
-            else:
-                gbrain_error = str(source_result.get("registration", {}).get("error") or "")
-        else:
-            gbrain_status = "not_required_no_compiled_files"
-            gbrain_sync_status = "not_required_no_compiled_files"
-            gbrain_think_status = "not_required_no_compiled_files"
-        sync_ok = compiled_files == 0 or gbrain_sync_status == "ok"
-        ok = bool(failed_files == 0 and source_ok and sync_ok and gbrain_think_ok)
-        run_status = _derive_workspace_ingest_run_status(
-            compiled_files=compiled_files,
-            failed_files=failed_files,
-            pending_extractor_capability_files=pending_extractor_capability_files,
-            pending_transcription_files=pending_transcription_files,
-            skipped_files=skipped_files,
-            sync_ok=sync_ok,
-            ok=ok,
-        )
-        status_history.append(_workspace_ingest_status_event(run_status, _workspace_ingest_run_status_label(run_status)))
-        _finalize_workspace_ingest_manifest(
-            workspace,
-            manifest,
-            run_id=run_id,
-            run_status=run_status,
-            source_path=source_path,
-            recursive=recursive,
-            started_at=started_at,
-            finished_at=datetime.now(timezone.utc),
-            status_history=status_history,
-            sync_ok=sync_ok,
-            gbrain_sync_status=gbrain_sync_status,
-            gbrain_error=gbrain_error,
-            gbrain_think_status=gbrain_think_status,
-        )
-        indexed = _update_workspace_file_rag_statuses_from_manifest(db, workspace, manifest, sync_ok, actor_user_id)
-        rag_status = _overall_project_ingest_status(
-            ok=ok,
-            indexed_files=indexed,
-            failed_files=failed_files,
-            pending_extractor_capability_files=pending_extractor_capability_files,
-            pending_transcription_files=pending_transcription_files,
-            skipped_files=skipped_files,
-        )
-    else:
-        ok = False
-        rag_status = "skipped"
-        run_status = "failed"
-        gbrain_status = "not_applicable_private_workspace"
-        gbrain_sync_status = "not_applicable_private_workspace"
-        gbrain_error = "该工作区类型不进入 GBrain 知识库"
-        status_history.append(_workspace_ingest_status_event(run_status, gbrain_error))
+    payload = execute_workspace_ingest_core(
+        db,
+        workspace,
+        actor_user_id,
+        source_path=source_path,
+        recursive=recursive,
+        run_id=run_id,
+        started_at=started_at,
+        status_history=status_history,
+        compile_project=_compile_project_workspace_sources_for_request,
+        compile_customer=_compile_customer_workspace_sources_for_request,
+        adapter_factory=GBrainAdapter,
+    )
     _write_workspace_audit(
         db,
         actor_user_id,
@@ -5533,17 +5283,7 @@ def _execute_workspace_knowledge_ingest(
         _audit_detail(
             workspace.id,
             actor_id=actor_user_id,
-            indexed_files=indexed,
-            gbrain_source_id=gbrain_source_id,
-            gbrain_status=gbrain_status,
-            gbrain_sync_status=gbrain_sync_status,
-            gbrain_think_status=gbrain_think_status,
-            failed_files=failed_files,
-            pending_extractor_capability_files=pending_extractor_capability_files,
-            pending_transcription_files=pending_transcription_files,
-            pending_reviews_created=pending_reviews_created,
-            ingest_path=source_path,
-            ingest_recursive=recursive,
+            **workspace_ingest_audit_fields(payload, source_path=source_path, recursive=recursive),
         ),
     )
     if workspace.workspace_kind in {"project", "customer"}:
@@ -5551,36 +5291,14 @@ def _execute_workspace_knowledge_ingest(
             db,
             workspace=workspace,
             actor_user_id=actor_user_id,
-            ok=ok,
-            indexed_files=indexed,
-            failed_files=failed_files,
-            pending_extractor_capability_files=pending_extractor_capability_files,
-            pending_transcription_files=pending_transcription_files,
-            gbrain_error=gbrain_error,
+            ok=bool(payload.get("ok")),
+            indexed_files=int(payload.get("indexed_files", 0)),
+            failed_files=int(payload.get("failed_files", 0)),
+            pending_extractor_capability_files=int(payload.get("pending_extractor_capability_files", 0)),
+            pending_transcription_files=int(payload.get("pending_transcription_files", 0)),
+            gbrain_error=payload.get("gbrain_error"),
         )
-    return {
-        "ok": ok,
-        "workspace_id": workspace.id,
-        "indexed_files": indexed,
-        "rag_status": rag_status,
-        "compiled_files": compiled_files,
-        "pending_extractor_capability_files": pending_extractor_capability_files,
-        "pending_transcription_files": pending_transcription_files,
-        "skipped_files": skipped_files,
-        "failed_files": failed_files,
-        "pending_reviews_created": pending_reviews_created,
-        "ingest_path": source_path,
-        "ingest_recursive": recursive,
-        "gbrain_source_id": gbrain_source_id,
-        "gbrain_status": gbrain_status,
-        "gbrain_sync_status": gbrain_sync_status,
-        "gbrain_think_status": gbrain_think_status,
-        "gbrain_error": gbrain_error,
-        "run_status": run_status,
-        "run_id": run_id,
-        "run": manifest.get("run") if isinstance(manifest, dict) else None,
-        "manifest": manifest,
-    }
+    return payload
 
 
 def _run_workspace_knowledge_ingest_job(job_id: int) -> None:
@@ -5589,46 +5307,18 @@ def _run_workspace_knowledge_ingest_job(job_id: int) -> None:
         job = db.query(WorkspaceIngestJob).filter(WorkspaceIngestJob.id == job_id).first()
         if not job or job.status not in {"queued", "failed"}:
             return
-        job.status = "running"
-        job.started_at = datetime.now(timezone.utc)
         workspace = db.query(Workspace).filter(Workspace.id == job.workspace_id).first()
         ingest_request = _workspace_ingest_request_from_job(job)
         run_id = _workspace_ingest_run_id_from_job(job)
-        initial_history = [
-            _workspace_ingest_status_event("queued", "任务已排队", job.created_at),
-            _workspace_ingest_status_event("preprocessing", "开始预处理源文件", job.started_at),
-        ]
-        job.result_json = json.dumps(
-            {
-                "request": ingest_request,
-                "run": _workspace_ingest_run_payload(
-                    run_id=run_id,
-                    status="preprocessing",
-                    workspace=workspace,
-                    source_id=None,
-                    source_path=str(ingest_request.get("path") or ""),
-                    recursive=bool(ingest_request.get("recursive", True)),
-                    started_at=job.started_at,
-                    finished_at=None,
-                    error=None,
-                    status_history=initial_history,
-                ),
-                "run_status": "preprocessing",
-                "run_id": run_id,
-            },
-            ensure_ascii=False,
+        initial_history = mark_workspace_ingest_job_running(
+            job,
+            workspace=workspace,
+            ingest_request=ingest_request,
+            run_id=run_id,
         )
         agent_run = _get_or_create_workspace_ingest_agent_run(db, job, workspace)
         agent_run.status = "running"
-        add_agent_event(
-            db,
-            agent_run,
-            event_type="started",
-            title="开始处理工作区资料",
-            detail=_workspace_ingest_request_detail(workspace, ingest_request) if workspace else "",
-            status="running",
-            payload={"workspace_id": job.workspace_id, **ingest_request},
-        )
+        add_workspace_ingest_started_event(db, agent_run, workspace, ingest_request)
         db.commit()
 
         if not workspace:
@@ -5642,167 +5332,35 @@ def _run_workspace_knowledge_ingest_job(job_id: int) -> None:
             run_id=run_id,
             initial_status_history=initial_history,
         )
-        job.status = "succeeded" if payload.get("ok") else "failed"
-        job.result_json = json.dumps(payload, ensure_ascii=False)
-        job.error_message = str(payload.get("gbrain_error") or "")
-        job.finished_at = datetime.now(timezone.utc)
-        add_agent_event(
-            db,
-            agent_run,
-            event_type="result",
-            title="工作区知识库录入完成" if payload.get("ok") else "工作区知识库录入未完成",
-            detail=_workspace_ingest_summary_text(payload),
-            status="completed" if payload.get("ok") else "failed",
-            payload=_workspace_ingest_result_payload(payload),
-        )
-        finish_agent_run(
-            db,
-            agent_run,
-            status="completed" if payload.get("ok") else "failed",
-            result=_workspace_ingest_result_payload(payload),
-            error_message=str(payload.get("gbrain_error") or ""),
-        )
+        mark_workspace_ingest_job_completed(job, payload)
+        add_workspace_ingest_result_event(db, agent_run, payload)
+        finish_workspace_ingest_agent_run(db, agent_run, payload)
         db.commit()
     except Exception as exc:
         db.rollback()
         job = db.query(WorkspaceIngestJob).filter(WorkspaceIngestJob.id == job_id).first()
         if job:
-            job.status = "failed"
-            job.error_message = str(exc)
-            job.finished_at = datetime.now(timezone.utc)
             workspace = db.query(Workspace).filter(Workspace.id == job.workspace_id).first()
             request = _workspace_ingest_request_from_job(job)
             run_id = _workspace_ingest_run_id_from_job(job)
-            history = [
-                _workspace_ingest_status_event("queued", "任务已排队", job.created_at),
-                _workspace_ingest_status_event("preprocessing", "开始预处理源文件", job.started_at),
-                _workspace_ingest_status_event("failed", str(exc), job.finished_at),
-            ]
-            job.result_json = json.dumps(
-                {
-                    "request": request,
-                    "run": _workspace_ingest_run_payload(
-                        run_id=run_id,
-                        status="failed",
-                        workspace=workspace,
-                        source_id=None,
-                        source_path=str(request.get("path") or ""),
-                        recursive=bool(request.get("recursive", True)),
-                        started_at=job.started_at,
-                        finished_at=job.finished_at,
-                        error=str(exc),
-                        status_history=history,
-                    ),
-                    "run_status": "failed",
-                    "run_id": run_id,
-                    "error": str(exc),
-                },
-                ensure_ascii=False,
+            mark_workspace_ingest_job_failed(
+                job,
+                workspace=workspace,
+                request=request,
+                run_id=run_id,
+                error=str(exc),
             )
             agent_run = _get_or_create_workspace_ingest_agent_run(db, job, workspace)
-            add_agent_event(
+            fail_workspace_ingest_agent_run(db, agent_run, workspace_id=job.workspace_id, error=str(exc))
+            notify_workspace_ingest_failed(
                 db,
-                agent_run,
-                event_type="error",
-                title="工作区知识库录入失败",
-                detail=str(exc),
-                status="failed",
-                payload={"workspace_id": job.workspace_id},
-            )
-            finish_agent_run(db, agent_run, status="failed", error_message=str(exc))
-            notify_user(
-                db,
-                job.requested_by,
-                category="workspace",
-                severity="warning",
-                title="工作区知识库录入失败",
-                content=f"{workspace.name if workspace else '项目'}：后台录入任务失败，原因：{exc}",
-                action_status="pending",
-                action_kind="open_workspace",
-                action_payload={"workspace_id": job.workspace_id, "ingest_job_id": job.id},
+                job=job,
+                workspace=workspace,
+                error=str(exc),
             )
             db.commit()
     finally:
         db.close()
-
-
-def _get_or_create_workspace_ingest_agent_run(
-    db: Session,
-    job: WorkspaceIngestJob,
-    workspace: Workspace | None,
-):
-    run = _find_workspace_ingest_agent_run(db, job)
-    if run:
-        return run
-    return create_agent_run(
-        db,
-        user_id=job.requested_by,
-        workspace_id=job.workspace_id,
-        source_type="workspace_ingest",
-        source_id=job.id,
-        title=f"录入工作区知识库：{workspace.name if workspace else job.workspace_id}",
-        status=job.status,
-    )
-
-
-def _serialize_workspace_ingest_agent_run(db: Session, job: WorkspaceIngestJob) -> dict | None:
-    run = _find_workspace_ingest_agent_run(db, job)
-    return serialize_agent_run(db, run)
-
-
-def _find_workspace_ingest_agent_run(db: Session, job: WorkspaceIngestJob):
-    return (
-        db.query(AgentRun)
-        .filter(
-            AgentRun.source_type == "workspace_ingest",
-            AgentRun.source_id == str(job.id),
-            AgentRun.user_id == job.requested_by,
-        )
-        .order_by(AgentRun.id.desc())
-        .first()
-    )
-
-
-def _write_immediate_workspace_ingest_agent_run(
-    db: Session,
-    workspace: Workspace,
-    user_id: int,
-    payload: dict,
-):
-    run = create_agent_run(
-        db,
-        user_id=user_id,
-        workspace_id=workspace.id,
-        source_type="workspace_ingest",
-        source_id=f"sync:{workspace.id}:{datetime.now(timezone.utc).timestamp()}",
-        title=f"录入工作区知识库：{workspace.name}",
-        status="running",
-    )
-    add_agent_event(
-        db,
-        run,
-        event_type="started",
-        title="开始处理工作区资料",
-        detail=workspace.name,
-        status="completed",
-        payload={"workspace_id": workspace.id},
-    )
-    add_agent_event(
-        db,
-        run,
-        event_type="result",
-        title="工作区知识库录入完成" if payload.get("ok") else "工作区知识库录入未完成",
-        detail=_workspace_ingest_summary_text(payload),
-        status="completed" if payload.get("ok") else "failed",
-        payload=_workspace_ingest_result_payload(payload),
-    )
-    return finish_agent_run(
-        db,
-        run,
-        status="completed" if payload.get("ok") else "failed",
-        result=_workspace_ingest_result_payload(payload),
-        error_message=str(payload.get("gbrain_error") or ""),
-    )
 
 
 def _serialize_ingest_job(db: Session, job: WorkspaceIngestJob) -> WorkspaceKnowledgeIngestJobResponse:
@@ -5821,142 +5379,6 @@ def _serialize_ingest_job(db: Session, job: WorkspaceIngestJob) -> WorkspaceKnow
         started_at=job.started_at,
         finished_at=job.finished_at,
         agent_run=_serialize_workspace_ingest_agent_run(db, job),
-    )
-
-
-def _update_workspace_file_rag_statuses_from_manifest(
-    db: Session,
-    workspace: Workspace,
-    manifest: dict,
-    sync_ok: bool,
-    actor_user_id: int,
-) -> int:
-    items_by_source = {
-        str(item.get("source_file")): item
-        for item in manifest.get("items", [])
-        if isinstance(item, dict) and item.get("source_file")
-    }
-    now = datetime.now(timezone.utc)
-    indexed = 0
-    metas = (
-        db.query(WorkspaceFile)
-        .filter(WorkspaceFile.workspace_id == workspace.id, WorkspaceFile.deleted_at.is_(None))
-        .all()
-    )
-    metas_by_path = {meta.relative_path: meta for meta in metas}
-    root = Path(workspace.storage_path or "").resolve()
-    for rel_path, item in items_by_source.items():
-        if rel_path in metas_by_path:
-            continue
-        source_path = (root / rel_path).resolve()
-        try:
-            source_path.relative_to(root)
-        except ValueError:
-            continue
-        if not source_path.exists() or not source_path.is_file():
-            continue
-        guessed_type = mimetypes.guess_type(source_path.name)[0] or "application/octet-stream"
-        meta = WorkspaceFile(
-            workspace_id=workspace.id,
-            uploaded_by=actor_user_id,
-            relative_path=rel_path,
-            original_name=source_path.name,
-            content_type=guessed_type[:128],
-            size=source_path.stat().st_size,
-            rag_status="new",
-            updated_at=now,
-        )
-        _record_file_signature(meta, source_path)
-        db.add(meta)
-        db.flush()
-        metas_by_path[rel_path] = meta
-        metas.append(meta)
-    for meta in metas:
-        item = items_by_source.get(meta.relative_path)
-        if not item:
-            continue
-        status = str(item.get("status") or "")
-        if status == "compiled":
-            meta.rag_status = "synced" if sync_ok else "sync_pending"
-            source_path = (root / meta.relative_path).resolve()
-            if source_path.exists() and source_path.is_file():
-                _record_file_signature(meta, source_path)
-        elif status == "pending_extractor_capability":
-            meta.rag_status = "pending_extractor_capability"
-        elif status == "pending_transcription":
-            meta.rag_status = "pending_transcription"
-        elif status == "failed":
-            meta.rag_status = "failed"
-        elif status == "skipped":
-            meta.rag_status = "skipped"
-        else:
-            meta.rag_status = "pending"
-        meta.updated_at = now
-        if meta.rag_status in {"indexed", "synced"}:
-            indexed += 1
-    return indexed
-
-
-def _overall_project_ingest_status(
-    *,
-    ok: bool,
-    indexed_files: int,
-    failed_files: int,
-    pending_extractor_capability_files: int,
-    pending_transcription_files: int,
-    skipped_files: int,
-) -> str:
-    if failed_files > 0:
-        return "failed"
-    if not ok:
-        return "pending"
-    if indexed_files > 0:
-        return "indexed"
-    if pending_transcription_files > 0:
-        return "pending_transcription"
-    if pending_extractor_capability_files > 0:
-        return "pending_extractor_capability"
-    if skipped_files > 0:
-        return "skipped"
-    return "indexed"
-
-
-def _notify_workspace_ingest_finished(
-    db: Session,
-    *,
-    workspace: Workspace,
-    actor_user_id: int,
-    ok: bool,
-    indexed_files: int,
-    failed_files: int,
-    pending_extractor_capability_files: int,
-    pending_transcription_files: int,
-    gbrain_error: str | None,
-) -> None:
-    if ok and failed_files == 0:
-        title = "工作区知识库录入完成"
-        severity = "success"
-    else:
-        title = "工作区知识库录入未完成"
-        severity = "warning"
-    details = [
-        f"已入库 {indexed_files} 个文件",
-        f"待能力补齐 {pending_extractor_capability_files} 个",
-        f"待转写 {pending_transcription_files} 个",
-        f"失败 {failed_files} 个",
-    ]
-    if gbrain_error:
-        details.append(f"GBrain：{gbrain_error}")
-    notify_user(
-        db,
-        actor_user_id,
-        category="workspace",
-        severity=severity,
-        title=title,
-        content=f"{workspace.name}：" + "，".join(details) + "。",
-        action_status="none" if ok else "pending",
-        action_kind="open_workspace",
-        action_payload={"workspace_id": workspace.id},
     )
 
 
