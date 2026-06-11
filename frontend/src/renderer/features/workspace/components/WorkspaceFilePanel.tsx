@@ -28,6 +28,7 @@ import {
 } from "./WorkspaceUploadProgress";
 import { WorkspaceTrashTable } from "./WorkspaceTrashTable";
 import { WorkspaceFileRow } from "./WorkspaceFileRow";
+import { WorkspaceFileBreadcrumb } from "./WorkspaceFileBreadcrumb";
 import {
   clearWorkspaceTrash,
   applyWorkspaceEntityMergeCandidateAction,
@@ -1749,85 +1750,23 @@ export function WorkspaceFilePanel({
       </header>
 
       {viewMode === "files" || viewMode === "trash" ? (
-        <nav className="workspace-file-breadcrumb" aria-label={isPersonalWorkspace ? "个人文件路径" : "项目文件路径"}>
-          {viewMode === "files" ? (
-          <div className="workspace-file-nav-controls" aria-label="文件导航" role="group">
-            <button aria-label="后退" className="workspace-file-action" disabled={historyIndex <= 0} onClick={goBack} title="后退" type="button"><ChevronLeftIcon /></button>
-            <button aria-label="前进" className="workspace-file-action" disabled={historyIndex >= history.length - 1} onClick={goForward} title="前进" type="button"><ChevronRightIcon /></button>
-            <button aria-label="上一级" className="workspace-file-action" disabled={!currentPath} onClick={goUp} title="上一级" type="button"><ArrowUpIcon /></button>
-          </div>
-          ) : (
-          <div className="workspace-file-nav-controls" aria-label="文件导航" role="group">
-            <button aria-label="返回项目文件" className="workspace-file-action" onClick={() => { setViewMode("files"); navigateTo(""); }} title="返回项目文件" type="button"><ChevronLeftIcon /></button>
-          </div>
-          )}
-          <div className="workspace-file-address-bar">
-            {viewMode === "trash" ? (
-              <>
-                <button
-                  aria-label="根目录"
-                  className="workspace-file-address-root"
-                  onClick={() => { setViewMode("files"); navigateTo(""); }}
-                  title={rootTitle}
-                  type="button"
-                >
-                  <WorkspaceIcon />
-                </button>
-                <span className="workspace-file-path-separator" aria-hidden="true">›</span>
-                <button
-                  className="workspace-file-path-segment"
-                  onClick={() => { setViewMode("files"); navigateTo(""); }}
-                  type="button"
-                >
-                  根目录
-                </button>
-                <span className="workspace-file-path-separator" aria-hidden="true">›</span>
-                <span className="workspace-file-path-segment">回收站</span>
-              </>
-            ) : (
-              <>
-                <button
-                  aria-label="根目录"
-                  className="workspace-file-address-root"
-                  data-drop-target={dropTargetPath === "" ? "true" : undefined}
-                  onClick={() => navigateTo("")}
-                  onDragOver={(event) => handleDirectoryDragOver(event, "")}
-                  onDrop={(event) => void handleDirectoryDrop(event, "")}
-                  title={rootTitle}
-                  type="button"
-                >
-                  <WorkspaceIcon />
-                </button>
-                <span className="workspace-file-path-separator" aria-hidden="true">›</span>
-                <button
-                  className="workspace-file-path-segment"
-                  data-drop-target={dropTargetPath === "" ? "true" : undefined}
-                  onClick={() => navigateTo("")}
-                  onDragOver={(event) => handleDirectoryDragOver(event, "")}
-                  onDrop={(event) => void handleDirectoryDrop(event, "")}
-                  type="button"
-                >
-                  根目录
-                </button>
-                {breadcrumb.map((part) => (
-                  <span className="workspace-file-path-part" key={part.path}>
-                    <span className="workspace-file-path-separator" aria-hidden="true">›</span>
-                    <button
-                      className="workspace-file-path-segment"
-                      data-drop-target={dropTargetPath === part.path ? "true" : undefined}
-                      onClick={() => navigateTo(part.path)}
-                      onDragOver={(event) => handleDirectoryDragOver(event, part.path)}
-                      onDrop={(event) => void handleDirectoryDrop(event, part.path)}
-                      type="button"
-                    >
-                      {part.name}
-                    </button>
-                  </span>
-                ))}
-              </>
-            )}
-          </div>
-        </nav>
+        <WorkspaceFileBreadcrumb
+          breadcrumb={breadcrumb}
+          currentPath={currentPath}
+          dropTargetPath={dropTargetPath}
+          historyIndex={historyIndex}
+          historyLength={history.length}
+          isPersonalWorkspace={isPersonalWorkspace}
+          rootTitle={rootTitle}
+          viewMode={viewMode}
+          onBack={goBack}
+          onDragOverDirectory={handleDirectoryDragOver}
+          onDropDirectory={handleDirectoryDrop}
+          onForward={goForward}
+          onNavigate={navigateTo}
+          onReturnToFiles={() => { setViewMode("files"); navigateTo(""); }}
+          onUp={goUp}
+        />
       ) : null}
 
       {showMeetingWorkflowToolbar ? (
