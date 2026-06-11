@@ -22,19 +22,19 @@ from core.gbrain import (
     project_source_paths_for_workspace,
 )
 from core.gbrain_customer_sources import CUSTOMER_REFERENCE_DERIVED
-from core.gbrain_citation_fixer_jobs import (
+from app.features.knowledge.gbrain.maintenance.citation_fixer_jobs import (
     load_citation_fixer_job_state,
     poll_citation_fixer_jobs,
     record_citation_fixer_job,
     rollback_citation_fixer_job,
 )
-from core.gbrain_contradiction_probe import (
+from app.features.knowledge.gbrain.maintenance.contradiction_probe import (
     load_contradiction_probe_config,
     run_contradiction_probe,
     run_contradiction_probe_tick,
     save_contradiction_probe_config,
 )
-from core.gbrain_dream_cycle import (
+from app.features.knowledge.gbrain.maintenance.dream_cycle import (
     poll_dream_cycle_jobs,
     load_dream_cycle_config,
     run_dream_cycle,
@@ -48,7 +48,7 @@ from core.gbrain_graph import (
     build_source_graph,
 )
 from core.gbrain_ingest import compile_company_wiki_sources
-from core.gbrain_maintenance_worker import (
+from app.features.knowledge.gbrain.maintenance.worker import (
     get_gbrain_maintenance_worker_status,
     restart_gbrain_maintenance_worker,
 )

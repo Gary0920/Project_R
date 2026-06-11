@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.shared.time.schemas import UTCDateTimeModel
 from api.auth import get_current_user, pwd_context
-from core.gbrain_citation_fixer_jobs import (
+from app.features.knowledge.gbrain.maintenance.citation_fixer_jobs import (
     TERMINAL_JOB_STATUSES,
     load_citation_fixer_job_state,
     record_citation_fixer_job,

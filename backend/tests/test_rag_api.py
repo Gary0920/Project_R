@@ -8,10 +8,10 @@ from pathlib import Path
 os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.NamedTemporaryFile(delete=False).name}"
 
 import api.rag as rag_api
-import core.gbrain_citation_fixer_jobs as citation_fixer_jobs
-import core.gbrain_contradiction_probe as contradiction_probe
-import core.gbrain_dream_cycle as dream_cycle
-import core.gbrain_maintenance_worker as maintenance_worker
+import app.features.knowledge.gbrain.maintenance.citation_fixer_jobs as citation_fixer_jobs
+import app.features.knowledge.gbrain.maintenance.contradiction_probe as contradiction_probe
+import app.features.knowledge.gbrain.maintenance.dream_cycle as dream_cycle
+import app.features.knowledge.gbrain.maintenance.worker as maintenance_worker
 from fastapi import HTTPException
 from models import Base, SessionLocal, engine
 from models.audit_log import AuditLog

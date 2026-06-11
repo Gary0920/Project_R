@@ -8,9 +8,9 @@ from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
-from core.gbrain_citation_fixer_jobs import poll_citation_fixer_jobs
-from core.gbrain_contradiction_probe import run_contradiction_probe_tick
-from core.gbrain_dream_cycle import poll_dream_cycle_jobs, run_dream_cycle_tick
+from app.features.knowledge.gbrain.maintenance.citation_fixer_jobs import poll_citation_fixer_jobs
+from app.features.knowledge.gbrain.maintenance.contradiction_probe import run_contradiction_probe_tick
+from app.features.knowledge.gbrain.maintenance.dream_cycle import poll_dream_cycle_jobs, run_dream_cycle_tick
 from app.features.notifications.service import notify_gbrain_maintenance_event, system_admin_ids
 from models import SessionLocal
 from models.audit_log import AuditLog
