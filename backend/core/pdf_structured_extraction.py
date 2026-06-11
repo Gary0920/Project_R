@@ -11,7 +11,7 @@ from typing import Any
 from pypdf import PdfReader
 
 from core.llm import LLMClient, LLMConfigurationError, get_llm_client
-from core.preprocess_model_policy import ensure_mimo_v2_5_model, ensure_profile_allowed
+from app.features.preprocessing.policy import ensure_mimo_v2_5_model, ensure_profile_allowed
 
 
 DEFAULT_MODEL_PROFILE = "mimo-v2-5"

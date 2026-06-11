@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from core.llm import LLMClient, LLMConfigurationError, get_llm_client
-from core.preprocess_model_policy import ensure_mimo_v2_5_model, ensure_profile_allowed
+from app.features.preprocessing.policy import ensure_mimo_v2_5_model, ensure_profile_allowed
 
 
 LANGUAGE_POLICY = "bilingual_zh_en_aligned"

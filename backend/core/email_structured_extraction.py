@@ -11,7 +11,7 @@ from email.utils import getaddresses, parsedate_to_datetime
 from pathlib import Path
 
 from core.llm import LLMClient, get_llm_client
-from core.preprocess_model_policy import ensure_profile_allowed, ensure_text_preprocess_model
+from app.features.preprocessing.policy import ensure_profile_allowed, ensure_text_preprocess_model
 
 
 DEFAULT_MODEL_PROFILE = "deepseek-flash"

@@ -9,7 +9,7 @@ from core.image_structured_extraction import ImageStructuredExtractionOptions, e
 from core.llm import LLMResponse, ProviderSettings
 from core.media_transcription import MediaTranscriptionOptions, transcribe_media_to_markdown
 from core.pdf_structured_extraction import PDFExtractionOptions, extract_pdf_structured_markdown, load_pdf_extraction_options
-from core.preprocess_model_policy import PreprocessModelPolicyError
+from app.features.preprocessing.policy import PreprocessModelPolicyError
 import core.gbrain_ingest as company_ingest
 import core.gbrain_project_ingest as project_ingest
 

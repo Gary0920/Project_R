@@ -67,7 +67,7 @@ from core.pdf_structured_extraction import (
     SKILL_VERSION as PDF_PREPROCESS_VERSION,
     extract_pdf_structured_markdown,
 )
-from core.preprocess_model_policy import PreprocessModelPolicyError
+from app.features.preprocessing.policy import PreprocessModelPolicyError
 from core.image_structured_extraction import (
     ImageStructuredExtractionResult,
     PROMPT_VERSION as IMAGE_PROMPT_VERSION,
