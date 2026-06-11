@@ -107,6 +107,7 @@ from app.features.workspaces.files.signature import (
     record_file_signature as _record_file_signature,
 )
 from app.features.workspaces.files import browser as workspace_file_browser
+from app.features.workspaces.files import lifecycle as workspace_file_lifecycle
 from app.features.workspaces.files import uploads as workspace_file_uploads
 from app.features.workspaces.files.storage import (
     WorkspaceStorageConfig,
@@ -1909,85 +1910,26 @@ def delete_workspace_file(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-    if not workspace:
-        raise HTTPException(status_code=404, detail="项目不存在")
-    member = _ensure_member(db, user.id, workspace_id)
-    root = _workspace_file_root(workspace)
-    rel = _safe_relative_path(path)
-    target = _resolve_workspace_child(root, rel)
-    if not target.exists() or not target.is_file():
-        raise HTTPException(status_code=404, detail="文件不存在")
-    rel_path = target.relative_to(root).as_posix()
-    meta = (
-        db.query(WorkspaceFile)
-        .filter(
-            WorkspaceFile.workspace_id == workspace_id,
-            WorkspaceFile.relative_path == rel_path,
-            WorkspaceFile.deleted_at.is_(None),
-        )
-        .first()
-    )
-    if not _member_can_mutate_file(member, user.id, meta, user.role):
-        _raise_with_audit(
-            db,
-            user.id,
-            "workspace_file_delete",
-            403,
-            "只有上传人或管理员可以删除该文件",
-            _audit_detail(workspace_id, rel_path, meta.id if meta else None, actor_id=user.id, error="permission denied"),
-        )
-    if not meta:
-        meta = _upsert_workspace_file(
-            db,
-            workspace_id,
-            user.id,
-            rel_path,
-            target.name,
-            "application/octet-stream",
-            target.stat().st_size,
-            target,
-        )
-    trash_path = _trash_target(root, meta, rel_path)
-    shutil.move(str(target), str(trash_path))
-    now = datetime.now(timezone.utc)
-    meta.deleted_at = now
-    meta.deleted_by = user.id
-    meta.trash_path = trash_path.relative_to(root).as_posix()
-    meta.rag_status = "source_deleted"
-    meta.updated_at = now
-    _mark_workspace_rag_pending(db, workspace_id)
-    _write_workspace_audit(
+    return workspace_file_lifecycle.delete_workspace_file(
         db,
-        user.id,
-        "workspace_file_delete",
-        _audit_detail(workspace_id, rel_path, meta.id, actor_id=user.id, trash_path=meta.trash_path),
+        workspace_id,
+        path,
+        user,
+        ensure_member=_ensure_member,
+        workspace_file_root=_workspace_file_root,
+        safe_relative_path=_safe_relative_path,
+        resolve_workspace_child=_resolve_workspace_child,
+        member_can_mutate_file=_member_can_mutate_file,
+        raise_with_audit=_raise_with_audit,
+        audit_detail=_audit_detail,
+        upsert_workspace_file=_upsert_workspace_file,
+        trash_target=_trash_target,
+        mark_workspace_rag_pending=_mark_workspace_rag_pending,
+        write_workspace_audit=_write_workspace_audit,
+        notify_user=notify_user,
+        write_workspace_file_agent_run=_write_workspace_file_agent_run,
+        serialize_agent_run=serialize_agent_run,
     )
-    if member.role == "admin" and meta.uploaded_by != user.id:
-        notify_user(
-            db,
-            meta.uploaded_by,
-            category="workspace",
-            severity="warning",
-            title="项目文件已被管理员删除",
-            content=f"{workspace.name} 中的 {rel_path} 已由项目管理员删除并移入回收区。",
-            action_status="none",
-            action_kind="open_workspace",
-            action_payload={"workspace_id": workspace.id},
-            event_key=f"workspace:{workspace.id}:file_deleted:{meta.id}",
-        )
-    agent_run = _write_workspace_file_agent_run(
-        db,
-        user_id=user.id,
-        workspace=workspace,
-        source_type="workspace_file_delete",
-        title="移入项目回收区",
-        path=rel_path,
-        detail=meta.trash_path,
-        result={"file_id": meta.id, "rag_status": meta.rag_status, "trash_path": meta.trash_path},
-    )
-    db.commit()
-    return WorkspaceFileMutationResponse(ok=True, path=rel_path, file_id=meta.id, rag_status=meta.rag_status, agent_run=serialize_agent_run(db, agent_run))
 
 
 @router.post("/{workspace_id}/files/restore", response_model=WorkspaceFileMutationResponse)
@@ -1997,58 +1939,23 @@ def restore_workspace_file(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-    if not workspace:
-        raise HTTPException(status_code=404, detail="项目不存在")
-    _ensure_member(db, user.id, workspace_id)
-    root = _workspace_file_root(workspace)
-    meta = (
-        db.query(WorkspaceFile)
-        .filter(WorkspaceFile.workspace_id == workspace_id, WorkspaceFile.id == req.file_id)
-        .first()
-    )
-    if not meta or not meta.deleted_at:
-        raise HTTPException(status_code=404, detail="回收区文件不存在")
-    source = _resolve_workspace_child(root, _safe_relative_path(meta.trash_path))
-    target = _resolve_workspace_child(root, _safe_relative_path(meta.relative_path))
-    if not source.exists() or not source.is_file():
-        raise HTTPException(status_code=404, detail="回收区文件不存在")
-    if target.exists():
-        _raise_with_audit(
-            db,
-            user.id,
-            "workspace_file_restore",
-            409,
-            "原路径已存在同名文件，请先处理冲突",
-            _audit_detail(workspace_id, meta.relative_path, meta.id, actor_id=user.id, error="target exists"),
-        )
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(source), str(target))
-    now = datetime.now(timezone.utc)
-    meta.deleted_at = None
-    meta.deleted_by = None
-    meta.trash_path = ""
-    meta.rag_status = "new"
-    _record_file_signature(meta, target)
-    meta.updated_at = now
-    _mark_workspace_rag_pending(db, workspace_id)
-    _write_workspace_audit(
+    return workspace_file_lifecycle.restore_workspace_file(
         db,
-        user.id,
-        "workspace_file_restore",
-        _audit_detail(workspace_id, meta.relative_path, meta.id, actor_id=user.id),
+        workspace_id,
+        req,
+        user,
+        ensure_member=_ensure_member,
+        workspace_file_root=_workspace_file_root,
+        safe_relative_path=_safe_relative_path,
+        resolve_workspace_child=_resolve_workspace_child,
+        raise_with_audit=_raise_with_audit,
+        audit_detail=_audit_detail,
+        record_file_signature=_record_file_signature,
+        mark_workspace_rag_pending=_mark_workspace_rag_pending,
+        write_workspace_audit=_write_workspace_audit,
+        write_workspace_file_agent_run=_write_workspace_file_agent_run,
+        serialize_agent_run=serialize_agent_run,
     )
-    agent_run = _write_workspace_file_agent_run(
-        db,
-        user_id=user.id,
-        workspace=workspace,
-        source_type="workspace_file_restore",
-        title="恢复项目文件",
-        path=meta.relative_path,
-        result={"file_id": meta.id, "rag_status": meta.rag_status},
-    )
-    db.commit()
-    return WorkspaceFileMutationResponse(ok=True, path=meta.relative_path, file_id=meta.id, rag_status=meta.rag_status, agent_run=serialize_agent_run(db, agent_run))
 
 
 @router.delete("/{workspace_id}/files/permanent", response_model=WorkspaceFileMutationResponse)
@@ -2058,51 +1965,23 @@ def permanently_delete_workspace_file(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-    if not workspace:
-        raise HTTPException(status_code=404, detail="项目不存在")
-    member = _ensure_member(db, user.id, workspace_id)
-    root = _workspace_file_root(workspace)
-    meta = (
-        db.query(WorkspaceFile)
-        .filter(WorkspaceFile.workspace_id == workspace_id, WorkspaceFile.id == file_id)
-        .first()
-    )
-    if not meta or not meta.deleted_at:
-        raise HTTPException(status_code=404, detail="回收区文件不存在")
-    if not _member_can_restore_file(member, user.id, meta, user.role):
-        _raise_with_audit(
-            db,
-            user.id,
-            "workspace_file_permanent_delete",
-            403,
-            "只有上传人或管理员可以永久删除该文件",
-            _audit_detail(workspace_id, meta.relative_path, meta.id, actor_id=user.id, error="permission denied"),
-        )
-    if meta.trash_path:
-        trash_path = _resolve_workspace_child(root, _safe_relative_path(meta.trash_path))
-        if trash_path.exists() and trash_path.is_file():
-            trash_path.unlink()
-    rel_path = meta.relative_path
-    db.delete(meta)
-    _mark_workspace_rag_pending(db, workspace_id)
-    _write_workspace_audit(
+    return workspace_file_lifecycle.permanently_delete_workspace_file(
         db,
-        user.id,
-        "workspace_file_permanent_delete",
-        _audit_detail(workspace_id, rel_path, file_id, actor_id=user.id),
+        workspace_id,
+        file_id,
+        user,
+        ensure_member=_ensure_member,
+        workspace_file_root=_workspace_file_root,
+        safe_relative_path=_safe_relative_path,
+        resolve_workspace_child=_resolve_workspace_child,
+        member_can_restore_file=_member_can_restore_file,
+        raise_with_audit=_raise_with_audit,
+        audit_detail=_audit_detail,
+        mark_workspace_rag_pending=_mark_workspace_rag_pending,
+        write_workspace_audit=_write_workspace_audit,
+        write_workspace_file_agent_run=_write_workspace_file_agent_run,
+        serialize_agent_run=serialize_agent_run,
     )
-    agent_run = _write_workspace_file_agent_run(
-        db,
-        user_id=user.id,
-        workspace=workspace,
-        source_type="workspace_file_permanent_delete",
-        title="永久删除项目文件",
-        path=rel_path,
-        result={"file_id": file_id, "rag_status": "pending"},
-    )
-    db.commit()
-    return WorkspaceFileMutationResponse(ok=True, path=rel_path, file_id=file_id, rag_status="pending", agent_run=serialize_agent_run(db, agent_run))
 
 
 @router.delete("/{workspace_id}/files/trash", response_model=WorkspaceTrashClearResponse)
@@ -2111,35 +1990,20 @@ def clear_workspace_trash(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-    if not workspace:
-        raise HTTPException(status_code=404, detail="项目不存在")
-    member = _ensure_member(db, user.id, workspace_id)
-    root = _workspace_file_root(workspace)
-    query = db.query(WorkspaceFile).filter(WorkspaceFile.workspace_id == workspace_id, WorkspaceFile.deleted_at.is_not(None))
-    if member.role != "admin":
-        query = query.filter(WorkspaceFile.uploaded_by == user.id, WorkspaceFile.deleted_by == user.id)
-    deleted = 0
-    for meta in query.all():
-        if meta.trash_path:
-            trash_path = _resolve_workspace_child(root, _safe_relative_path(meta.trash_path))
-            if trash_path.exists() and trash_path.is_file():
-                trash_path.unlink()
-        db.delete(meta)
-        deleted += 1
-    _write_workspace_audit(db, user.id, "workspace_trash_clear", _audit_detail(workspace_id, actor_id=user.id, deleted_files=deleted))
-    notify_workspace_bulk_delete_risk(db, workspace=workspace, actor_user_id=user.id, deleted_files=deleted)
-    agent_run = _write_workspace_file_agent_run(
+    return workspace_file_lifecycle.clear_workspace_trash(
         db,
-        user_id=user.id,
-        workspace=workspace,
-        source_type="workspace_trash_clear",
-        title="清空项目回收区",
-        path=".trash",
-        result={"deleted_files": deleted},
+        workspace_id,
+        user,
+        ensure_member=_ensure_member,
+        workspace_file_root=_workspace_file_root,
+        safe_relative_path=_safe_relative_path,
+        resolve_workspace_child=_resolve_workspace_child,
+        write_workspace_audit=_write_workspace_audit,
+        audit_detail=_audit_detail,
+        notify_workspace_bulk_delete_risk=notify_workspace_bulk_delete_risk,
+        write_workspace_file_agent_run=_write_workspace_file_agent_run,
+        serialize_agent_run=serialize_agent_run,
     )
-    db.commit()
-    return {"ok": True, "deleted_files": deleted, "agent_run": serialize_agent_run(db, agent_run)}
 
 
 @router.post("/{workspace_id}/attachments/save", response_model=WorkspaceFileMutationResponse)
