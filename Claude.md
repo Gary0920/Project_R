@@ -21,6 +21,17 @@ Project_R 是公司内部 AI 智能办公辅助系统，也是 Gary 用来实验
 
 当前仓库核心文档以根目录版本为准，不再按 `references/Project_R ...` 查找 PRD、开发流程和业务工作流清单。当代理工作规则发生变化时，必须同步更新 `AGENTS.md` 与 `CLAUDE.md`；当产品范围或阶段任务变化时，同步更新 PRD 或开发流程。涉及前端视觉、控件状态、颜色、圆角、阴影、输入区或设置页的改动，必须先查看 `docs/ui-design-language.md` 并复用既有 token；除非同步更新该文档，否则不得临时新增一套 active / hover 视觉语言。
 
+## Vibecoding 架构护栏
+
+- 每次新增功能前，必须先判断功能归属目录。后端新功能默认进入 `backend/app/features/<feature>/...` 或 `backend/app/shared/...`；`backend/api/*.py` 只允许保留薄路由、请求/响应转换、权限校验和 service 调用。前端新功能默认进入 `frontend/src/renderer/features/<feature>/...` 或 `frontend/src/renderer/shared/...`；`pages/` 只做页面组装，不堆业务逻辑。
+- 禁止在根目录、`backend/` 根、`frontend/src/` 根或 `renderer/` 根随手创建 `utils`、`helper`、`temp`、`new_feature` 等杂散文件；确需新增目录时，必须说明归属 feature、调用方和验证方式。
+- 文件大小红线：超过 400 行的文件，新增功能前必须评估是否应先拆分；超过 800 行的文件，原则上不得继续堆功能，只能做 bugfix、迁移或拆分；超过 1500 行的文件，必须优先提出拆分计划，除非 Gary 明确要求临时 hotfix。
+- API 层必须保持薄：不得把文件系统编排、GBrain/LLM 调用、复杂状态机、批处理、权限策略细节直接堆进路由函数；这些逻辑应下沉到对应 feature service / helper / adapter，并通过测试覆盖接口行为。
+- 每次 Agent 交付必须说明修改文件、验证命令、验证结果和未验证风险；涉及多文件迁移或大文件拆分时，必须小批次提交，验证通过后再继续下一批。
+- 禁止“顺手优化”：一个任务只处理一个明确目标，不得同时做 UI 改版、API 改造、数据结构调整、依赖升级和全项目格式化；确需扩大范围时必须先说明原因和风险。
+- 新增依赖、路径别名、跨 feature 调用或公共 shared 能力时，必须说明为什么不能复用现有模块，并优先把共享能力放入 `backend/app/shared/` 或 `frontend/src/renderer/shared/`。
+- 对 AI 生成代码的默认要求：先读相关代码和文档，遵守现有命名、权限、真实数据隔离和 GBrain 边界；不得编造测试结果；无法验证时必须明确说明。
+
 ## 真实数据与测试隔离规则
 
 - 不得私自创建、删除、禁用或修改真实 `backend/app.db` 中的用户、真实工作区、成员关系、客户/项目 source 或用户私人工作台；只有 Gary 明确授权清理或迁移时才可操作。
