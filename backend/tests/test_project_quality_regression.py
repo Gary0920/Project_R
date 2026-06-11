@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from core.project_quality_regression import (
+from app.features.knowledge.quality.regression import (
     RegressionCase,
     _check_terms,
     _kinds_match,
@@ -17,7 +17,7 @@ from core.project_quality_regression import (
     _build_summary,
     regression_report_to_dict,
 )
-from core.project_quality_report import store_report, list_reports, report_summary_to_text
+from app.features.knowledge.quality.report import store_report, list_reports, report_summary_to_text
 
 
 class TestCheckTerms(unittest.TestCase):
@@ -338,7 +338,7 @@ class TestRunRegression(unittest.TestCase):
 
 class TestReportSerialization(unittest.TestCase):
     def test_report_to_dict(self):
-        from core.project_quality_regression import RegressionReport, RegressionResult
+        from app.features.knowledge.quality.regression import RegressionReport, RegressionResult
 
         report = RegressionReport(
             run_id="test-run",
@@ -379,7 +379,7 @@ class TestReportStorage(unittest.TestCase):
         self._tmpdir.cleanup()
 
     def _make_report(self) -> Any:
-        from core.project_quality_regression import RegressionReport, RegressionResult
+        from app.features.knowledge.quality.regression import RegressionReport, RegressionResult
 
         return RegressionReport(
             run_id="test-run-001",

@@ -356,13 +356,13 @@ def run_query_regression(
     Returns:
         dict with {ok, report (serialized), storage_path, error}
     """
-    from core.project_quality_regression import (
+    from app.features.knowledge.quality.regression import (
         RegressionCase,
         load_fixture as load_cases,
         run_regression,
         regression_report_to_dict,
     )
-    from core.project_quality_report import store_report
+    from app.features.knowledge.quality.report import store_report
 
     # Get workspace info
     workspace_lookup = load_workspace_for_fixture(data)

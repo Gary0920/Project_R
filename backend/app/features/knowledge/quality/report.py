@@ -5,12 +5,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from core.project_quality_regression import RegressionReport, regression_report_to_dict
+from app.features.knowledge.quality.regression import RegressionReport, regression_report_to_dict
 
 
 # Aggregated report directory (admin-visible, across projects)
 AGGREGATED_REPORTS_DIR = (
-    Path(__file__).resolve().parents[1]
+    Path(__file__).resolve().parents[4]
     / "workspace_data"
     / "_preprocessed"
     / "_quality-reports"

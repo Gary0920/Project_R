@@ -33,7 +33,7 @@ from models.skill_run import SkillRun
 from models.user import User
 from models.workspace import Workspace, WorkspaceFile, WorkspaceMember
 from models.workspace_ingest_job import WorkspaceIngestJob
-from core.project_quality_report import list_reports, load_report, report_summary_to_text
+from app.features.knowledge.quality.report import list_reports, load_report, report_summary_to_text
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 WORKSPACES_ROOT = Path(__file__).resolve().parent.parent / "workspace_data"

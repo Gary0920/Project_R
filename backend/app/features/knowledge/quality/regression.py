@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-FIXTURE_PATH = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "gbrain_project_quality_regression_cases.json"
+FIXTURE_PATH = Path(__file__).resolve().parents[4] / "tests" / "fixtures" / "gbrain_project_quality_regression_cases.json"
 MEETING_FILE_KINDS = {"meeting_transcript_docx", "meeting_media"}
 ALLOWED_STATUS_CLASSIFICATIONS = {
     "pass",

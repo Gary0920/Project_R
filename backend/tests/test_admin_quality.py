@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from core.project_quality_report import (
+from app.features.knowledge.quality.report import (
     store_report,
     list_reports,
     load_report,
@@ -64,7 +64,7 @@ class TestListReports(unittest.TestCase):
         (agg_dir / "run-001.json").write_text(json.dumps(report_data, ensure_ascii=False), encoding="utf-8")
 
         with patch(
-            "core.project_quality_report.AGGREGATED_REPORTS_DIR",
+            "app.features.knowledge.quality.report.AGGREGATED_REPORTS_DIR",
             self.reports_base,
         ):
             reports = list_reports(project_slug="test-project", limit=10)
@@ -83,7 +83,7 @@ class TestListReports(unittest.TestCase):
             )
 
         with patch(
-            "core.project_quality_report.AGGREGATED_REPORTS_DIR",
+            "app.features.knowledge.quality.report.AGGREGATED_REPORTS_DIR",
             self.reports_base,
         ):
             reports_a = list_reports(project_slug="proj-a", limit=10)
@@ -105,7 +105,7 @@ class TestListReports(unittest.TestCase):
             )
 
         with patch(
-            "core.project_quality_report.AGGREGATED_REPORTS_DIR",
+            "app.features.knowledge.quality.report.AGGREGATED_REPORTS_DIR",
             self.reports_base,
         ):
             reports = list_reports(limit=3)
@@ -122,7 +122,7 @@ class TestStoreAndLoad(unittest.TestCase):
         self._tmpdir.cleanup()
 
     def test_round_trip(self):
-        from core.project_quality_regression import RegressionReport, RegressionResult
+        from app.features.knowledge.quality.regression import RegressionReport, RegressionResult
 
         report = RegressionReport(
             run_id="test-roundtrip",
