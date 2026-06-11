@@ -40,7 +40,7 @@ from core.notification_service import (
     notify_workspace_bulk_delete_risk,
     notify_workspace_joined,
 )
-from core.workspace_file_signature import (
+from app.features.workspaces.files.signature import (
     file_signature as _file_signature,
     record_file_signature as _record_file_signature,
 )
@@ -87,7 +87,7 @@ from app.features.workspaces.ingest.run import (
     workspace_ingest_status_event as _workspace_ingest_status_event,
     workspace_ingest_summary_text as _workspace_ingest_summary_text,
 )
-from core.workspace_files import (
+from app.features.workspaces.files.service import (
     DEFAULT_UNFILED_DIR,
     DEFAULT_PROJECT_WORKSPACE_TEMPLATE_DIRS,
     DEFAULT_WORKSPACE_DIRS,
@@ -3325,7 +3325,7 @@ def _escape_pipe(text: str) -> str:
 
 def _validate_meeting_folder(workspace: "Workspace", folder_path: str) -> None:
     """Shared validation: check that folder_path is a valid meeting folder."""
-    from core.workspace_files import MEETING_SUBDIRS, meeting_parent_path
+    from app.features.workspaces.files.service import MEETING_SUBDIRS, meeting_parent_path
     root = _workspace_file_root(workspace)
     folder_rel = _safe_relative_path(folder_path)
     _ensure_not_trash_path(folder_rel)

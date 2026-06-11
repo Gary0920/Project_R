@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from core.workspace_file_signature import record_file_signature
+from app.features.workspaces.files.signature import record_file_signature
 from app.features.workspaces.ingest.run import (
     derive_workspace_ingest_run_status,
     finalize_workspace_ingest_manifest,
