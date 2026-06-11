@@ -4,11 +4,11 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from core.notification_service import notify_skill_completed, notify_skill_failed
-from core.skill_dispatcher import SkillDispatchError, SkillDispatcher
+from app.features.skills.dispatcher import SkillDispatchError, SkillDispatcher
 from models.generated_file import GeneratedFile
 from models.skill_run import SkillRun
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parents[3]
 GENERATED_FILES_ROOT = Path(os.getenv("GENERATED_FILES_PATH", str(BASE_DIR / "generated_files")))
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 

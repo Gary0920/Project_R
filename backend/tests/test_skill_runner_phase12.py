@@ -6,10 +6,10 @@ from pathlib import Path
 os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.NamedTemporaryFile(delete=False).name}"
 
 import api.skills as skills_api
-import core.skill_execution as skill_execution
-from core.skill_dispatcher import SkillDispatchError, SkillDispatcher
-from core.skill_runner import SkillDefinition
-from core.skill_runner import SkillRunner
+import app.features.skills.execution as skill_execution
+from app.features.skills.dispatcher import SkillDispatchError, SkillDispatcher
+from app.features.skills.runner import SkillDefinition
+from app.features.skills.runner import SkillRunner
 from fastapi import HTTPException
 from models import Base, SessionLocal, engine
 from models.audit_log import AuditLog

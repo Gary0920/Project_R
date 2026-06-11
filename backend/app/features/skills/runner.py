@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.shared.time.utils import serialize_datetime_utc
 from models.skill_run import SkillRun
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parents[3]
 SKILLS_ROOTS = (BASE_DIR / "skills" / "builtin", BASE_DIR / "skills" / "enterprise")
 
 

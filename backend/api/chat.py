@@ -22,8 +22,8 @@ from core.doc_renderer import render_docx
 from core.knowledge_sources import KnowledgeSources
 from core.llm import LLMConfigurationError, LLMProviderError, get_llm_client
 from core import session_attachments
-from core.skill_execution import execute_ready_run, generated_file_payload
-from core.skill_runner import SkillRunner, run_to_dict
+from app.features.skills.execution import execute_ready_run, generated_file_payload
+from app.features.skills.runner import SkillRunner, run_to_dict
 from core.system_prompt import (
     DOCUMENT_GENERATION_PROMPT,
     FORMAT_GUIDANCE_PROMPT,

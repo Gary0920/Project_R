@@ -9,7 +9,7 @@ from unittest.mock import patch
 os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.NamedTemporaryFile(delete=False).name}"
 
 import api.chat as chat_api
-import core.skill_execution as skill_execution
+import app.features.skills.execution as skill_execution
 from core.llm import LLMProviderError, LLMResponse
 from core.web_search import WebSearchResponse, WebSearchResult
 from fastapi import HTTPException
@@ -23,7 +23,7 @@ from models.session import ChatSession
 from models.skill_run import SkillRun
 from models.user import User
 from models.workspace import Workspace, WorkspaceMember
-from core.skill_runner import SkillRunner
+from app.features.skills.runner import SkillRunner
 
 
 class FakeLLMClient:

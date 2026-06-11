@@ -3,7 +3,7 @@ from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
-from core.skill_runner import SkillDefinition, SkillRunner, run_to_dict
+from app.features.skills.runner import SkillDefinition, SkillRunner, run_to_dict
 from models.skill_run import SkillRun
 
 
