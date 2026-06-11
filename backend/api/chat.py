@@ -7,7 +7,6 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
@@ -18,6 +17,7 @@ from app.features.chat.access import (
     ensure_workspace_access as _ensure_workspace_access,
     get_user_session as _get_user_session,
 )
+from app.features.chat import attachment_api as chat_attachment_api
 from app.features.chat.intent import IntentType, classify_intent
 from app.features.chat.schemas import (
     ActivateMessageVersionResponse,
@@ -97,7 +97,6 @@ ANSWER_CORRECTION_REVIEW_PREFIX = "gbrain_answer_correction:message:"
 GBRAIN_THINK_REVIEW_PREFIX = "gbrain_think_review:message:"
 ANSWER_CORRECTION_RATING_THRESHOLD = 2
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-_last_session_attachment_cleanup_at: datetime | None = None
 KNOWLEDGE_SOURCES = KnowledgeSources()
 
 
@@ -1127,22 +1126,14 @@ def create_session_attachment(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _get_user_session(db, user.id, session_id)
-    filename = _safe_filename(req.filename)
-    content_bytes = req.content.encode("utf-8")
-    if len(content_bytes) > MAX_ATTACHMENT_BYTES:
-        raise HTTPException(status_code=400, detail="附件不能超过 256KB")
-
-    return _store_session_attachment(
+    return chat_attachment_api.create_session_attachment(
         db,
-        user,
         session_id,
-        filename,
-        req.content_type,
-        content_bytes,
-        source_scope=req.source_scope,
-        source_label=req.source_label,
-        authorization_status=req.authorization_status,
+        req,
+        user,
+        max_attachment_bytes=MAX_ATTACHMENT_BYTES,
+        attachment_root=SESSION_ATTACHMENTS_ROOT,
+        logger=logger,
     )
 
 
@@ -1156,24 +1147,18 @@ async def upload_session_attachment(
     source_label: str = Form("会话临时上传"),
     authorization_status: str = Form("uploaded"),
 ):
-    _get_user_session(db, user.id, session_id)
-    filename = _safe_filename(file.filename or "attachment")
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="附件内容为空")
-    if len(content) > MAX_ATTACHMENT_UPLOAD_BYTES:
-        raise HTTPException(status_code=400, detail=f"附件不能超过 {MAX_ATTACHMENT_UPLOAD_MB}MB")
-
-    return _store_session_attachment(
+    return await chat_attachment_api.upload_session_attachment(
         db,
-        user,
         session_id,
-        filename,
-        file.content_type or "application/octet-stream",
-        content,
+        file,
+        user,
         source_scope=source_scope,
         source_label=source_label,
         authorization_status=authorization_status,
+        max_upload_bytes=MAX_ATTACHMENT_UPLOAD_BYTES,
+        max_upload_mb=MAX_ATTACHMENT_UPLOAD_MB,
+        attachment_root=SESSION_ATTACHMENTS_ROOT,
+        logger=logger,
     )
 
 
@@ -1188,14 +1173,15 @@ def _store_session_attachment(
     source_label: str = "会话临时上传",
     authorization_status: str = "uploaded",
 ) -> SessionAttachment:
-    return session_attachments.store_session_attachment(
+    return chat_attachment_api.store_session_attachment(
         db,
         user,
         session_id,
         filename,
-        _safe_content_type(content_type, filename),
+        content_type,
         content,
-        attachment_dir=_attachment_dir,
+        attachment_root=SESSION_ATTACHMENTS_ROOT,
+        logger=logger,
         source_scope=source_scope,
         source_label=source_label,
         authorization_status=authorization_status,
@@ -1208,18 +1194,7 @@ def _get_user_session_attachment(
     session_id: int,
     attachment_id: int,
 ) -> SessionAttachment:
-    attachment = (
-        db.query(SessionAttachment)
-        .filter(
-            SessionAttachment.id == attachment_id,
-            SessionAttachment.session_id == session_id,
-            SessionAttachment.user_id == user_id,
-        )
-        .first()
-    )
-    if not attachment:
-        raise HTTPException(status_code=404, detail="附件不存在")
-    return attachment
+    return chat_attachment_api.get_user_session_attachment(db, user_id, session_id, attachment_id)
 
 
 @router.get("/sessions/{session_id}/attachments", response_model=list[AttachmentResponse])
@@ -1228,8 +1203,7 @@ def list_session_attachments(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _get_user_session(db, user.id, session_id)
-    return session_attachments.list_session_attachments(db, user.id, session_id)
+    return chat_attachment_api.list_session_attachments(db, session_id, user)
 
 
 @router.get("/sessions/{session_id}/attachments/{attachment_id}/content")
@@ -1239,16 +1213,7 @@ def get_session_attachment_content(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _get_user_session(db, user.id, session_id)
-    attachment = _get_user_session_attachment(db, user.id, session_id, attachment_id)
-    path = Path(attachment.stored_path)
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="附件文件不存在")
-    return FileResponse(
-        path,
-        media_type=attachment.content_type or "application/octet-stream",
-        filename=attachment.original_name,
-    )
+    return chat_attachment_api.get_session_attachment_content(db, session_id, attachment_id, user)
 
 
 @router.delete("/sessions/{session_id}/attachments/{attachment_id}")
@@ -1258,9 +1223,7 @@ def delete_session_attachment(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _get_user_session(db, user.id, session_id)
-    session_attachments.delete_session_attachment(db, user.id, session_id, attachment_id)
-    return {"ok": True}
+    return chat_attachment_api.delete_session_attachment(db, session_id, attachment_id, user)
 
 
 def _message_query(
@@ -1854,33 +1817,20 @@ def _parse_knowledge_command(content: str) -> tuple[bool, str]:
     return False, stripped
 
 
-def _safe_filename(filename: str) -> str:
-    return session_attachments.safe_filename(filename)
-
-
-def _safe_content_type(content_type: str | None, filename: str) -> str:
-    return session_attachments.safe_content_type(content_type, filename)
-
-
-def _attachment_dir(db: Session, user: User, session_id: int) -> Path:
-    return session_attachments.resolve_attachment_dir(
-        db,
-        user,
-        session_id,
-        fallback_root=SESSION_ATTACHMENTS_ROOT,
-        logger=logger,
-    )
-
-
 def _load_attachment_context(
     db: Session,
     user_id: int,
     session_id: int,
     attachment_ids: list[str],
 ) -> str:
-    return _load_attachment_context_from_attachments(
-        _load_selected_session_attachments(db, user_id, session_id, attachment_ids),
+    return chat_attachment_api.load_attachment_context(
+        db,
+        user_id,
+        session_id,
+        attachment_ids,
         supports_vision=False,
+        max_chars=MAX_ATTACHMENT_CONTEXT_CHARS,
+        logger=logger,
     )
 
 
@@ -1890,7 +1840,7 @@ def _load_selected_session_attachments(
     session_id: int,
     attachment_ids: list[str],
 ) -> list[SessionAttachment]:
-    return session_attachments.load_selected_session_attachments(db, user_id, session_id, attachment_ids)
+    return chat_attachment_api.load_selected_session_attachments(db, user_id, session_id, attachment_ids)
 
 
 def _load_attachment_context_from_attachments(
@@ -1898,7 +1848,7 @@ def _load_attachment_context_from_attachments(
     *,
     supports_vision: bool,
 ) -> str:
-    return session_attachments.load_attachment_context(
+    return chat_attachment_api.load_attachment_context_from_attachments(
         attachments,
         supports_vision=supports_vision,
         max_chars=MAX_ATTACHMENT_CONTEXT_CHARS,
@@ -1906,53 +1856,23 @@ def _load_attachment_context_from_attachments(
     )
 
 
-def _attachment_context_chunk(
-    attachment: SessionAttachment,
-    remaining: int,
-    *,
-    supports_vision: bool,
-) -> tuple[str, int]:
-    return session_attachments.attachment_context_chunk(
-        attachment,
-        remaining,
-        supports_vision=supports_vision,
-        logger=logger,
-    )
-
-
-def _attachment_context_header(attachment: SessionAttachment) -> str:
-    return session_attachments.attachment_context_header(attachment)
-
-
-def _format_bytes(size: int) -> str:
-    return session_attachments.format_bytes(size)
-
-
-def _is_text_attachment(attachment: SessionAttachment) -> bool:
-    return session_attachments.is_text_attachment(attachment)
-
-
-def _is_pdf_attachment(attachment: SessionAttachment) -> bool:
-    return session_attachments.is_pdf_attachment(attachment)
-
-
 def _is_image_attachment(attachment: SessionAttachment) -> bool:
-    return session_attachments.is_image_attachment(attachment)
+    return chat_attachment_api.is_image_attachment(attachment)
 
 
 def _is_audio_video_attachment(attachment: SessionAttachment) -> bool:
-    return session_attachments.is_audio_video_attachment(attachment)
+    return chat_attachment_api.is_audio_video_attachment(attachment)
 
 
 def _load_vision_image_inputs(attachments: list[SessionAttachment]) -> list[dict[str, str]]:
-    return session_attachments.load_vision_image_inputs(
+    return chat_attachment_api.load_vision_image_inputs(
         attachments,
         allowed_mime_types=VISION_IMAGE_MIME_TYPES,
     )
 
 
 def _normalize_vision_image_media_type(attachment: SessionAttachment) -> str:
-    return session_attachments.normalize_vision_image_media_type(
+    return chat_attachment_api.normalize_vision_image_media_type(
         attachment,
         allowed_mime_types=VISION_IMAGE_MIME_TYPES,
     )
@@ -2005,36 +1925,21 @@ def _build_vision_content_blocks(
     return blocks
 
 
-def _read_attachment_text(path: Path, limit: int) -> str:
-    return session_attachments.read_attachment_text(path, limit)
-
-
-def _read_pdf_attachment_text(path: Path, limit: int) -> str:
-    return session_attachments.read_pdf_attachment_text(path, limit, logger=logger)
-
-
-def _image_attachment_details(path: Path) -> str:
-    return session_attachments.image_attachment_details(path)
-
-
 def _delete_session_attachments(db: Session, user_id: int, session_id: int) -> None:
-    session_attachments.delete_session_attachments(db, user_id, session_id)
+    chat_attachment_api.delete_session_attachments(db, user_id, session_id)
 
 
 def cleanup_inactive_session_attachments_if_due(db: Session) -> int:
-    global _last_session_attachment_cleanup_at
-    now = datetime.now(timezone.utc)
-    if (
-        _last_session_attachment_cleanup_at is not None
-        and now - _last_session_attachment_cleanup_at < SESSION_ATTACHMENT_CLEANUP_INTERVAL
-    ):
-        return 0
-    _last_session_attachment_cleanup_at = now
-    return cleanup_inactive_session_attachments(db)
+    return chat_attachment_api.cleanup_inactive_session_attachments_if_due(
+        db,
+        cleanup_interval=SESSION_ATTACHMENT_CLEANUP_INTERVAL,
+        retention_days=SESSION_ATTACHMENT_RETENTION_DAYS,
+        logger=logger,
+    )
 
 
 def cleanup_inactive_session_attachments(db: Session | None = None) -> int:
-    return session_attachments.cleanup_inactive_session_attachments(
+    return chat_attachment_api.cleanup_inactive_session_attachments(
         db,
         retention_days=SESSION_ATTACHMENT_RETENTION_DAYS,
         logger=logger,
