@@ -21,6 +21,7 @@ import {
   type WorkspaceMeetingTermCorrection,
 } from "./WorkspaceMeetingTermCorrectionsDialog";
 import { WorkspaceMeetingSpeakerMapDialog } from "./WorkspaceMeetingSpeakerMapDialog";
+import { WorkspaceMeetingToolbar } from "./WorkspaceMeetingToolbar";
 import {
   clearWorkspaceTrash,
   applyWorkspaceEntityMergeCandidateAction,
@@ -1825,108 +1826,20 @@ export function WorkspaceFilePanel({
       ) : null}
 
       {showMeetingWorkflowToolbar ? (
-        <div className="workspace-meeting-toolbar" data-testid="meeting-toolbar">
-          <span className="workspace-meeting-toolbar-label">会议工作流</span>
-          <div className="workspace-meeting-toolbar-actions">
-            <button
-              className="workspace-file-primary-action"
-              disabled={refreshingKnowledge}
-              onClick={() => handleMediaTranscribe()}
-              title="上传会议音文件到当前文件夹并自动转录"
-              type="button"
-            >
-              <PlusIcon /><span>上传/转写录音</span>
-            </button>
-            <button
-              className="workspace-file-primary-action"
-              disabled={refreshingKnowledge}
-              onClick={() => openMeetingTranscriptForm()}
-              title="将已有的会议转录文本保存到当前文件夹"
-              type="button"
-            >
-              <NoteIcon /><span>保存转录文本</span>
-            </button>
-            <button
-              className="workspace-file-primary-action"
-              disabled={!isLegitimateMeetingFolder || refreshingKnowledge}
-              onClick={() => void handleOpenSpeakerMap()}
-              title={!isLegitimateMeetingFolder ? "请在具体会议文件夹中使用此功能。" : "为当前会议的检测说话人设置显示名称"}
-              type="button"
-            >
-              <AgentIcon /><span>说话人映射</span>
-            </button>
-            <button
-              className="workspace-file-primary-action"
-              disabled={!isLegitimateMeetingFolder || refreshingKnowledge}
-              onClick={() => setTermCorrectionsOpen(true)}
-              title={!isLegitimateMeetingFolder ? "请在具体会议文件夹中使用此功能。" : "添加需要纠正的术语"}
-              type="button"
-            >
-              <EditIcon /><span>术语纠错</span>
-            </button>
-            <button
-              className="workspace-file-primary-action"
-              disabled={!isLegitimateMeetingFolder || refreshingKnowledge}
-              onClick={() => void handleGenerateMinutes()}
-              title={!isLegitimateMeetingFolder ? "请在具体会议文件夹中使用此功能。" : "从当前会议的转录文本生成纪要与行动项"}
-              type="button"
-            >
-              <NoteIcon /><span>生成纪要与行动项</span>
-            </button>
-            <button
-              className="workspace-file-primary-action"
-              disabled={!isLegitimateMeetingFolder || refreshingKnowledge}
-              onClick={() => void handleGenerateMinutes(true)}
-              title="如果会议转录已更新，重新生成纪要与行动项（创建新版本）"
-              type="button"
-            >
-              <RefreshIcon /><span>重跑纪要</span>
-            </button>
-            <button
-              className="workspace-file-primary-action"
-              disabled={!isLegitimateMeetingFolder || refreshingKnowledge}
-              onClick={() => void handleIngestMeeting()}
-              title={!isLegitimateMeetingFolder ? "请在具体会议文件夹中使用此功能。" : "将当前会议组合成 GBrain-ready 页面"}
-              type="button"
-            >
-              <BrainIcon /><span>录入此会议</span>
-            </button>
-            {/* Actions-only ingest entry - only show in meeting root */}
-            {isLegitimateMeetingFolder ? (
-              <button
-                className="workspace-file-primary-action"
-                disabled={refreshingKnowledge}
-                onClick={() => void handleIngestMeeting(true)}
-                title="仅录入行动项，不包含纪要和转录上下文"
-                type="button"
-              >
-                <BrainIcon /><span>录入行动项</span>
-              </button>
-            ) : null}
-            {isLegitimateMeetingFolder ? (
-              <>
-                <button
-                  className="workspace-file-primary-action"
-                  disabled={refreshingKnowledge}
-                  onClick={() => void handleRetryMeeting("transcribe")}
-                  title="重试之前失败的音视频转录操作"
-                  type="button"
-                >
-                  <RefreshIcon /><span>重试转录</span>
-                </button>
-                <button
-                  className="workspace-file-primary-action"
-                  disabled={refreshingKnowledge}
-                  onClick={() => void handleRetryMeeting("generate_minutes")}
-                  title="重试之前失败的纪要生成操作"
-                  type="button"
-                >
-                  <RefreshIcon /><span>重试纪要生成</span>
-                </button>
-              </>
-            ) : null}
-          </div>
-        </div>
+        <WorkspaceMeetingToolbar
+          isLegitimateMeetingFolder={isLegitimateMeetingFolder}
+          refreshing={refreshingKnowledge}
+          onGenerateMinutes={() => void handleGenerateMinutes()}
+          onIngestActionsOnly={() => void handleIngestMeeting(true)}
+          onIngestMeeting={() => void handleIngestMeeting()}
+          onMediaTranscribe={() => handleMediaTranscribe()}
+          onOpenSpeakerMap={() => void handleOpenSpeakerMap()}
+          onOpenTermCorrections={() => setTermCorrectionsOpen(true)}
+          onOpenTranscriptForm={() => openMeetingTranscriptForm()}
+          onRegenerateMinutes={() => void handleGenerateMinutes(true)}
+          onRetryGenerateMinutes={() => void handleRetryMeeting("generate_minutes")}
+          onRetryTranscribe={() => void handleRetryMeeting("transcribe")}
+        />
       ) : null}
       {showMeetingWorkflowToolbar && isMeetingRoot && currentPath === MEETING_ROOT_PATH && !hasMeetingWorkflowDirs ? (
         <p className="agent-file-panel-note" style={{ margin: "8px 12px" }}>
