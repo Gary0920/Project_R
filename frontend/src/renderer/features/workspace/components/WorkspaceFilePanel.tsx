@@ -76,7 +76,6 @@ import {
 } from "../knowledgeGraphUtils";
 import { buildWorkspaceKnowledgeGraphViewModel } from "../workspaceKnowledgeGraphViewModel";
 import {
-  clampPreviewWidth,
   countPendingIngestFiles,
   filterSystemWorkspaceItems,
   findDirectory,
@@ -94,10 +93,7 @@ import {
   makeBreadcrumb,
   MEETING_ROOT_PATH,
   MEETING_WORKFLOW_DIRS,
-  PREVIEW_DEFAULT_WIDTH,
-  readPreviewWidth,
   WORKSPACE_DRAG_MIME,
-  writePreviewWidth,
 } from "../workspaceFilePanelUtils";
 import {
   inferMeetingFolder,
@@ -108,6 +104,7 @@ import {
   isMeetingWorkflowSubdirName,
 } from "../workspaceMeetingUtils";
 import { useWorkspaceFilePreview } from "../hooks/useWorkspaceFilePreview";
+import { useWorkspacePreviewWidth } from "../hooks/useWorkspacePreviewWidth";
 import type { ApiClientOptions } from "../../../shared/api/client";
 import type { AgentRunResponse, DetectedSpeaker, GBrainEntityMergeCandidate, GBrainEntityMergePreviewResponse, MeetingFolderResponse, MeetingGenerateResponse, MeetingRetryResponse, MediaPreflightResponse, SaveMeetingTranscriptResponse, WorkspaceEntityMergeCandidatesResponse, WorkspaceFileItemResponse, WorkspaceKnowledgeGraphResponse, WorkspaceNativeGraphContextResponse } from "../../../shared/api/types";
 import { parseApiDate } from "../../../shared/utils/time";
@@ -229,8 +226,6 @@ export function WorkspaceFilePanel({
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<WorkspaceUploadProgressState>({ active: false, current: 0, total: 0, filename: "" });
   const [compactActions, setCompactActions] = useState(false);
-  const [previewWidth, setPreviewWidth] = useState(readPreviewWidth);
-  const [previewResizing, setPreviewResizing] = useState(false);
   const layoutRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -370,62 +365,16 @@ export function WorkspaceFilePanel({
   }, []);
 
   const hasSidecar = Boolean(!standaloneCustomerIntelligence && (filePreview || (knowledgeGraphOpen && workspaceKind !== "customer")));
+  const { previewWidth, previewResizing, handlePreviewResizeStart } = useWorkspacePreviewWidth({
+    hasSidecar,
+    layoutRef,
+    resetKey: filePreview?.item.path,
+  });
 
   useEffect(() => {
     if (!standaloneCustomerIntelligence || workspaceKind !== "customer" || !workspaceId) return;
     void handleOpenKnowledgeGraph();
   }, [standaloneCustomerIntelligence, workspaceKind, workspaceId]);
-
-  useEffect(() => {
-    if (!hasSidecar) return;
-    const layout = layoutRef.current;
-    if (!layout || typeof ResizeObserver === "undefined") return;
-    const updatePreviewWidth = () => {
-      setPreviewWidth((width) => clampPreviewWidth(width, layout.getBoundingClientRect().width));
-    };
-    updatePreviewWidth();
-    const observer = new ResizeObserver(updatePreviewWidth);
-    observer.observe(layout);
-    return () => observer.disconnect();
-  }, [hasSidecar]);
-
-  useEffect(() => {
-    if (!hasSidecar) return;
-    setPreviewWidth((width) => clampPreviewWidth(Math.max(width, PREVIEW_DEFAULT_WIDTH), layoutRef.current?.getBoundingClientRect().width));
-  }, [filePreview?.item.path, hasSidecar]);
-
-  useEffect(() => {
-    writePreviewWidth(previewWidth);
-  }, [previewWidth]);
-
-  useEffect(() => {
-    if (!previewResizing) return;
-
-    const previousCursor = document.body.style.cursor;
-    const previousUserSelect = document.body.style.userSelect;
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-
-    function handleMouseMove(event: globalThis.MouseEvent) {
-      const layout = layoutRef.current;
-      if (!layout) return;
-      const rect = layout.getBoundingClientRect();
-      setPreviewWidth(clampPreviewWidth(rect.right - event.clientX, rect.width));
-    }
-
-    function handleMouseUp() {
-      setPreviewResizing(false);
-    }
-
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
-    return () => {
-      document.body.style.cursor = previousCursor;
-      document.body.style.userSelect = previousUserSelect;
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, [previewResizing]);
 
   useEffect(() => {
     if (!knowledgeGraphCanvasPanning) return;
@@ -1219,12 +1168,6 @@ export function WorkspaceFilePanel({
       can_restore: false,
       children: [],
     });
-  }
-
-  function handlePreviewResizeStart(event: MouseEvent<HTMLDivElement>) {
-    event.preventDefault();
-    event.stopPropagation();
-    setPreviewResizing(true);
   }
 
   async function handleOpenKnowledgeGraph() {
