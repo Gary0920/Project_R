@@ -20,6 +20,7 @@ import {
   WorkspaceMeetingTermCorrectionsDialog,
   type WorkspaceMeetingTermCorrection,
 } from "./WorkspaceMeetingTermCorrectionsDialog";
+import { WorkspaceMeetingSpeakerMapDialog } from "./WorkspaceMeetingSpeakerMapDialog";
 import {
   clearWorkspaceTrash,
   applyWorkspaceEntityMergeCandidateAction,
@@ -2362,62 +2363,14 @@ export function WorkspaceFilePanel({
         />
       ) : null}
       {speakerMapOpen ? (
-        <div className="workspace-text-prompt-overlay" onClick={() => !speakerMapLoading && setSpeakerMapOpen(false)}>
-          <div
-            className="workspace-text-prompt"
-            onClick={(event) => event.stopPropagation()}
-            style={{ maxWidth: 500 }}
-          >
-            <header>
-              <strong>说话人映射</strong>
-              <button disabled={speakerMapLoading} onClick={() => setSpeakerMapOpen(false)} type="button">×</button>
-            </header>
-            <div style={{ background: "var(--warning)/0.1", padding: "8px 12px", borderRadius: 6, marginBottom: 10, fontSize: "0.9em", lineHeight: 1.5 }}>
-              <strong>需要标记发言人吗？</strong>
-              <p style={{ margin: "4px 0 0", opacity: 0.75 }}>
-                系统已自动检测到以下说话人。为每个人填写真实姓名，生成纪要时就会使用姓名而非 "Speaker 1"。
-                跳过将保留为「待确认」，可以在后续随时补充。
-              </p>
-            </div>
-            {speakerMapLoading ? (
-              <p>正在读取说话人信息...</p>
-            ) : detectedSpeakers.length === 0 ? (
-              <p>未检测到说话人。可以跳过此步骤，未确认项将被标记为「待确认」。</p>
-            ) : (
-              <div>
-                <p style={{ opacity: 0.7, marginBottom: 8, fontSize: "0.85em" }}>点击说话人ID下方的输入框，填写显示名称。</p>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr>
-                      <th style={{ textAlign: "left", padding: "4px 8px", borderBottom: "1px solid #ccc" }}>说话人ID</th>
-                      <th style={{ textAlign: "left", padding: "4px 8px", borderBottom: "1px solid #ccc" }}>显示名称</th>
-                      <th style={{ textAlign: "left", padding: "4px 8px", borderBottom: "1px solid #ccc" }}>发言占比</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {detectedSpeakers.map((sp) => (
-                      <tr key={sp.speaker_id}>
-                        <td style={{ padding: "4px 8px" }}>{sp.speaker_id}</td>
-                        <td style={{ padding: "4px 8px" }}>
-                          <input
-                            style={{ width: "100%", boxSizing: "border-box" }}
-                            value={speakerMapNames[sp.speaker_id] ?? sp.display_name}
-                            onChange={(e) => setSpeakerMapNames((prev) => ({ ...prev, [sp.speaker_id]: e.target.value }))}
-                          />
-                        </td>
-                        <td style={{ padding: "4px 8px" }}>{sp.ratio}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            <div style={{ marginTop: 12, display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button disabled={speakerMapLoading} onClick={() => setSpeakerMapOpen(false)} type="button">跳过</button>
-              <button disabled={speakerMapLoading || detectedSpeakers.length === 0} onClick={() => void handleSaveSpeakerMap()} type="button">保存映射</button>
-            </div>
-          </div>
-        </div>
+        <WorkspaceMeetingSpeakerMapDialog
+          loading={speakerMapLoading}
+          speakers={detectedSpeakers}
+          speakerNames={speakerMapNames}
+          setSpeakerNames={setSpeakerMapNames}
+          onClose={() => setSpeakerMapOpen(false)}
+          onSave={() => void handleSaveSpeakerMap()}
+        />
       ) : null}
       {dragOver ? <div className="workspace-drop-hint">松开后上传到当前文件夹</div> : null}
     </section>
