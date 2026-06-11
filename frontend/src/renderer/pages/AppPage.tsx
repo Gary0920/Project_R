@@ -53,6 +53,13 @@ import { activeModeAtom } from "../shared/state/ui";
 import { activeTabIdAtom, tabsAtom } from "../features/chat/tabs-state";
 import { activeWorkspaceIdAtom, workspacesAtom } from "../features/workspace/state";
 import { notificationsAtom, pendingNotificationCountAtom, unreadNotificationCountAtom } from "../features/notifications/state";
+import {
+  formatNotificationTime,
+  notificationCategoryLabel,
+  numericPayloadValue,
+  shouldToastNotification,
+  stringPayloadValue,
+} from "../features/notifications/formatters";
 import type {
   ChatSearchResultResponse,
   ChatSessionResponse,
@@ -106,6 +113,14 @@ import {
   type AttachmentInputSource,
   type PendingSessionAttachment,
 } from "../features/chat/attachments";
+import {
+  FALLBACK_CLIENT_VERSION,
+  UPDATE_DOWNLOAD_DRY_RUN,
+  compareClientVersions,
+  formatUpdateBytes,
+  formatUpdateSpeed,
+  resolveCurrentClientVersion,
+} from "../features/updates/clientVersion";
 import { PROJECT_R_BUILTIN_PROMPT } from "../features/prompts/constants";
 type SplitPaneKey = "left" | "right";
 type UtilityPanel = "workspace" | "customer-intelligence" | "prompt" | "skills" | "source" | "crm";
@@ -128,41 +143,6 @@ type ModelOption = {
   supportsVision: boolean;
   isDefault: boolean;
 };
-
-const FALLBACK_CLIENT_VERSION = import.meta.env.VITE_APP_VERSION || "0.1.0";
-const UPDATE_DOWNLOAD_DRY_RUN = import.meta.env.DEV || import.meta.env.VITE_UPDATE_DRY_RUN === "1";
-
-function clientVersionKey(version: string) {
-  const cleaned = version.trim().replace(/^[vV]/, "");
-  const values = cleaned.split(/[.\-_+]/).map((part) => {
-    const match = part.match(/^(\d+)/);
-    return match ? Number(match[1]) : -1;
-  });
-  while (values.length < 4) values.push(0);
-  return values.slice(0, 4);
-}
-
-function compareClientVersions(left: string, right: string) {
-  const leftKey = clientVersionKey(left);
-  const rightKey = clientVersionKey(right);
-  for (let index = 0; index < Math.max(leftKey.length, rightKey.length); index += 1) {
-    const leftValue = leftKey[index] ?? 0;
-    const rightValue = rightKey[index] ?? 0;
-    if (leftValue !== rightValue) return leftValue > rightValue ? 1 : -1;
-  }
-  return 0;
-}
-
-async function resolveCurrentClientVersion() {
-  try {
-    const version = await window.projectR?.updates?.getCurrentVersion?.();
-    const normalized = version?.trim();
-    if (normalized) return normalized;
-  } catch {
-    // Browser/dev renderer falls back to the build-time package version.
-  }
-  return FALLBACK_CLIENT_VERSION;
-}
 
 function formatClockTime(value: string) {
   return new Intl.DateTimeFormat("zh-CN", {
@@ -191,59 +171,6 @@ function formatSidebarTime(value: string) {
     return `${diffDays}天`;
   }
   return "1周";
-}
-
-function formatNotificationTime(value: string) {
-  const date = parseApiDate(value);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  if (diffMs < 60_000) return "刚刚";
-  if (diffMs < 3_600_000) return `${Math.max(1, Math.floor(diffMs / 60_000))}分钟前`;
-  if (diffMs < 86_400_000) return `${Math.floor(diffMs / 3_600_000)}小时前`;
-  return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(date);
-}
-
-function notificationCategoryLabel(category: NotificationResponse["category"]) {
-  return {
-    system: "系统",
-    task: "任务",
-    workspace: "项目",
-    approval: "审批",
-    risk: "风险",
-  }[category];
-}
-
-function shouldToastNotification(notification: NotificationResponse) {
-  if (notification.category === "risk" && notification.severity === "critical") return true;
-  if (notification.category === "task" && (notification.severity === "success" || notification.severity === "warning")) return true;
-  return false;
-}
-
-function numericPayloadValue(payload: Record<string, unknown>, key: string) {
-  const value = payload[key];
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
-function stringPayloadValue(payload: Record<string, unknown>, key: string) {
-  const value = payload[key];
-  return typeof value === "string" && value.trim() ? value : null;
-}
-
-function formatUpdateBytes(bytes: number) {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function formatUpdateSpeed(bytesPerSecond: number) {
-  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return "";
-  return `${formatUpdateBytes(bytesPerSecond)}/s`;
 }
 
 function groupSessionsByTime(sessions: ChatSessionResponse[]) {
