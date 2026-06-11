@@ -12,7 +12,7 @@ from core.gbrain import (
     project_source_id_for_workspace,
     project_source_registration_plan,
 )
-from core.knowledge_sources import KnowledgeSources
+from app.features.knowledge.sources import KnowledgeSources
 
 
 class _RecordingQueryAdapter:

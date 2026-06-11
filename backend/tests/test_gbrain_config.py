@@ -8,7 +8,7 @@ from unittest.mock import patch
 from urllib.error import URLError
 
 from core.gbrain import GBrainAdapter, ensure_gbrain_environment, load_gbrain_settings
-from core.knowledge_sources import KnowledgeSources
+from app.features.knowledge.sources import KnowledgeSources
 
 
 class FakeHttpResponse:

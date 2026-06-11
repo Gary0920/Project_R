@@ -19,7 +19,7 @@ from app.features.agents.events import add_agent_event, create_agent_run, finish
 from app.features.notifications.service import notify_file_generated, notify_knowledge_review_pending
 from app.features.chat.intent import IntentType, classify_intent
 from app.features.documents.renderer import render_docx
-from core.knowledge_sources import KnowledgeSources
+from app.features.knowledge.sources import KnowledgeSources
 from app.shared.llm.client import LLMConfigurationError, LLMProviderError, get_llm_client
 from app.features.chat import attachments as session_attachments
 from app.features.skills.execution import execute_ready_run, generated_file_payload

@@ -12,7 +12,7 @@ from typing import Callable
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from core.knowledge_sources import WORKSPACE_TEXT_EXTENSIONS
+from app.features.knowledge.sources import WORKSPACE_TEXT_EXTENSIONS
 from models.attachment import SessionAttachment
 from models.session import ChatSession
 from models.user import User

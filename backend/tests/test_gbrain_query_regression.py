@@ -3,7 +3,7 @@ import os
 import unittest
 from pathlib import Path
 
-from core.knowledge_sources import KnowledgeSources
+from app.features.knowledge.sources import KnowledgeSources
 
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "gbrain_query_regression_cases.json"

@@ -61,7 +61,7 @@ def main() -> int:
     sys.path.insert(0, str(BACKEND_DIR))
 
     from core.gbrain import GBrainAdapter
-    from core.knowledge_sources import KnowledgeSources
+    from app.features.knowledge.sources import KnowledgeSources
 
     cases = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
     health = GBrainAdapter().health()
