@@ -31,6 +31,7 @@ from app.features.chat.document_generation import (
     safe_document_title as _safe_document_title,
     write_document_generation_agent_run as _write_document_generation_agent_run_base,
 )
+from app.features.chat.gbrain_agent_run import write_gbrain_think_agent_run as _write_gbrain_think_agent_run_base
 from app.features.chat.message_serialization import (
     attachment_only_prompt as _attachment_only_prompt,
     attachment_to_response_dict as _attachment_to_response_dict,
@@ -1662,65 +1663,15 @@ def _write_gbrain_think_agent_run(
     think_result: dict,
     response_sources: list[dict],
 ):
-    ok = bool(think_result.get("ok"))
-    run = create_agent_run(
+    return _write_gbrain_think_agent_run_base(
         db,
         user_id=user_id,
-        session_id=session.id,
+        session=session,
         message_id=message_id,
-        workspace_id=session.workspace_id,
-        source_type="gbrain_think",
-        source_id=str(think_result.get("source_id") or ""),
-        title="GBrain Think 知识推理",
-        status="running",
-    )
-    add_agent_event(
-        db,
-        run,
-        event_type="context_trace",
-        title="限定知识库 Source",
-        detail=str(think_result.get("source_id") or session.workspace_id or "company-wiki"),
-        status="completed",
-        payload={"workspace_id": session.workspace_id, "source_id": think_result.get("source_id")},
-    )
-    add_agent_event(
-        db,
-        run,
-        event_type="tool_call",
-        title="调用 GBrain think",
-        detail=_safe_event_detail(query),
-        status="completed" if ok else "failed",
-        payload={
-            "model": think_result.get("model"),
-            "status": think_result.get("status"),
-            "source_count": len(response_sources),
-            "gaps": safe_trace_list((think_result.get("metadata") or {}).get("gaps") if isinstance(think_result.get("metadata"), dict) else []),
-            "conflicts": safe_trace_list((think_result.get("metadata") or {}).get("conflicts") if isinstance(think_result.get("metadata"), dict) else []),
-            "warnings": safe_trace_list((think_result.get("metadata") or {}).get("warnings") if isinstance(think_result.get("metadata"), dict) else []),
-        },
-    )
-    if response_sources:
-        add_agent_event(
-            db,
-            run,
-            event_type="citation",
-            title="整理引用来源",
-            detail=f"{len(response_sources)} 个来源",
-            status="completed",
-            payload={"sources": response_sources[:8]},
-        )
-    error_message = "" if ok else str(think_result.get("error") or think_result.get("status") or "GBrain think unavailable")
-    return finish_agent_run(
-        db,
-        run,
-        status="completed" if ok else "failed",
-        result={
-            "model": think_result.get("model"),
-            "source_id": think_result.get("source_id"),
-            "source_count": len(response_sources),
-            "gbrain_think": gbrain_think_trace(think_result),
-        },
-        error_message=error_message,
+        query=query,
+        think_result=think_result,
+        response_sources=response_sources,
+        safe_event_detail=_safe_event_detail,
     )
 
 
