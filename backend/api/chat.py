@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
 from app.shared.time.utils import serialize_datetime_utc
-from app.features.agents.events import add_agent_event, create_agent_run, finish_agent_run, get_agent_run_for_message, serialize_agent_run
+from app.features.agents.events import add_agent_event, create_agent_run, finish_agent_run, serialize_agent_run
 from app.features.notifications.service import notify_file_generated
 from app.features.chat.access import (
     ensure_workspace_access as _ensure_workspace_access,
@@ -26,6 +26,12 @@ from app.features.chat.context_trace import (
     gbrain_think_trace,
     safe_trace_list,
     skill_context_extra,
+)
+from app.features.chat.message_serialization import (
+    attachment_only_prompt as _attachment_only_prompt,
+    attachment_to_response_dict as _attachment_to_response_dict,
+    message_attachments as _message_attachments,
+    message_to_response_dict as _message_to_response_dict_base,
 )
 from app.features.chat.schemas import (
     ActivateMessageVersionResponse,
@@ -1244,97 +1250,8 @@ def _next_version_index(db: Session, message: ChatMessage) -> int:
     return max((item.version_index or 1 for item in versions), default=1) + 1
 
 
-def _message_versions(db: Session, message: ChatMessage) -> list[ChatMessage]:
-    if not message.version_group_id:
-        return [message]
-    return (
-        db.query(ChatMessage)
-        .filter(
-            ChatMessage.session_id == message.session_id,
-            ChatMessage.user_id == message.user_id,
-            ChatMessage.version_group_id == message.version_group_id,
-            ChatMessage.is_excluded == False,
-        )
-        .order_by(ChatMessage.version_index.asc(), ChatMessage.id.asc())
-        .all()
-    )
-
-
-def _attachment_to_response_dict(attachment: SessionAttachment) -> dict:
-    return {
-        "id": attachment.id,
-        "session_id": attachment.session_id,
-        "message_id": attachment.message_id,
-        "original_name": attachment.original_name,
-        "content_type": attachment.content_type,
-        "size": attachment.size,
-        "source_scope": attachment.source_scope,
-        "source_label": attachment.source_label,
-        "authorization_status": attachment.authorization_status,
-        "created_at": serialize_datetime_utc(attachment.created_at),
-    }
-
-
-def _message_attachments(db: Session, message: ChatMessage) -> list[SessionAttachment]:
-    return (
-        db.query(SessionAttachment)
-        .filter(
-            SessionAttachment.session_id == message.session_id,
-            SessionAttachment.user_id == message.user_id,
-            SessionAttachment.message_id == message.id,
-        )
-        .order_by(SessionAttachment.created_at.asc(), SessionAttachment.id.asc())
-        .all()
-    )
-
-
 def _message_to_response_dict(db: Session, message: ChatMessage) -> dict:
-    versions = _message_versions(db, message)
-    feedback = _load_latest_message_feedback(message)
-    attachments = _message_attachments(db, message)
-    agent_run = get_agent_run_for_message(db, message.user_id, message.id)
-    serialized_agent_run = serialize_agent_run(db, agent_run)
-    agent_result = serialized_agent_run.get("result", {}) if serialized_agent_run else {}
-    return {
-        "id": message.id,
-        "session_id": message.session_id,
-        "role": message.role,
-        "content": message.content,
-        "provider": message.provider,
-        "model": message.model,
-        "token_input": message.token_input,
-        "token_output": message.token_output,
-        "token_total": message.token_total,
-        "status": message.status,
-        "error_message": message.error_message,
-        "rag_used": message.rag_used,
-        "is_excluded": message.is_excluded,
-        "version_group_id": message.version_group_id,
-        "version_index": message.version_index or 1,
-        "version_count": len(versions),
-        "active_version": message.active_version,
-        "versions": [
-            {
-                "id": version.id,
-                "content": version.content,
-                "provider": version.provider,
-                "model": version.model,
-                "version_index": version.version_index or 1,
-                "active_version": version.active_version,
-                "created_at": serialize_datetime_utc(version.created_at),
-            }
-            for version in versions
-        ],
-        "feedback_rating": feedback.get("rating") if feedback else None,
-        "feedback_comment": feedback.get("comment") if feedback else None,
-        "sources": message.sources,
-        "attachments": [_attachment_to_response_dict(attachment) for attachment in attachments],
-        "generated_file": agent_result.get("generated_file"),
-        "skill_run": agent_result.get("skill_run"),
-        "agent_run": serialized_agent_run,
-        "context_trace": message.context_trace,
-        "created_at": serialize_datetime_utc(message.created_at),
-    }
+    return _message_to_response_dict_base(db, message, feedback_root=MESSAGE_FEEDBACK_ROOT)
 
 
 def _build_llm_messages_before(
@@ -1412,10 +1329,6 @@ def _set_active_version(db: Session, selected: ChatMessage) -> None:
         version.active_version = version.id == selected.id
 
 
-def _load_latest_message_feedback(message: ChatMessage) -> dict | None:
-    return chat_feedback_api.load_latest_message_feedback(MESSAGE_FEEDBACK_ROOT, message)
-
-
 def _build_llm_messages(db: Session, user_id: int, session_id: int) -> list[dict[str, str]]:
     messages = (
         _message_query(db, user_id, session_id)
@@ -1438,14 +1351,6 @@ def _message_llm_content(db: Session, message: ChatMessage) -> str:
     if message.role != "user":
         return ""
     return _attachment_only_prompt(_message_attachments(db, message))
-
-
-def _attachment_only_prompt(attachments: list[SessionAttachment]) -> str:
-    if not attachments:
-        return ""
-    names = "、".join(attachment.original_name for attachment in attachments[:6])
-    suffix = "等附件" if len(attachments) > 6 else "附件"
-    return f"请根据本轮上传的{suffix}回答。附件：{names}"
 
 
 def _bind_attachments_to_message(
