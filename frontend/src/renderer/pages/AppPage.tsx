@@ -156,6 +156,7 @@ import {
   writeSidebarWidth,
   writeWorkspacePanelWidth,
 } from "../features/chat/panelWidths";
+import { toModelOption } from "../features/chat/modelOptions";
 import { PROJECT_R_BUILTIN_PROMPT } from "../features/prompts/constants";
 type SplitPaneKey = "left" | "right";
 type UtilityPanel = "workspace" | "customer-intelligence" | "prompt" | "skills" | "source" | "crm";
@@ -168,53 +169,8 @@ type SourcePreview = {
   sessionId?: number | null;
 };
 
-type ModelOption = {
-  key: string;
-  label: string;
-  provider: string;
-  profile: string;
-  description: string;
-  model: string;
-  supportsVision: boolean;
-  isDefault: boolean;
-};
-
 const PROMPT_SELECTION_KEY = "project_r_session_prompt_selection";
 const SETTINGS_PREFERENCES_KEY = "project-r:settings-preferences";
-const MODEL_COPY: Record<string, { label: string; description: string }> = {
-  deepseek: { label: "DeepSeek", description: "文本对话、推理输出" },
-  claude: { label: "Claude", description: "复杂推理与长文处理" },
-  openai: { label: "OpenAI", description: "通用兼容接口" },
-  mimo: { label: "MiMo", description: "多模态理解" },
-};
-
-const MODEL_CAPABILITY_COPY: Record<string, string> = {
-  "deepseek-flash": "文本对话、快速推理",
-  "deepseek-pro": "文本对话、复杂推理",
-  "mimo-v2-5": "文本/图像/视频/音频理解",
-  "mimo-v2-5-pro": "文本/图像理解，复杂推理",
-};
-
-function toModelOption(status: LLMProviderStatusResponse): ModelOption {
-  const profile = status.profile ?? status.provider;
-  const copy = MODEL_COPY[status.provider] ?? {
-    label: status.provider.toUpperCase(),
-    description: "已配置模型接口",
-  };
-  const normalizedModel = status.model.toLowerCase().replace(/\./g, "-");
-  const capabilityDescription = MODEL_CAPABILITY_COPY[profile] ?? MODEL_CAPABILITY_COPY[normalizedModel];
-  const supportsVision = status.supports_vision ?? Boolean(capabilityDescription?.includes("图像"));
-  return {
-    key: profile,
-    profile,
-    provider: status.provider,
-    label: status.label || copy.label,
-    description: capabilityDescription || status.description || copy.description,
-    model: status.model,
-    supportsVision,
-    isDefault: status.default,
-  };
-}
 const AGENT_MODE_PROMPT = (
   "当前用户已切换到 Agent 模式。请更积极地承接执行型任务："
   + "当请求涉及文件生成、套模板、业务 Skill、多步骤流程、项目资料核对或可下载输出时，"
