@@ -11,7 +11,7 @@ from app.features.preprocessing.media_transcription import MediaTranscriptionOpt
 from app.features.preprocessing.pdf_structured import PDFExtractionOptions, extract_pdf_structured_markdown, load_pdf_extraction_options
 from app.features.preprocessing.policy import PreprocessModelPolicyError
 import app.features.knowledge.gbrain.ingest as company_ingest
-import core.gbrain_project_ingest as project_ingest
+import app.features.knowledge.gbrain.project_ingest as project_ingest
 
 
 class _FakeLLMClient:

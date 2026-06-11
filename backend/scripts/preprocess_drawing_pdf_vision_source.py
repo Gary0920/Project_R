@@ -11,7 +11,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.features.knowledge.gbrain.ingest import _sha256_file, _write_markdown
-from core.gbrain_project_ingest import DRAWING_PDF_PREPROCESS_SKILL
+from app.features.knowledge.gbrain.project_ingest import DRAWING_PDF_PREPROCESS_SKILL
 from app.features.preprocessing.pdf_structured import PROMPT_VERSION, SKILL_VERSION, extract_pdf_structured_markdown
 
 
