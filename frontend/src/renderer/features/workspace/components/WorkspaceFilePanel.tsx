@@ -9,6 +9,10 @@ import {
 } from "./WorkspaceDialogs";
 import { WorkspaceFilePreviewSidecar } from "./WorkspaceFilePreviewSidecar";
 import {
+  WorkspaceMeetingFolderDialog,
+  type WorkspaceMeetingFolderForm,
+} from "./WorkspaceMeetingFolderDialog";
+import {
   clearWorkspaceTrash,
   applyWorkspaceEntityMergeCandidateAction,
   copyWorkspacePath,
@@ -194,16 +198,7 @@ export function WorkspaceFilePanel({
   const [textPrompt, setTextPrompt] = useState<WorkspaceTextPrompt | null>(null);
   const [textPromptValue, setTextPromptValue] = useState("");
   const [textPromptBusy, setTextPromptBusy] = useState(false);
-  const MEETING_TYPE_OPTIONS = [
-    "项目统筹会", "客户沟通会", "技术交底", "现场协调", "内部复盘", "培训分享", "其他",
-  ];
-  const [meetingFolderForm, setMeetingFolderForm] = useState<{
-    open: boolean;
-    topic: string;
-    meetingTime: string;
-    meetingType: string;
-    busy: boolean;
-  }>({ open: false, topic: "", meetingTime: "", meetingType: "其他", busy: false });
+  const [meetingFolderForm, setMeetingFolderForm] = useState<WorkspaceMeetingFolderForm>({ open: false, topic: "", meetingTime: "", meetingType: "其他", busy: false });
   const [meetingTranscriptForm, setMeetingTranscriptForm] = useState<{
     open: boolean;
     folderPath: string;
@@ -2337,59 +2332,11 @@ export function WorkspaceFilePanel({
         />
       ) : null}
       {meetingFolderForm.open ? (
-        <div className="workspace-text-prompt-overlay" onClick={() => !meetingFolderForm.busy && setMeetingFolderForm((prev) => ({ ...prev, open: false }))}>
-          <form
-            className="workspace-text-prompt"
-            onClick={(event) => event.stopPropagation()}
-            onSubmit={(event) => {
-              event.preventDefault();
-              void handleMeetingFolderCreate();
-            }}
-          >
-            <header>
-              <strong>新建会议文件夹</strong>
-              <button disabled={meetingFolderForm.busy} onClick={() => setMeetingFolderForm((prev) => ({ ...prev, open: false }))} type="button">×</button>
-            </header>
-            <label>
-              <span>会议主题</span>
-              <input
-                autoFocus
-                disabled={meetingFolderForm.busy}
-                onChange={(event) => setMeetingFolderForm((prev) => ({ ...prev, topic: event.target.value }))}
-                onKeyDown={(event) => { if (event.key === "Escape") setMeetingFolderForm((prev) => ({ ...prev, open: false })); }}
-                placeholder="例如：项目启动会"
-                value={meetingFolderForm.topic}
-              />
-            </label>
-            <label>
-              <span>会议时间（可选）</span>
-              <input
-                disabled={meetingFolderForm.busy}
-                onChange={(event) => setMeetingFolderForm((prev) => ({ ...prev, meetingTime: event.target.value }))}
-                onKeyDown={(event) => { if (event.key === "Escape") setMeetingFolderForm((prev) => ({ ...prev, open: false })); }}
-                placeholder="ISO-8601，例如 2026-06-15T09:30"
-                value={meetingFolderForm.meetingTime}
-              />
-            </label>
-            <label>
-              <span>会议类型</span>
-              <select
-                className="workspace-meeting-type-select"
-                disabled={meetingFolderForm.busy}
-                onChange={(event) => setMeetingFolderForm((prev) => ({ ...prev, meetingType: event.target.value }))}
-                value={meetingFolderForm.meetingType}
-              >
-                {MEETING_TYPE_OPTIONS.map((mt) => (
-                  <option key={mt} value={mt}>{mt}</option>
-                ))}
-              </select>
-            </label>
-            <div>
-              <button disabled={meetingFolderForm.busy} onClick={() => setMeetingFolderForm((prev) => ({ ...prev, open: false }))} type="button">取消</button>
-              <button disabled={meetingFolderForm.busy || !meetingFolderForm.topic.trim()} type="submit">创建</button>
-            </div>
-          </form>
-        </div>
+        <WorkspaceMeetingFolderDialog
+          form={meetingFolderForm}
+          setForm={setMeetingFolderForm}
+          onSubmit={() => void handleMeetingFolderCreate()}
+        />
       ) : null}
       {meetingTranscriptForm.open ? (
         <div className="workspace-text-prompt-overlay" onClick={() => !meetingTranscriptForm.busy && setMeetingTranscriptForm((prev) => ({ ...prev, open: false }))}>
