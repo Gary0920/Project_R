@@ -194,6 +194,12 @@ from app.features.workspaces.ingest.run import (
     workspace_ingest_status_event as _workspace_ingest_status_event,
     workspace_ingest_summary_text as _workspace_ingest_summary_text,
 )
+from app.features.workspaces.meetings.io import (
+    extract_text_from_docx as _extract_text_from_docx,
+    notify_meeting_run_finished as _notify_meeting_run_finished,
+    read_auxiliary_summaries as _read_auxiliary_summaries,
+    workspace_file_uploader as _workspace_file_uploader,
+)
 from app.features.workspaces.meetings.markdown import (
     MEETING_SYSTEM_PROMPT as _MEETING_SYSTEM_PROMPT,
     build_actions_prompt as _build_actions_prompt,
@@ -218,7 +224,6 @@ from app.features.workspaces.meetings.utils import (
     estimate_media_info as _estimate_media_info,
     next_version_number as _next_version_number,
     parse_speakers_from_transcript as _parse_speakers_from_transcript,
-    parse_table_row_count as _parse_table_row_count,
     read_file_safe as _read_file_safe,
     read_meeting_meta as _read_meeting_meta,
     release_meeting_run_lock as _release_meeting_run_lock,
@@ -1187,121 +1192,7 @@ async def save_meeting_transcript_from_file(
     )
 
 
-# ── DOCX extraction ─────────────────────────────────────────────────────
-
-def _extract_text_from_docx(file_bytes: bytes, filename: str = "") -> str:
-    """Extract plain text from a .docx file using python-docx."""
-    import io
-    try:
-        from docx import Document
-        doc = Document(io.BytesIO(file_bytes))
-        paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-        if not paragraphs:
-            # Try extracting from tables as well
-            for table in doc.tables:
-                for row in table.rows:
-                    for cell in row.cells:
-                        text = cell.text.strip()
-                        if text:
-                            paragraphs.append(text)
-        return "\n\n".join(paragraphs)
-    except ImportError:
-        raise HTTPException(status_code=500, detail="DOCX 解析组件未安装")
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"DOCX 文件解析失败：{exc}")
-
-
 # ── Helper ───────────────────────────────────────────────────────────────
-
-def _workspace_file_uploader(db: Session, workspace_id: int, rel_path: str) -> int | None:
-    meta = (
-        db.query(WorkspaceFile)
-        .filter(
-            WorkspaceFile.workspace_id == workspace_id,
-            WorkspaceFile.relative_path == rel_path,
-            WorkspaceFile.deleted_at.is_(None),
-        )
-        .first()
-    )
-    return meta.uploaded_by if meta else None
-
-
-def _notify_meeting_run_finished(
-    db: Session,
-    *,
-    workspace: Workspace,
-    actor_user_id: int,
-    folder_path: str,
-    title: str,
-    status: str,
-    detail: str,
-) -> None:
-    severity = "success" if status == "completed" else "warning" if status == "partial" else "critical"
-    notify_user(
-        db,
-        actor_user_id,
-        category="workspace",
-        severity=severity,
-        title=title,
-        content=f"{workspace.name}：{detail}",
-        action_status="none" if status == "completed" else "pending",
-        action_kind="open_workspace",
-        action_payload={"workspace_id": workspace.id, "path": folder_path},
-        event_key=f"workspace:{workspace.id}:meeting:{folder_path}:{title}:{datetime.now(timezone.utc).timestamp()}",
-    )
-
-
-_AUXILIARY_SUMMARY_EXTENSIONS = {".md", ".txt", ".docx"}
-
-
-def _filename_match_tokens(filename: str) -> set[str]:
-    stem = Path(filename or "").stem.lower()
-    raw_tokens = re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]{2,}", stem)
-    ignored = {"audio", "video", "meeting", "summary", "transcript", "纪要", "总结", "转录", "会议"}
-    return {token for token in raw_tokens if len(token) >= 2 and token not in ignored}
-
-
-def _read_auxiliary_summaries(folder_dir: Path, source_filename: str = "", max_chars: int = 20000) -> str:
-    summary_dir = folder_dir / "03-辅助总结"
-    if not summary_dir.exists() or not summary_dir.is_dir():
-        return ""
-
-    source_tokens = _filename_match_tokens(source_filename)
-    candidates = [
-        child for child in sorted(summary_dir.iterdir(), key=lambda item: item.name.lower())
-        if child.is_file() and not child.name.startswith("~$") and child.suffix.lower() in _AUXILIARY_SUMMARY_EXTENSIONS
-    ]
-    if source_tokens:
-        matched = [
-            child for child in candidates
-            if source_tokens.intersection(_filename_match_tokens(child.name))
-        ]
-        candidates = matched
-
-    sections: list[str] = []
-    total = 0
-    for child in candidates:
-        suffix = child.suffix.lower()
-        try:
-            if suffix == ".docx":
-                text = _extract_text_from_docx(child.read_bytes(), child.name)
-            else:
-                text = child.read_text(encoding="utf-8")
-        except Exception as exc:
-            sections.append(f"### {child.name}\n\n> 辅助总结读取失败：{exc}")
-            continue
-        text = text.strip()
-        if not text:
-            continue
-        remaining = max_chars - total
-        if remaining <= 0:
-            break
-        clipped = text[:remaining]
-        total += len(clipped)
-        suffix_note = "\n\n> 已截断，仅保留前部内容。" if len(text) > len(clipped) else ""
-        sections.append(f"### {child.name}\n\n{clipped}{suffix_note}")
-    return "\n\n".join(sections)
-
 
 @router.post("/{workspace_id}/meetings/generate", response_model=MeetingGenerateResponse)
 def generate_meeting_minutes_and_actions(
