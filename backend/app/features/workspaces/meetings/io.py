@@ -205,6 +205,40 @@ def upsert_generated_meeting_file_metadata(
             meta.rag_status = rag_status
 
 
+def mark_previous_generated_meeting_files_needs_reingest(
+    db: Session,
+    *,
+    workspace_id: int,
+    root: Path,
+    minutes_dir: Path,
+    actions_dir: Path,
+    generated_files: GeneratedMeetingMarkdowns,
+) -> None:
+    current_paths = {
+        generated_files.minutes_version_path,
+        generated_files.minutes_latest_path,
+        generated_files.actions_version_path,
+        generated_files.actions_latest_path,
+    }
+    for prefix_dir, prefix_name in [(minutes_dir, "minutes"), (actions_dir, "actions")]:
+        if not prefix_dir.exists():
+            continue
+        for child in prefix_dir.iterdir():
+            if not child.is_file() or not child.name.startswith(prefix_name) or child in current_paths:
+                continue
+            relative_path = child.relative_to(root).as_posix()
+            meta = (
+                db.query(WorkspaceFile)
+                .filter(
+                    WorkspaceFile.workspace_id == workspace_id,
+                    WorkspaceFile.relative_path == relative_path,
+                )
+                .first()
+            )
+            if meta and meta.rag_status in ("synced", "gbrain_ready", "sync_pending"):
+                meta.rag_status = "needs_reingest"
+
+
 def notify_meeting_run_finished(
     db: Session,
     *,

@@ -161,6 +161,7 @@ from app.features.workspaces.ingest.notifications import (
 from app.features.workspaces.meetings.io import (
     extract_text_from_docx as _extract_text_from_docx,
     notify_meeting_run_finished as _notify_meeting_run_finished,
+    mark_previous_generated_meeting_files_needs_reingest as _mark_previous_generated_meeting_files_needs_reingest,
     read_auxiliary_summaries as _read_auxiliary_summaries,
     upsert_generated_meeting_file_metadata as _upsert_generated_meeting_file_metadata,
     write_numbered_latest_markdown as _write_numbered_latest_markdown,
@@ -913,18 +914,14 @@ def generate_meeting_minutes_and_actions(
         ),
         rag_status="partial" if transcription_status == "partial" else "not_ingested",
     )
-    # Mark previously synced files as needs_reingest
-    for prefix_dir, prefix_name in [(minutes_dir, "minutes"), (actions_dir, "actions")]:
-        if not prefix_dir.exists():
-            continue
-        for child in prefix_dir.iterdir():
-            if child.is_file() and child.name.startswith(prefix_name) and child != minutes_v_path and child != minutes_latest_path:
-                cr = child.relative_to(root).as_posix()
-                cmeta = db.query(WorkspaceFile).filter(
-                    WorkspaceFile.workspace_id == workspace_id,
-                    WorkspaceFile.relative_path == cr).first()
-                if cmeta and cmeta.rag_status in ("synced", "gbrain_ready", "sync_pending"):
-                    cmeta.rag_status = "needs_reingest"
+    _mark_previous_generated_meeting_files_needs_reingest(
+        db,
+        workspace_id=workspace_id,
+        root=root,
+        minutes_dir=minutes_dir,
+        actions_dir=actions_dir,
+        generated_files=generated_files,
+    )
 
     total_tokens = token_input + token_output
 
