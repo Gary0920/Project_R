@@ -17,6 +17,10 @@ import {
   type WorkspaceMeetingTranscriptForm,
 } from "./WorkspaceMeetingTranscriptDialog";
 import {
+  WorkspaceMeetingTermCorrectionsDialog,
+  type WorkspaceMeetingTermCorrection,
+} from "./WorkspaceMeetingTermCorrectionsDialog";
+import {
   clearWorkspaceTrash,
   applyWorkspaceEntityMergeCandidateAction,
   copyWorkspacePath,
@@ -209,7 +213,7 @@ export function WorkspaceFilePanel({
   const [speakerMapLoading, setSpeakerMapLoading] = useState(false);
   const [speakerMapNames, setSpeakerMapNames] = useState<Record<string, string>>({});
   const [termCorrectionsOpen, setTermCorrectionsOpen] = useState(false);
-  const [termCorrections, setTermCorrections] = useState<Array<{original:string;corrected:string}>>([]);
+  const [termCorrections, setTermCorrections] = useState<WorkspaceMeetingTermCorrection[]>([]);
   const [termCorrectionsBusy, setTermCorrectionsBusy] = useState(false);
   const [termEditOriginal, setTermEditOriginal] = useState("");
   const [termEditCorrected, setTermEditCorrected] = useState("");
@@ -2345,81 +2349,17 @@ export function WorkspaceFilePanel({
         />
       ) : null}
       {termCorrectionsOpen ? (
-        <div className="workspace-text-prompt-overlay" onClick={() => !termCorrectionsBusy && setTermCorrectionsOpen(false)}>
-          <div
-            className="workspace-text-prompt"
-            onClick={(event) => event.stopPropagation()}
-            style={{ maxWidth: 500 }}
-          >
-            <header>
-              <strong>术语纠错</strong>
-              <button disabled={termCorrectionsBusy} onClick={() => setTermCorrectionsOpen(false)} type="button">×</button>
-            </header>
-            <div style={{ background: "var(--warning)/0.1", padding: "8px 12px", borderRadius: 6, marginBottom: 10, fontSize: "0.9em", lineHeight: 1.5 }}>
-              <strong>转录中这些词是否需要修正？</strong>
-              <p style={{ margin: "4px 0 0", opacity: 0.75 }}>
-                音视频转录可能将专业术语、人名、地名词识别错误。请检查并修正：添加原识别词和正确写法，例如 "波离" → "玻璃"、"五矿" → "5mm"。
-                已保存的术语会在下次生成纪要时自动应用。跳过将保留原始识别结果，未确认术语在纪要中标记为「待确认」。
-              </p>
-            </div>
-            {termCorrections.length > 0 ? (
-              <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 12 }}>
-                <thead>
-                  <tr>
-                    <th style={{ textAlign: "left", padding: "4px 8px", borderBottom: "1px solid #ccc" }}>原识别</th>
-                    <th style={{ textAlign: "left", padding: "4px 8px", borderBottom: "1px solid #ccc" }}>建议修正</th>
-                    <th style={{ width: 60, borderBottom: "1px solid #ccc" }} />
-                  </tr>
-                </thead>
-                <tbody>
-                  {termCorrections.map((tc, idx) => (
-                    <tr key={idx}>
-                      <td style={{ padding: "4px 8px" }}>{tc.original}</td>
-                      <td style={{ padding: "4px 8px" }}>{tc.corrected}</td>
-                      <td style={{ padding: "4px 8px" }}>
-                        <button
-                          disabled={termCorrectionsBusy}
-                          onClick={() => setTermCorrections((prev) => prev.filter((_, i) => i !== idx))}
-                          type="button"
-                          style={{ background: "none", border: "none", color: "#d00", cursor: "pointer" }}
-                        >×</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : null}
-            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-              <input
-                disabled={termCorrectionsBusy}
-                onChange={(e) => setTermEditOriginal(e.target.value)}
-                placeholder="原识别"
-                style={{ flex: 1 }}
-                value={termEditOriginal}
-              />
-              <input
-                disabled={termCorrectionsBusy}
-                onChange={(e) => setTermEditCorrected(e.target.value)}
-                placeholder="建议修正"
-                style={{ flex: 1 }}
-                value={termEditCorrected}
-              />
-              <button
-                disabled={termCorrectionsBusy || !termEditOriginal.trim() || !termEditCorrected.trim()}
-                onClick={() => {
-                  setTermCorrections((prev) => [...prev, { original: termEditOriginal.trim(), corrected: termEditCorrected.trim() }]);
-                  setTermEditOriginal("");
-                  setTermEditCorrected("");
-                }}
-                type="button"
-              >添加</button>
-            </div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button disabled={termCorrectionsBusy} onClick={() => setTermCorrectionsOpen(false)} type="button">跳过</button>
-              <button disabled={termCorrectionsBusy || termCorrections.length === 0} onClick={() => void handleSaveTermCorrections()} type="button">保存</button>
-            </div>
-          </div>
-        </div>
+        <WorkspaceMeetingTermCorrectionsDialog
+          busy={termCorrectionsBusy}
+          corrections={termCorrections}
+          editCorrected={termEditCorrected}
+          editOriginal={termEditOriginal}
+          setCorrections={setTermCorrections}
+          setEditCorrected={setTermEditCorrected}
+          setEditOriginal={setTermEditOriginal}
+          onClose={() => setTermCorrectionsOpen(false)}
+          onSave={() => void handleSaveTermCorrections()}
+        />
       ) : null}
       {speakerMapOpen ? (
         <div className="workspace-text-prompt-overlay" onClick={() => !speakerMapLoading && setSpeakerMapOpen(false)}>
