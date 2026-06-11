@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 from api.auth import get_current_user
 from app.shared.time.utils import serialize_datetime_utc
 from app.features.agents.events import add_agent_event, create_agent_run, finish_agent_run, serialize_agent_run
-from app.features.notifications.service import notify_file_generated
 from app.features.chat.access import (
     ensure_workspace_access as _ensure_workspace_access,
     get_user_session as _get_user_session,
@@ -26,6 +25,10 @@ from app.features.chat.context_trace import (
     gbrain_think_trace,
     safe_trace_list,
     skill_context_extra,
+)
+from app.features.chat.document_generation import (
+    create_generated_docx as _create_generated_docx_base,
+    safe_document_title as _safe_document_title,
 )
 from app.features.chat.message_serialization import (
     attachment_only_prompt as _attachment_only_prompt,
@@ -63,7 +66,6 @@ from app.features.chat.schemas import (
     SessionResponse,
     UpdateSessionRequest,
 )
-from app.features.documents.renderer import render_docx
 from app.features.knowledge.sources import KnowledgeSources
 from app.shared.llm.client import LLMConfigurationError, LLMProviderError, get_llm_client
 from app.features.chat import attachments as session_attachments
@@ -79,7 +81,6 @@ from app.features.prompts.system_prompt import (
 from models import get_db
 from models.audit_log import AuditLog
 from models.attachment import SessionAttachment
-from models.generated_file import GeneratedFile
 from models.message import ChatMessage
 from models.session import ChatSession
 from models.skill_run import SkillRun
@@ -108,7 +109,6 @@ MESSAGE_FEEDBACK_ROOT = Path(
 ANSWER_CORRECTION_REVIEW_PREFIX = "gbrain_answer_correction:message:"
 GBRAIN_THINK_REVIEW_PREFIX = "gbrain_think_review:message:"
 ANSWER_CORRECTION_RATING_THRESHOLD = 2
-DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 KNOWLEDGE_SOURCES = KnowledgeSources()
 
 
@@ -1458,11 +1458,6 @@ def cleanup_inactive_session_attachments(db: Session | None = None) -> int:
     )
 
 
-def _safe_document_title(text: str) -> str:
-    title = re.sub(r"\s+", " ", text).strip()[:40] or "Project_R 生成文档"
-    return re.sub(r"[\\/:*?\"<>|]", "_", title)
-
-
 def _create_generated_docx(
     db: Session,
     user_id: int,
@@ -1470,27 +1465,14 @@ def _create_generated_docx(
     user_prompt: str,
     content: str,
 ) -> dict:
-    file_id = str(uuid.uuid4())
-    title = _safe_document_title(user_prompt)
-    filename = f"{title}.docx"
-    output_path = GENERATED_FILES_ROOT / str(user_id) / f"{file_id}.docx"
-    render_docx(title, content, output_path)
-    generated = GeneratedFile(
-        id=file_id,
-        user_id=user_id,
-        session_id=session_id,
-        filename=filename,
-        path=str(output_path),
-        mime_type=DOCX_MIME,
+    return _create_generated_docx_base(
+        db,
+        user_id,
+        session_id,
+        user_prompt,
+        content,
+        generated_files_root=GENERATED_FILES_ROOT,
     )
-    db.add(generated)
-    notify_file_generated(db, user_id=user_id, file_id=file_id, filename=filename, session_id=session_id)
-    return {
-        "id": file_id,
-        "filename": filename,
-        "mime_type": DOCX_MIME,
-        "download_url": f"/documents/{file_id}/download",
-    }
 
 
 def _write_document_generation_agent_run(
