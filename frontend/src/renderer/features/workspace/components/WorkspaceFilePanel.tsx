@@ -23,6 +23,10 @@ import {
 import { WorkspaceMeetingSpeakerMapDialog } from "./WorkspaceMeetingSpeakerMapDialog";
 import { WorkspaceMeetingToolbar } from "./WorkspaceMeetingToolbar";
 import {
+  WorkspaceUploadProgress,
+  type WorkspaceUploadProgressState,
+} from "./WorkspaceUploadProgress";
+import {
   clearWorkspaceTrash,
   applyWorkspaceEntityMergeCandidateAction,
   copyWorkspacePath,
@@ -222,7 +226,7 @@ export function WorkspaceFilePanel({
   const [clipboardItem, setClipboardItem] = useState<WorkspaceClipboardItem | null>(null);
   const [draggedItem, setDraggedItem] = useState<WorkspaceFileItemResponse | null>(null);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
-  const [uploadProgress, setUploadProgress] = useState({ active: false, current: 0, total: 0, filename: "" });
+  const [uploadProgress, setUploadProgress] = useState<WorkspaceUploadProgressState>({ active: false, current: 0, total: 0, filename: "" });
   const [compactActions, setCompactActions] = useState(false);
   const [previewWidth, setPreviewWidth] = useState(readPreviewWidth);
   const [previewResizing, setPreviewResizing] = useState(false);
@@ -1580,7 +1584,6 @@ export function WorkspaceFilePanel({
     void handleUpload(Array.from(event.dataTransfer.files), currentPath);
   }
 
-  const percent = uploadProgress.total > 0 ? Math.round((uploadProgress.current / uploadProgress.total) * 100) : 0;
   const isPersonalWorkspace = workspaceKind === "user";
   const isCustomerWorkspace = workspaceKind === "customer";
   const panelSubtitle = viewMode === "trash" ? "回收站" : isPersonalWorkspace ? "个人文件" : isCustomerWorkspace ? "资料文件" : "项目资料";
@@ -1847,15 +1850,7 @@ export function WorkspaceFilePanel({
         </p>
       ) : null}
 
-      {uploadProgress.active ? (
-        <div className="workspace-upload-progress">
-          <div className="workspace-upload-progress-meta">
-            <span>正在上传 {uploadProgress.filename}</span>
-            <strong>{percent}%</strong>
-          </div>
-          <div className="workspace-upload-progress-track"><span style={{ width: `${percent}%` }} /></div>
-        </div>
-      ) : null}
+      <WorkspaceUploadProgress progress={uploadProgress} />
 
       {error ? (
         <p className="agent-file-panel-note is-error">
