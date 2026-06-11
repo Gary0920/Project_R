@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from core.gbrain import GBRAIN_MAINTENANCE_JOB_NAMES, GBrainAdapter, load_gbrain_settings
+from app.features.knowledge.gbrain import GBRAIN_MAINTENANCE_JOB_NAMES, GBrainAdapter, load_gbrain_settings
 
 
 DEFAULT_DREAM_JOB_NAMES = ["autopilot-cycle"]

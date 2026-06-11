@@ -60,7 +60,7 @@ def main() -> int:
     _load_dotenv(BACKEND_DIR / ".env")
     sys.path.insert(0, str(BACKEND_DIR))
 
-    from core.gbrain import GBrainAdapter
+    from app.features.knowledge.gbrain import GBrainAdapter
     from app.features.knowledge.sources import KnowledgeSources
 
     cases = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))

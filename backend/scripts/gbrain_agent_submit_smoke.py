@@ -59,7 +59,7 @@ def main() -> int:
     _load_dotenv(env_path)
     sys.path.insert(0, str(BACKEND_DIR))
 
-    from core.gbrain import GBrainAdapter
+    from app.features.knowledge.gbrain import GBrainAdapter
 
     adapter = GBrainAdapter()
     result = adapter.submit_citation_fixer(

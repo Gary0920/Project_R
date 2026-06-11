@@ -22,7 +22,7 @@ try:
 except ImportError:  # pragma: no cover - python-dotenv is a declared dependency.
     load_dotenv = None  # type: ignore[assignment]
 
-BASE_DIR = Path(__file__).resolve().parents[2]
+BASE_DIR = Path(__file__).resolve().parents[4]
 PROJECT_ROOT = BASE_DIR.parent
 DEFAULT_BACKEND_ENV_PATH = BASE_DIR / ".env"
 DEFAULT_COMPANY_WIKI_ROOT = BASE_DIR / "workspace_data" / "global" / "company-wiki"

@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 from typing import Any
 
-from core.gbrain import GBrainAdapter, _apply_gbrain_provider_env, load_gbrain_settings
+from app.features.knowledge.gbrain import GBrainAdapter, _apply_gbrain_provider_env, load_gbrain_settings
 
 
 DEFAULT_PROBE_QUERIES = [

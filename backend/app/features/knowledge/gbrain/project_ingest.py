@@ -18,7 +18,7 @@ from app.features.preprocessing.email_structured import (
     extract_email_attachments,
     extract_email_structured_markdown,
 )
-from core.gbrain import (
+from app.features.knowledge.gbrain import (
     GBrainSettings,
     ensure_project_gbrain_environment,
     load_gbrain_settings,

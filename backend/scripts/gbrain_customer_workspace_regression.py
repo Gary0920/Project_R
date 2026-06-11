@@ -112,7 +112,7 @@ def main() -> int:
     _load_dotenv(BACKEND_DIR / ".env")
     sys.path.insert(0, str(BACKEND_DIR))
 
-    from core.gbrain import GBrainAdapter, customer_source_id_for_workspace, customer_source_registration_plan
+    from app.features.knowledge.gbrain import GBrainAdapter, customer_source_id_for_workspace, customer_source_registration_plan
     from models import SessionLocal
     from models.workspace import Workspace
 

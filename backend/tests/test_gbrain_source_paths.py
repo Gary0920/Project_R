@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from core.gbrain import GBrainAdapter, GBrainSettings, resolve_gbrain_source_paths
+from app.features.knowledge.gbrain import GBrainAdapter, GBrainSettings, resolve_gbrain_source_paths
 
 
 class GBrainSourcePathResolverTests(unittest.TestCase):

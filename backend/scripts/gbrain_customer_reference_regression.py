@@ -49,7 +49,7 @@ def main() -> int:
     _load_dotenv(BACKEND_DIR / ".env")
     sys.path.insert(0, str(BACKEND_DIR))
 
-    from core.gbrain import CRM_CUSTOMER_SOURCE_ID, GBrainAdapter
+    from app.features.knowledge.gbrain import CRM_CUSTOMER_SOURCE_ID, GBrainAdapter
     from app.features.knowledge.gbrain.customer_sources import search_customer_intelligence_sources
 
     adapter = GBrainAdapter()

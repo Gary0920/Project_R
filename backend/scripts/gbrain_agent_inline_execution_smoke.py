@@ -139,7 +139,7 @@ def main() -> int:
     _load_dotenv(env_path)
     _promote_deepseek_key(os.environ)
 
-    from core.gbrain import GBrainAdapter, load_gbrain_settings
+    from app.features.knowledge.gbrain import GBrainAdapter, load_gbrain_settings
 
     settings = load_gbrain_settings()
     source_id = args.source.strip() or settings.company_source_id

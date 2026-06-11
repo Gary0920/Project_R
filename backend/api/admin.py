@@ -15,7 +15,7 @@ from app.features.knowledge.gbrain.maintenance.citation_fixer_jobs import (
     record_citation_fixer_job,
 )
 from app.features.auth.system_accounts import SYSTEM_ADMIN_USERNAME, ensure_system_admin, is_system_admin_user
-from core.gbrain import GBrainAdapter
+from app.features.knowledge.gbrain import GBrainAdapter
 from app.features.knowledge.sources import approve_knowledge_review_to_gbrain
 from app.features.notifications.service import notify_gbrain_maintenance_event
 from app.features.skills.runner import SkillRunner

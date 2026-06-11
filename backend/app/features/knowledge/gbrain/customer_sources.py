@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from core.gbrain import (
+from app.features.knowledge.gbrain import (
     CUSTOMER_INTELLIGENCE_SOURCE_ID,
     CUSTOMER_REFERENCE_SOURCE_ID,
     GBrainAdapter,

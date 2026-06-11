@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
-from core.gbrain import (
+from app.features.knowledge.gbrain import (
     GBrainAdapter,
     GBrainSettings,
     customer_source_id_for_workspace,

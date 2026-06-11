@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from core.gbrain import (
+from app.features.knowledge.gbrain import (
     CRM_CUSTOMER_SOURCE_ID,
     GBrainAdapter,
     GBrainSettings,

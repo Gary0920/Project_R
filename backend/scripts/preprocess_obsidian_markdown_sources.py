@@ -10,7 +10,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from core.gbrain import load_gbrain_settings, resolve_gbrain_source_paths
+from app.features.knowledge.gbrain import load_gbrain_settings, resolve_gbrain_source_paths
 from app.features.preprocessing.obsidian_markdown import preprocess_obsidian_markdown_tree
 
 

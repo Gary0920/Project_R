@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api import admin, auth, chat, distillation, documents, health, notifications, prompts, rag, skills, updates, workspaces
-from core.gbrain import ensure_gbrain_environment
+from app.features.knowledge.gbrain import ensure_gbrain_environment
 from app.features.knowledge.gbrain.maintenance.worker import start_gbrain_maintenance_worker, stop_gbrain_maintenance_worker
 from models import init_db
 

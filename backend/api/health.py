@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from core.gbrain import get_gbrain_health
+from app.features.knowledge.gbrain import get_gbrain_health
 from app.shared.llm.client import list_provider_statuses, load_provider_settings
 
 router = APIRouter(prefix="/health", tags=["health"])

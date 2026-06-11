@@ -70,7 +70,7 @@ def main() -> int:
     _load_dotenv(BACKEND_DIR / ".env")
     sys.path.insert(0, str(BACKEND_DIR))
 
-    from core.gbrain import (
+    from app.features.knowledge.gbrain import (
         CUSTOMER_REFERENCE_SOURCE_ID,
         GBrainAdapter,
         load_gbrain_settings,

@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import core.gbrain._adapter as gbrain_adapter
+import app.features.knowledge.gbrain.adapter as gbrain_adapter
 
 
 class GBrainSettingsEnvTests(unittest.TestCase):

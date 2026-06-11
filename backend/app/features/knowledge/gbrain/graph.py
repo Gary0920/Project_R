@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from core.gbrain import (
+from app.features.knowledge.gbrain import (
     CRM_CUSTOMER_SOURCE_ID,
     CUSTOMER_INTELLIGENCE_SOURCE_ID,
     CUSTOMER_REFERENCE_SOURCE_ID,

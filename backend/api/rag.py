@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
-from core.gbrain import (
+from app.features.knowledge.gbrain import (
     CUSTOMER_INTELLIGENCE_SOURCE_ID,
     GBrainAdapter,
     customer_source_id_for_workspace,

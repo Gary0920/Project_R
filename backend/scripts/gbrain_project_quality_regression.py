@@ -245,7 +245,7 @@ def build_workspace_preflight(
             "warnings": warnings,
         }
 
-    from core.gbrain import project_source_id_for_workspace, project_source_paths_for_workspace, project_source_registration_plan
+    from app.features.knowledge.gbrain import project_source_id_for_workspace, project_source_paths_for_workspace, project_source_registration_plan
 
     workspace = SimpleNamespace(
         id=int(workspace_row["id"]),
@@ -300,7 +300,7 @@ def build_think_query_fn(source_id: str):
 
     Returns a callable suitable for run_regression().
     """
-    from core.gbrain import GBrainAdapter
+    from app.features.knowledge.gbrain import GBrainAdapter
 
     adapter = GBrainAdapter()
 
@@ -370,7 +370,7 @@ def run_query_regression(
     if not workspace_row:
         return {"ok": False, "error": "TEST workspace not found in DB", "workspace_lookup_failures": workspace_lookup.get("failures")}
 
-    from core.gbrain import project_source_id_for_workspace, project_source_paths_for_workspace
+    from app.features.knowledge.gbrain import project_source_id_for_workspace, project_source_paths_for_workspace
 
     workspace = SimpleNamespace(
         id=int(workspace_row["id"]),

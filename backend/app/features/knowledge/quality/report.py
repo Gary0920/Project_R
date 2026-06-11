@@ -36,7 +36,7 @@ def store_report(
     # 1. Project-scoped
     if reports_dir is None and project_slug:
         # Try to derive from workspace paths
-        from core.gbrain import resolve_gbrain_source_paths
+        from app.features.knowledge.gbrain import resolve_gbrain_source_paths
 
         try:
             paths = resolve_gbrain_source_paths(project_slug, workspace_kind="project")

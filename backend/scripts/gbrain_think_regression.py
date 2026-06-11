@@ -136,7 +136,7 @@ def main() -> int:
     _load_dotenv(BACKEND_DIR / ".env")
     sys.path.insert(0, str(BACKEND_DIR))
 
-    from core.gbrain import GBrainAdapter
+    from app.features.knowledge.gbrain import GBrainAdapter
 
     adapter = GBrainAdapter()
     health_failures = _health_failures(adapter.health())

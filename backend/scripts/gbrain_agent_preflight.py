@@ -80,7 +80,7 @@ def main() -> int:
     _load_dotenv(BACKEND_DIR / ".env")
     sys.path.insert(0, str(BACKEND_DIR))
 
-    from core.gbrain import GBrainAdapter
+    from app.features.knowledge.gbrain import GBrainAdapter
 
     status = _redacted_status(GBrainAdapter().agent_status())
     failures = _check_agent_status(status)

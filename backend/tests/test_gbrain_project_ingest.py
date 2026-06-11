@@ -12,7 +12,7 @@ import yaml
 import app.features.knowledge.gbrain.project_ingest as project_ingest
 from app.features.preprocessing.email_structured import EmailStructuredExtractionResult
 from app.features.preprocessing.classifier import ExtractorClassification
-from core.gbrain import GBrainSettings
+from app.features.knowledge.gbrain import GBrainSettings
 from app.features.knowledge.gbrain.project_ingest import PROJECT_INGEST_MANIFEST_NAME, compile_project_workspace_sources
 from app.features.preprocessing.image_structured import ImageStructuredExtractionResult
 from app.features.preprocessing.media_transcription import MediaTranscriptionResult

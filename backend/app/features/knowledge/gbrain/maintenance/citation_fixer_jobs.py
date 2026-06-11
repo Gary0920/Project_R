@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 from typing import Any
 
-from core.gbrain import GBrainAdapter, load_gbrain_settings, resolve_gbrain_source_paths
+from app.features.knowledge.gbrain import GBrainAdapter, load_gbrain_settings, resolve_gbrain_source_paths
 
 
 TERMINAL_JOB_STATUSES = {"completed", "failed", "dead", "cancelled", "canceled"}

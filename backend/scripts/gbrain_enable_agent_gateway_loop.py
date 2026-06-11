@@ -54,7 +54,7 @@ def main() -> int:
     _load_dotenv(env_path)
     sys.path.insert(0, str(BACKEND_DIR))
 
-    from core.gbrain import load_gbrain_settings
+    from app.features.knowledge.gbrain import load_gbrain_settings
 
     settings = load_gbrain_settings()
     command = _build_command(settings.bun_executable)

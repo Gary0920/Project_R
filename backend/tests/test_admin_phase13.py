@@ -9,7 +9,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.NamedTemporaryFile(delete=Fal
 import api.admin as admin_api
 import api.auth as auth_api
 from app.features.auth.system_accounts import SYSTEM_ADMIN_PASSWORD, SYSTEM_ADMIN_USERNAME, ensure_system_admin
-from core.gbrain import project_source_paths_for_workspace
+from app.features.knowledge.gbrain import project_source_paths_for_workspace
 from fastapi import HTTPException
 from models import Base, SessionLocal, engine
 from models.audit_log import AuditLog

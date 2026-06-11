@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.error import URLError
 
-from core.gbrain import GBrainAdapter, ensure_gbrain_environment, load_gbrain_settings
+from app.features.knowledge.gbrain import GBrainAdapter, ensure_gbrain_environment, load_gbrain_settings
 from app.features.knowledge.sources import KnowledgeSources
 
 
@@ -149,7 +149,7 @@ class GBrainConfigTests(unittest.TestCase):
                 GBRAIN_BASE_URL="http://127.0.0.1:3131",
             )
             with patch.dict(os.environ, env, clear=True), patch(
-                "core.gbrain._adapter.urllib.request.urlopen",
+                "app.features.knowledge.gbrain.adapter.urllib.request.urlopen",
                 side_effect=URLError("connection refused"),
             ):
                 health = GBrainAdapter().health()
@@ -166,7 +166,7 @@ class GBrainConfigTests(unittest.TestCase):
                 GBRAIN_BASE_URL="http://127.0.0.1:3131",
             )
             with patch.dict(os.environ, env, clear=True), patch(
-                "core.gbrain._adapter.urllib.request.urlopen",
+                "app.features.knowledge.gbrain.adapter.urllib.request.urlopen",
                 return_value=FakeHttpResponse('{"status":"ok","engine":"pglite"}'),
             ):
                 health = GBrainAdapter().health()
@@ -269,7 +269,7 @@ class GBrainConfigTests(unittest.TestCase):
             )
             env = self._env_for_root(root, OLLAMA_BASE_URL="http://127.0.0.1:11434/v1")
             with patch.dict(os.environ, env, clear=True), patch(
-                "core.gbrain._adapter.urllib.request.urlopen",
+                "app.features.knowledge.gbrain.adapter.urllib.request.urlopen",
                 return_value=FakeHttpResponse('{"models":[{"name":"mxbai-embed-large:latest"}]}'),
             ):
                 health = GBrainAdapter().health()
@@ -299,7 +299,7 @@ class GBrainConfigTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with patch.dict(os.environ, self._env_for_root(root), clear=True), patch(
-                "core.gbrain._adapter.urllib.request.urlopen",
+                "app.features.knowledge.gbrain.adapter.urllib.request.urlopen",
                 return_value=FakeHttpResponse('{"models":[]}'),
             ):
                 health = GBrainAdapter().health()
@@ -332,7 +332,7 @@ class GBrainConfigTests(unittest.TestCase):
                 GBRAIN_SERVICE_BEARER_TOKEN="service-token",
             )
             with patch.dict(os.environ, env, clear=True), patch(
-                "core.gbrain._adapter.urllib.request.urlopen",
+                "app.features.knowledge.gbrain.adapter.urllib.request.urlopen",
                 return_value=FakeHttpResponse(sse),
             ):
                 sources = GBrainAdapter().list_sources()
@@ -372,7 +372,7 @@ class GBrainConfigTests(unittest.TestCase):
                 GBRAIN_SERVICE_BEARER_TOKEN="service-token",
             )
             with patch.dict(os.environ, env, clear=True), patch(
-                "core.gbrain._adapter.urllib.request.urlopen",
+                "app.features.knowledge.gbrain.adapter.urllib.request.urlopen",
                 return_value=FakeHttpResponse(sse),
             ):
                 status = GBrainAdapter().company_source_status()
@@ -412,7 +412,7 @@ class GBrainConfigTests(unittest.TestCase):
                 GBRAIN_SERVICE_BEARER_TOKEN="service-token",
             )
             with patch.dict(os.environ, env, clear=True), patch(
-                "core.gbrain._adapter.urllib.request.urlopen",
+                "app.features.knowledge.gbrain.adapter.urllib.request.urlopen",
                 side_effect=fake_urlopen,
             ):
                 result = GBrainAdapter().query("VMU")
@@ -511,7 +511,7 @@ class GBrainConfigTests(unittest.TestCase):
                 GBRAIN_THINK_ROUNDS="2",
             )
             with patch.dict(os.environ, env, clear=True), patch(
-                "core.gbrain._adapter.urllib.request.urlopen",
+                "app.features.knowledge.gbrain.adapter.urllib.request.urlopen",
                 side_effect=fake_urlopen,
             ):
                 result = GBrainAdapter().think("书面化原则是什么")
@@ -595,7 +595,7 @@ class GBrainConfigTests(unittest.TestCase):
                 GBRAIN_THINK_ALLOWED_SOURCES="company-wiki",
             )
             with patch.dict(os.environ, env, clear=True), patch(
-                "core.gbrain._adapter.urllib.request.urlopen",
+                "app.features.knowledge.gbrain.adapter.urllib.request.urlopen",
                 side_effect=fake_urlopen,
             ):
                 result = GBrainAdapter().think("项目启动会结论是什么", source_id=project_source_id)
@@ -677,7 +677,7 @@ class GBrainConfigTests(unittest.TestCase):
                 GBRAIN_THINK_ALLOWED_SOURCES="company-wiki",
             )
             with patch.dict(os.environ, env, clear=True), patch(
-                "core.gbrain._adapter.urllib.request.urlopen",
+                "app.features.knowledge.gbrain.adapter.urllib.request.urlopen",
                 side_effect=fake_urlopen,
             ):
                 result = GBrainAdapter().schema_context(source_id=source_id, orphan_limit=5)
@@ -840,7 +840,7 @@ class GBrainConfigTests(unittest.TestCase):
                 GBRAIN_AGENT_MODEL="deepseek:deepseek-chat",
             )
             with patch.dict(os.environ, env, clear=True), patch(
-                "core.gbrain._adapter.urllib.request.urlopen",
+                "app.features.knowledge.gbrain.adapter.urllib.request.urlopen",
                 side_effect=fake_urlopen,
             ):
                 result = GBrainAdapter().submit_citation_fixer(
@@ -880,7 +880,7 @@ class GBrainConfigTests(unittest.TestCase):
                 GBRAIN_SERVICE_BEARER_TOKEN="service-token",
             )
             with patch.dict(os.environ, env, clear=True), patch(
-                "core.gbrain._adapter.urllib.request.urlopen",
+                "app.features.knowledge.gbrain.adapter.urllib.request.urlopen",
                 side_effect=fake_urlopen,
             ):
                 result = GBrainAdapter().get_page("reviews/citation-fixer-smoke/project-r-citation-fixer-smoke")
@@ -1031,7 +1031,7 @@ class GBrainConfigTests(unittest.TestCase):
                 GBRAIN_SERVICE_BEARER_TOKEN="service-token",
             )
             with patch.dict(os.environ, env, clear=True), patch(
-                "core.gbrain._adapter.urllib.request.urlopen",
+                "app.features.knowledge.gbrain.adapter.urllib.request.urlopen",
                 side_effect=fake_urlopen,
             ):
                 result = GBrainAdapter().sync_source()
@@ -1083,8 +1083,8 @@ class GBrainConfigTests(unittest.TestCase):
             )
             with (
                 patch.dict(os.environ, env, clear=True),
-                patch("core.gbrain._adapter.urllib.request.urlopen", return_value=FakeHttpResponse(sse)),
-                patch("core.gbrain._adapter.subprocess.run", side_effect=fake_run),
+                patch("app.features.knowledge.gbrain.adapter.urllib.request.urlopen", return_value=FakeHttpResponse(sse)),
+                patch("app.features.knowledge.gbrain.adapter.subprocess.run", side_effect=fake_run),
             ):
                 result = GBrainAdapter().sync_source()
 

@@ -13,7 +13,7 @@ from typing import Any, Callable
 import yaml
 
 from app.features.preprocessing.docx_text import preprocess_docx_text
-from core.gbrain import GBrainSettings, ensure_gbrain_environment, load_gbrain_settings, resolve_gbrain_source_paths
+from app.features.knowledge.gbrain import GBrainSettings, ensure_gbrain_environment, load_gbrain_settings, resolve_gbrain_source_paths
 from app.features.preprocessing.meeting_structured import (
     MeetingStructuredExtractionResult,
     PROMPT_VERSION as MEETING_PROMPT_VERSION,

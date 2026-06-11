@@ -20,7 +20,7 @@ from api.auth import get_current_user
 from app.shared.time.schemas import UTCDateTimeModel
 from app.shared.time.utils import serialize_datetime_utc
 from app.features.agents.events import add_agent_event, create_agent_run, finish_agent_run, serialize_agent_run
-from core.gbrain import (
+from app.features.knowledge.gbrain import (
     GBrainAdapter,
     customer_source_id_for_workspace,
     customer_source_paths_for_workspace,
@@ -4075,12 +4075,12 @@ def ingest_meeting_to_gbrain(
 
     # Determine source scope
     if workspace.workspace_kind == "project":
-        from core.gbrain import project_source_id_for_workspace, project_source_paths_for_workspace
+        from app.features.knowledge.gbrain import project_source_id_for_workspace, project_source_paths_for_workspace
         source_id = project_source_id_for_workspace(workspace)
         paths = project_source_paths_for_workspace(workspace)
         source_scope = "project"
     else:
-        from core.gbrain import customer_source_id_for_workspace, customer_source_paths_for_workspace
+        from app.features.knowledge.gbrain import customer_source_id_for_workspace, customer_source_paths_for_workspace
         source_id = customer_source_id_for_workspace(workspace)
         paths = customer_source_paths_for_workspace(workspace)
         source_scope = "customer"
