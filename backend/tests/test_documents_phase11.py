@@ -8,7 +8,7 @@ from zipfile import ZipFile
 os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.NamedTemporaryFile(delete=False).name}"
 
 import api.documents as documents_api
-from core.doc_renderer import render_docx
+from app.features.documents.renderer import render_docx
 from fastapi import HTTPException
 from fastapi.responses import FileResponse
 from models import Base, SessionLocal, engine

@@ -18,7 +18,7 @@ from app.shared.time.utils import serialize_datetime_utc
 from app.features.agents.events import add_agent_event, create_agent_run, finish_agent_run, get_agent_run_for_message, serialize_agent_run
 from app.features.notifications.service import notify_file_generated, notify_knowledge_review_pending
 from app.features.chat.intent import IntentType, classify_intent
-from core.doc_renderer import render_docx
+from app.features.documents.renderer import render_docx
 from core.knowledge_sources import KnowledgeSources
 from core.llm import LLMConfigurationError, LLMProviderError, get_llm_client
 from core import session_attachments
