@@ -42,6 +42,13 @@ from app.features.chat.skill_text import (
     missing_input_fields_text as _missing_input_fields_text,
     missing_input_instruction as _missing_input_instruction,
 )
+from app.features.chat.skill_policy import (
+    chat_text_skill_input_payload as _chat_text_skill_input_payload,
+    compose_skill_base_prompt as _compose_skill_base_prompt,
+    ensure_llm_chat_text_skill_allowed as _ensure_llm_chat_text_skill_allowed,
+    load_skill_prompt as _load_skill_prompt_base,
+    skill_outputs_chat_text as _skill_outputs_chat_text,
+)
 from app.features.chat.vision import attach_vision_images_to_latest_user_message as _attach_vision_images_to_latest_user_message
 from app.features.chat.web_search_context import (
     maybe_run_web_search as _maybe_run_web_search_base,
@@ -2205,53 +2212,8 @@ def _run_chat_text_skill_by_name(
     }
 
 
-def _skill_outputs_chat_text(skill) -> bool:
-    mode = str((skill.execution or {}).get("mode") or "")
-    if mode:
-        return mode == "llm_chat_text"
-    return any(str(output.get("type") or "") == "chat_text" for output in skill.outputs)
-
-
-def _ensure_llm_chat_text_skill_allowed(skill) -> None:
-    mode = str((skill.execution or {}).get("mode") or "")
-    if mode != "llm_chat_text":
-        return
-    allowed_tools = {
-        str(tool).strip()
-        for tool in ((skill.governance or {}).get("allowed_tools") or (skill.execution or {}).get("allowed_tools") or [])
-        if str(tool).strip()
-    }
-    if "llm.complete" not in allowed_tools:
-        raise HTTPException(status_code=500, detail="Skill 执行策略缺少 llm.complete 授权")
-
-
-def _chat_text_skill_input_payload(skill, content: str) -> dict[str, str]:
-    for item in skill.inputs:
-        if str(item.get("type") or "") == "text":
-            return {str(item.get("name") or "input"): content}
-    return {"input": content}
-
-
 def _load_skill_prompt(skill) -> str:
-    skill_file = BASE_DIR / skill.path
-    prompt_file = skill_file.parent / "prompt.md"
-    try:
-        return prompt_file.read_text(encoding="utf-8").strip()
-    except FileNotFoundError:
-        return ""
-
-
-def _compose_skill_base_prompt(base_prompt: str | None, display_name: str, skill_prompt: str) -> str:
-    parts: list[str] = []
-    if base_prompt and base_prompt.strip():
-        parts.append(base_prompt.strip())
-    parts.append(
-        f"当前启用的业务 Skill：{display_name}。"
-        "请严格按该 Skill 的目的、输出结构和风险边界处理用户请求。"
-    )
-    if skill_prompt:
-        parts.append("以下是该 Skill 的专用指令：\n\n" + skill_prompt)
-    return "\n\n".join(parts)
+    return _load_skill_prompt_base(skill, base_dir=BASE_DIR)
 
 
 def _maybe_run_web_search(
