@@ -1,6 +1,6 @@
 import unittest
 
-from core.intent import IntentType, classify_intent
+from app.features.chat.intent import IntentType, classify_intent
 
 
 class IntentTests(unittest.TestCase):

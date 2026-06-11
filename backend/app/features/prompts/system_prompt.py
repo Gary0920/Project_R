@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.intent import IntentType
+from app.features.chat.intent import IntentType
 
 
 TEXT_TRANSFORMATION_PROMPT_IDS = {

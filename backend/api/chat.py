@@ -17,7 +17,7 @@ from api.auth import get_current_user
 from app.shared.time.utils import serialize_datetime_utc
 from app.features.agents.events import add_agent_event, create_agent_run, finish_agent_run, get_agent_run_for_message, serialize_agent_run
 from app.features.notifications.service import notify_file_generated, notify_knowledge_review_pending
-from core.intent import IntentType, classify_intent
+from app.features.chat.intent import IntentType, classify_intent
 from core.doc_renderer import render_docx
 from core.knowledge_sources import KnowledgeSources
 from core.llm import LLMConfigurationError, LLMProviderError, get_llm_client
