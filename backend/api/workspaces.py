@@ -167,13 +167,9 @@ from app.features.workspaces.meetings.io import (
     write_versioned_latest_markdown as _write_versioned_latest_markdown,
     workspace_file_uploader as _workspace_file_uploader,
 )
+from app.features.workspaces.meetings.generation import generate_meeting_markdowns as _generate_meeting_markdowns
 from app.features.workspaces.meetings.markdown import (
-    MEETING_SYSTEM_PROMPT as _MEETING_SYSTEM_PROMPT,
     append_partial_transcript_generation_notice as _append_partial_transcript_generation_notice,
-    build_actions_prompt as _build_actions_prompt,
-    build_fallback_actions as _build_fallback_actions,
-    build_fallback_minutes as _build_fallback_minutes,
-    build_minutes_prompt as _build_minutes_prompt,
     build_transcript_markdown as _build_transcript_markdown,
     compose_gbrain_ready_meeting as _gbrain_ready_compose,
     escape_markdown_table_cell as _escape_pipe,
@@ -870,69 +866,21 @@ def generate_meeting_minutes_and_actions(
             )
 
     try:
-        # LLM generation
-        from app.shared.llm.client import get_llm_client
-
-        minutes_md: str = ""
-        actions_md: str = ""
-        token_input: int = 0
-        token_output: int = 0
-        model_used: str = "template-fallback"
-
-        meeting_type = _read_meeting_meta(folder_dir).get("meeting_type", "")
-
-        _minutes_prompt = _build_minutes_prompt(
-            transcript_text,
-            speaker_map_text,
-            term_corrections_text,
-            auxiliary_summaries_text,
-            meeting_type=meeting_type,
+        generation = _generate_meeting_markdowns(
+            transcript_text=transcript_text,
+            speaker_map_text=speaker_map_text,
+            term_corrections_text=term_corrections_text,
+            auxiliary_summaries_text=auxiliary_summaries_text,
+            meeting_type=_read_meeting_meta(folder_dir).get("meeting_type", ""),
         )
-        _actions_prompt = _build_actions_prompt(
-            transcript_text,
-            speaker_map_text,
-            term_corrections_text,
-            auxiliary_summaries_text,
-        )
-
-        client = get_llm_client("deepseek-flash")
-        model_used = "deepseek-flash"
-
-        # Generate minutes
-        minutes_response = client.complete(
-            [{"role": "user", "content": _minutes_prompt}],
-            system_prompt=_MEETING_SYSTEM_PROMPT,
-            temperature=0.3,
-        )
-        minutes_md = minutes_response.text.strip() if minutes_response.text else ""
-        if minutes_response.usage:
-            token_input += minutes_response.usage.get("input_tokens", 0)
-            token_output += minutes_response.usage.get("output_tokens", 0)
-
-        # Generate actions
-        actions_response = client.complete(
-            [{"role": "user", "content": _actions_prompt}],
-            system_prompt=_MEETING_SYSTEM_PROMPT,
-            temperature=0.3,
-        )
-        actions_md = actions_response.text.strip() if actions_response.text else ""
-        if actions_response.usage:
-            token_input += actions_response.usage.get("input_tokens", 0)
-            token_output += actions_response.usage.get("output_tokens", 0)
-
-    except HTTPException:
-        raise
-    except Exception as exc:
-        # If LLM fails, fall back to template-based generation
-        model_used = "template-fallback"
-        from app.shared.time.utils import serialize_datetime_utc
-        now_ts = serialize_datetime_utc(datetime.now(timezone.utc))
-        minutes_md = _build_fallback_minutes(transcript_text, now_ts, str(exc))
-        actions_md = _build_fallback_actions(now_ts)
-
     finally:
         _release_meeting_run_lock(lock_path)
 
+    minutes_md = generation.minutes_md
+    actions_md = generation.actions_md
+    model_used = generation.model_used
+    token_input = generation.token_input
+    token_output = generation.token_output
     minutes_md = _append_partial_transcript_generation_notice(minutes_md, transcription_status)
 
     generated_files = _write_generated_meeting_markdowns(
@@ -1582,9 +1530,6 @@ def retry_meeting_operation(
         if failed_reason:
             raise HTTPException(status_code=400, detail=f"转录未成功，需要先重试转录。原因：{failed_reason}")
 
-        # Delegate to generate endpoint with regenerate=True (in-process via function call)
-        from app.shared.llm.client import get_llm_client
-
         speaker_map_text = _read_file_safe(folder_dir / "02-转录文本" / "speaker-map-latest.md")
         term_corrections_text = _read_file_safe(folder_dir / "02-转录文本" / "term-corrections-latest.md")
         original_filename = _transcript_metadata_value(transcript_text, "原始文件名")
@@ -1599,32 +1544,17 @@ def retry_meeting_operation(
             (folder_dir / "04-会议纪要").mkdir(parents=True, exist_ok=True)
             (folder_dir / "05-行动项").mkdir(parents=True, exist_ok=True)
 
-            try:
-                client = get_llm_client("deepseek-flash")
-                model_used = "deepseek-flash"
-                retry_meeting_type = _read_meeting_meta(folder_dir).get("meeting_type", "")
-                minutes_response = client.complete(
-                    [{"role": "user", "content": _build_minutes_prompt(transcript_text, speaker_map_text, term_corrections_text, auxiliary_summaries_text, meeting_type=retry_meeting_type)}],
-                    system_prompt=_MEETING_SYSTEM_PROMPT,
-                    temperature=0.3,
-                )
-                minutes_md = minutes_response.text.strip() if minutes_response.text else ""
-                actions_response = client.complete(
-                    [{"role": "user", "content": _build_actions_prompt(transcript_text, speaker_map_text, term_corrections_text, auxiliary_summaries_text)}],
-                    system_prompt=_MEETING_SYSTEM_PROMPT,
-                    temperature=0.3,
-                )
-                actions_md = actions_response.text.strip() if actions_response.text else ""
-                token_cost = (
-                    (minutes_response.usage or {}).get("input_tokens", 0) + (minutes_response.usage or {}).get("output_tokens", 0)
-                    + (actions_response.usage or {}).get("input_tokens", 0) + (actions_response.usage or {}).get("output_tokens", 0)
-                )
-            except Exception as exc:
-                model_used = "template-fallback"
-                now_ts = serialize_datetime_utc(datetime.now(timezone.utc))
-                minutes_md = _build_fallback_minutes(transcript_text, now_ts, str(exc))
-                actions_md = _build_fallback_actions(now_ts)
-                token_cost = 0
+            generation = _generate_meeting_markdowns(
+                transcript_text=transcript_text,
+                speaker_map_text=speaker_map_text,
+                term_corrections_text=term_corrections_text,
+                auxiliary_summaries_text=auxiliary_summaries_text,
+                meeting_type=_read_meeting_meta(folder_dir).get("meeting_type", ""),
+            )
+            minutes_md = generation.minutes_md
+            actions_md = generation.actions_md
+            model_used = generation.model_used
+            token_cost = generation.token_cost
         finally:
             _release_meeting_run_lock(lock_path)
 
