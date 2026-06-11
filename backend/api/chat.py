@@ -15,6 +15,7 @@ from app.features.chat.access import (
     ensure_workspace_access as _ensure_workspace_access,
     get_user_session as _get_user_session,
 )
+from app.features.chat.audio_attachments import find_audio_attachments as _find_audio_attachments
 from app.features.chat import attachment_api as chat_attachment_api
 from app.features.chat import feedback_api as chat_feedback_api
 from app.features.chat.intent import IntentType, classify_intent
@@ -1967,20 +1968,6 @@ def _run_gbrain_think_response(
         "agent_run": serialize_agent_run(db, agent_run),
         "context_trace": context_trace,
     }
-
-
-_AUDIO_VIDEO_EXTS: set[str] = {
-    ".mp3", ".wav", ".m4a", ".ogg", ".flac",
-    ".mp4", ".mov", ".avi", ".wmv", ".mkv", ".webm",
-}
-
-
-def _find_audio_attachments(attachments: list[SessionAttachment]) -> list[SessionAttachment]:
-    """Filter attachments to only audio/video files."""
-    return [
-        a for a in attachments
-        if a.stored_path and Path(a.stored_path).suffix.lower() in _AUDIO_VIDEO_EXTS
-    ]
 
 
 def _run_chat_text_skill_by_name(
