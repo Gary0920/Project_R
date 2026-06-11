@@ -654,22 +654,15 @@ def save_meeting_transcript(
         raise HTTPException(status_code=400, detail="个人工作台不支持保存会议转录")
 
     root = _workspace_file_root(workspace)
-    folder_rel = _safe_relative_path(req.folder_path)
-    _ensure_not_trash_path(folder_rel)
-    folder_dir = _resolve_workspace_child(root, folder_rel)
-    if not folder_dir.exists() or not folder_dir.is_dir():
-        raise HTTPException(status_code=400, detail="会议文件夹不存在")
-
-    # Validate this is a proper meeting folder with all 5 subdirectories
-    missing = [sub for sub in MEETING_SUBDIRS if not (folder_dir / sub).is_dir()]
-    if missing:
-        raise HTTPException(status_code=400, detail="请选择会议文件夹后保存转录文本")
-
-    # Enforce parent path whitelist per workspace kind
-    expected_parent = meeting_parent_path(workspace.workspace_kind)
-    folder_posix = folder_rel.as_posix()
-    if folder_posix != expected_parent and not folder_posix.startswith(expected_parent + "/"):
-        raise HTTPException(status_code=400, detail=f"会议文件夹必须位于 {expected_parent}/ 下")
+    folder_rel, folder_dir = _validate_meeting_folder_core(
+        workspace_kind=workspace.workspace_kind,
+        root=root,
+        folder_path=req.folder_path,
+        safe_relative_path=_safe_relative_path,
+        ensure_not_trash_path=_ensure_not_trash_path,
+        resolve_workspace_child=_resolve_workspace_child,
+        missing_detail="请选择会议文件夹后保存转录文本",
+    )
 
     transcript_dir = folder_dir / "02-转录文本"
 
@@ -817,22 +810,15 @@ def generate_meeting_minutes_and_actions(
         raise HTTPException(status_code=400, detail="不支持的工作区类型")
 
     root = _workspace_file_root(workspace)
-    folder_rel = _safe_relative_path(req.folder_path)
-    _ensure_not_trash_path(folder_rel)
-    folder_dir = _resolve_workspace_child(root, folder_rel)
-    if not folder_dir.exists() or not folder_dir.is_dir():
-        raise HTTPException(status_code=400, detail="会议文件夹不存在")
-
-    # Validate meeting folder structure
-    missing = [sub for sub in MEETING_SUBDIRS if not (folder_dir / sub).is_dir()]
-    if missing:
-        raise HTTPException(status_code=400, detail="请选择会议文件夹后生成纪要")
-
-    # Enforce parent path whitelist
-    expected_parent = meeting_parent_path(workspace.workspace_kind)
-    folder_posix = folder_rel.as_posix()
-    if folder_posix != expected_parent and not folder_posix.startswith(expected_parent + "/"):
-        raise HTTPException(status_code=400, detail=f"会议文件夹必须位于 {expected_parent}/ 下")
+    folder_rel, folder_dir = _validate_meeting_folder_core(
+        workspace_kind=workspace.workspace_kind,
+        root=root,
+        folder_path=req.folder_path,
+        safe_relative_path=_safe_relative_path,
+        ensure_not_trash_path=_ensure_not_trash_path,
+        resolve_workspace_child=_resolve_workspace_child,
+        missing_detail="请选择会议文件夹后生成纪要",
+    )
 
     # Read transcript
     transcript_dir = folder_dir / "02-转录文本"
@@ -1421,19 +1407,16 @@ def retry_meeting_operation(
         raise HTTPException(status_code=400, detail="不支持的工作区类型")
 
     root = _workspace_file_root(workspace)
-    folder_rel = _safe_relative_path(req.folder_path)
-    _ensure_not_trash_path(folder_rel)
-    folder_dir = _resolve_workspace_child(root, folder_rel)
-
-    # Validate this is a meeting folder
-    missing = [sub for sub in MEETING_SUBDIRS if not (folder_dir / sub).is_dir()]
-    if missing:
-        raise HTTPException(status_code=400, detail="请选择完整的会议文件夹")
-
-    expected_parent = meeting_parent_path(workspace.workspace_kind)
-    folder_posix = folder_rel.as_posix()
-    if folder_posix != expected_parent and not folder_posix.startswith(expected_parent + "/"):
-        raise HTTPException(status_code=400, detail=f"会议文件夹必须位于 {expected_parent}/ 下")
+    folder_rel, folder_dir = _validate_meeting_folder_core(
+        workspace_kind=workspace.workspace_kind,
+        root=root,
+        folder_path=req.folder_path,
+        safe_relative_path=_safe_relative_path,
+        ensure_not_trash_path=_ensure_not_trash_path,
+        resolve_workspace_child=_resolve_workspace_child,
+        not_found_detail="请选择完整的会议文件夹",
+        missing_detail="请选择完整的会议文件夹",
+    )
 
     lock_path = _meeting_run_lock_path(root, folder_dir)
     if lock_path.exists():
