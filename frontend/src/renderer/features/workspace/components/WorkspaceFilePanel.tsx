@@ -27,6 +27,7 @@ import {
   type WorkspaceUploadProgressState,
 } from "./WorkspaceUploadProgress";
 import { WorkspaceTrashTable } from "./WorkspaceTrashTable";
+import { WorkspaceFileRow } from "./WorkspaceFileRow";
 import {
   clearWorkspaceTrash,
   applyWorkspaceEntityMergeCandidateAction,
@@ -1889,74 +1890,31 @@ export function WorkspaceFilePanel({
           />
         ) : (
           <div className="workspace-file-list" role="list">
-            {visibleItems.map((item) => {
-              const isDirectory = item.type === "directory";
-              const isTrashDirectory = isTrashWorkspaceItem(item);
-              const fileKind = isDirectory ? "directory" : getFileKind(item.name);
-              const ragStatus = getRagStatusMeta(item.rag_status);
-              const canDragItem = canModifyWorkspaceItem(item);
-              const isDropTarget = isDirectory && dropTargetPath === item.path;
-              return (
-                <div
-                  className={`workspace-file-row is-${fileKind}`}
-                  data-cut={clipboardItem?.action === "cut" && clipboardItem.item.path === item.path ? "true" : undefined}
-                  data-drop-target={isDropTarget ? "true" : undefined}
-                  data-selected={filePreview?.item.path === item.path ? "true" : undefined}
-                  draggable={canDragItem}
-                  key={item.path}
-                  onClick={() => activateFileItem(item)}
-                  onContextMenu={(event) => openFileContextMenu(event, item)}
-                  onDragEnd={handleFileDragEnd}
-                  onDragOver={isDirectory ? (event) => handleDirectoryDragOver(event, item.path) : undefined}
-                  onDragStart={(event) => handleFileDragStart(event, item)}
-                  onDrop={isDirectory ? (event) => void handleDirectoryDrop(event, item.path) : undefined}
-                  onKeyDown={(event) => handleFileItemKeyDown(event, item)}
-                  role="listitem"
-                  tabIndex={0}
-                  title={item.path}
-                >
-                  <span className="workspace-file-row-icon">{isTrashDirectory ? <TrashIcon /> : isDirectory ? <WorkspaceIcon /> : <NoteIcon />}</span>
-                  <span className="workspace-file-row-name">{item.name}</span>
-                  <span className="workspace-file-row-size">{isTrashDirectory ? "回收站" : isDirectory ? "文件夹" : formatSize(item.size)}</span>
-                  {isTrashDirectory ? (
-                    <span className="workspace-rag-badge is-muted">回收站</span>
-                  ) : isDirectory ? (
-                    <span className="workspace-rag-badge is-directory">目录</span>
-                  ) : isPersonalWorkspace ? (
-                    <span className="workspace-rag-badge is-muted" title="个人工作台文件不会自动进入知识库">暂存</span>
-                  ) : (
-                    <span className={`workspace-rag-badge is-${ragStatus.tone}`} title={ragStatus.title}>
-                      {ragStatus.label}
-                      {item.rag_status === "failed" && canShowKnowledgeIngest ? (
-                        <button
-                          className="workspace-rag-retry"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void handleRefreshKnowledge(item.path, false, item);
-                          }}
-                          title="重新处理此文件"
-                          type="button"
-                        >重试</button>
-                      ) : null}
-                      {item.rag_status === "partial" || item.rag_status === "pending_transcription" ? (
-                        <button
-                          className="workspace-rag-retry"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (item.path.startsWith("20-会议与沟通")) {
-                              // Navigate to meeting folder and show retry
-                              setCurrentPath(item.path.split("/").slice(0, -1).join("/"));
-                            }
-                          }}
-                          title="查看详情"
-                          type="button"
-                        >详情</button>
-                      ) : null}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
+            {visibleItems.map((item) => (
+              <WorkspaceFileRow
+                canDrag={canModifyWorkspaceItem(item)}
+                canShowKnowledgeIngest={canShowKnowledgeIngest}
+                cutPath={clipboardItem?.action === "cut" ? clipboardItem.item.path : undefined}
+                dropTargetPath={dropTargetPath}
+                isPersonalWorkspace={isPersonalWorkspace}
+                item={item}
+                key={item.path}
+                selectedPath={filePreview?.item.path}
+                onActivate={activateFileItem}
+                onContextMenu={openFileContextMenu}
+                onDragEnd={handleFileDragEnd}
+                onDragOverDirectory={handleDirectoryDragOver}
+                onDragStart={handleFileDragStart}
+                onDropDirectory={handleDirectoryDrop}
+                onKeyDown={handleFileItemKeyDown}
+                onRetryKnowledge={(target) => void handleRefreshKnowledge(target.path, false, target)}
+                onShowMeetingDetail={(target) => {
+                  if (target.path.startsWith("20-会议与沟通")) {
+                    setCurrentPath(target.path.split("/").slice(0, -1).join("/"));
+                  }
+                }}
+              />
+            ))}
           </div>
         )
       ) : null}
