@@ -4,7 +4,59 @@ import os
 import signal
 import subprocess
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
+
+
+def path_status(path: Path) -> dict[str, Any]:
+    return {
+        "path": str(path.resolve()),
+        "exists": path.exists(),
+        "is_dir": path.is_dir(),
+        "writable": path.exists() and os.access(path, os.W_OK),
+    }
+
+
+def ensure_directory(path: Path, errors: list[str]) -> None:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        errors.append(f"{path}: {exc}")
+
+
+def ensure_local_git_repo(path: Path, enabled: bool) -> dict[str, Any]:
+    git_dir = path / ".git"
+    result: dict[str, Any] = {
+        "enabled": enabled,
+        "initialized": git_dir.exists(),
+        "path": str(git_dir.resolve()),
+        "error": None,
+    }
+    if not enabled:
+        return result
+    if git_dir.exists():
+        return result
+    if not path.exists():
+        result["error"] = f"derived path does not exist: {path}"
+        return result
+
+    try:
+        completed = subprocess.run(
+            ["git", "init"],
+            cwd=path,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        result["error"] = str(exc)
+        return result
+
+    result["initialized"] = git_dir.exists()
+    if completed.returncode != 0:
+        result["error"] = (completed.stderr or completed.stdout or "git init failed").strip()
+    return result
 
 
 def first_number(payload: dict[str, Any], *keys: str) -> int:

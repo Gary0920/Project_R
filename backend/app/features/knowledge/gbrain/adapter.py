@@ -18,9 +18,12 @@ import urllib.request
 
 from .adapter_utils import (
     discover_gbrain_service_pids,
+    ensure_directory,
+    ensure_local_git_repo,
     first_number,
     mcp_tool_invocation_succeeded,
     oauth_token_error_is_missing_client,
+    path_status,
     pid_exists,
     should_retry_sync_with_service_restart,
     source_status_from_snapshot,
@@ -315,57 +318,6 @@ def load_gbrain_settings() -> GBrainSettings:
     )
 
 
-def _path_status(path: Path) -> dict[str, Any]:
-    return {
-        "path": str(path.resolve()),
-        "exists": path.exists(),
-        "is_dir": path.is_dir(),
-        "writable": path.exists() and os.access(path, os.W_OK),
-    }
-
-
-def _ensure_directory(path: Path, errors: list[str]) -> None:
-    try:
-        path.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        errors.append(f"{path}: {exc}")
-
-
-def _ensure_local_git_repo(path: Path, enabled: bool) -> dict[str, Any]:
-    git_dir = path / ".git"
-    result: dict[str, Any] = {
-        "enabled": enabled,
-        "initialized": git_dir.exists(),
-        "path": str(git_dir.resolve()),
-        "error": None,
-    }
-    if not enabled:
-        return result
-    if git_dir.exists():
-        return result
-    if not path.exists():
-        result["error"] = f"derived path does not exist: {path}"
-        return result
-
-    try:
-        completed = subprocess.run(
-            ["git", "init"],
-            cwd=path,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        result["error"] = str(exc)
-        return result
-
-    result["initialized"] = git_dir.exists()
-    if completed.returncode != 0:
-        result["error"] = (completed.stderr or completed.stdout or "git init failed").strip()
-    return result
-
-
 def ensure_gbrain_environment(settings: GBrainSettings | None = None) -> dict[str, Any]:
     settings = settings or load_gbrain_settings()
     source_paths = resolve_gbrain_source_paths("company", settings=settings)
@@ -378,26 +330,26 @@ def ensure_gbrain_environment(settings: GBrainSettings | None = None) -> dict[st
         source_paths.manifests,
         settings.manifests_path,
     ):
-        _ensure_directory(path, errors)
+        ensure_directory(path, errors)
 
-    git_status = _ensure_local_git_repo(source_paths.gbrain_ready, settings.local_git_enabled)
+    git_status = ensure_local_git_repo(source_paths.gbrain_ready, settings.local_git_enabled)
     if git_status.get("error"):
         errors.append(f"local git: {git_status['error']}")
 
     return {
         "ok": not errors,
         "source_id": settings.company_source_id,
-        "gbrain_home": _path_status(settings.home_path),
-        "gbrain_config_dir": _path_status(settings.home_path / ".gbrain"),
+        "gbrain_home": path_status(settings.home_path),
+        "gbrain_config_dir": path_status(settings.home_path / ".gbrain"),
         "paths": {
-            "raw": _path_status(source_paths.raw),
-            "gbrain_ready": _path_status(source_paths.gbrain_ready),
-            "runs": _path_status(source_paths.runs),
-            "manifests": _path_status(source_paths.manifests),
-            "legacy_derived": _path_status(source_paths.legacy_derived or settings.derived_path),
-            "legacy_manifests": _path_status(source_paths.legacy_manifests or settings.manifests_path),
+            "raw": path_status(source_paths.raw),
+            "gbrain_ready": path_status(source_paths.gbrain_ready),
+            "runs": path_status(source_paths.runs),
+            "manifests": path_status(source_paths.manifests),
+            "legacy_derived": path_status(source_paths.legacy_derived or settings.derived_path),
+            "legacy_manifests": path_status(source_paths.legacy_manifests or settings.manifests_path),
             # Compatibility key for older admin UI code; now points at gbrain-ready.
-            "derived": _path_status(source_paths.gbrain_ready),
+            "derived": path_status(source_paths.gbrain_ready),
             "migration_status": _gbrain_path_migration_status(source_paths.gbrain_ready, source_paths.legacy_derived),
         },
         "local_git": git_status,
@@ -577,14 +529,14 @@ def ensure_project_gbrain_environment(workspace: Any, settings: GBrainSettings |
     paths = project_source_paths_for_workspace(workspace)
     errors: list[str] = []
     for key in ("root", "derived", "runs", "manifests"):
-        _ensure_directory(paths[key], errors)
-    git_status = _ensure_local_git_repo(paths["derived"], settings.local_git_enabled)
+        ensure_directory(paths[key], errors)
+    git_status = ensure_local_git_repo(paths["derived"], settings.local_git_enabled)
     if git_status.get("error"):
         errors.append(f"local git: {git_status['error']}")
     return {
         "ok": not errors,
         "source_id": project_source_id_for_workspace(workspace),
-        "paths": {key: _path_status(path) for key, path in paths.items()},
+        "paths": {key: path_status(path) for key, path in paths.items()},
         "local_git": git_status,
         "errors": errors,
     }
@@ -595,14 +547,14 @@ def ensure_customer_gbrain_environment(workspace: Any, settings: GBrainSettings 
     paths = customer_source_paths_for_workspace(workspace)
     errors: list[str] = []
     for key in ("root", "derived", "runs", "manifests"):
-        _ensure_directory(paths[key], errors)
-    git_status = _ensure_local_git_repo(paths["derived"], settings.local_git_enabled)
+        ensure_directory(paths[key], errors)
+    git_status = ensure_local_git_repo(paths["derived"], settings.local_git_enabled)
     if git_status.get("error"):
         errors.append(f"local git: {git_status['error']}")
     return {
         "ok": not errors,
         "source_id": customer_source_id_for_workspace(workspace),
-        "paths": {key: _path_status(path) for key, path in paths.items()},
+        "paths": {key: path_status(path) for key, path in paths.items()},
         "local_git": git_status,
         "errors": errors,
     }
