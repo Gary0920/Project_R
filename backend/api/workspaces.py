@@ -9,11 +9,9 @@ import shutil
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
-from app.shared.time.utils import serialize_datetime_utc
 from app.features.agents.events import serialize_agent_run
 from app.features.knowledge.gbrain import (
     GBrainAdapter,
@@ -46,6 +44,7 @@ from app.features.workspaces.gbrain_graph import (
     workspace_gbrain_graph_scope as _workspace_gbrain_graph_scope,
     workspace_profile_cards as _workspace_profile_cards,
 )
+from app.features.workspaces import catalog as workspace_catalog
 from app.features.workspaces.knowledge_ingest_api import (
     compile_customer_workspace_sources_for_request as _compile_customer_workspace_sources_for_request_core,
     compile_project_workspace_sources_for_request as _compile_project_workspace_sources_for_request_core,
@@ -220,7 +219,7 @@ from app.features.workspaces.files.service import (
 )
 from models import SessionLocal, get_db
 from models.attachment import SessionAttachment
-from models.workspace import Workspace, WorkspaceMember, WorkspaceGroupAccess, WorkspaceFile
+from models.workspace import Workspace, WorkspaceMember, WorkspaceFile
 from models.workspace_ingest_job import WorkspaceIngestJob
 from models.user import User
 
@@ -374,60 +373,21 @@ def create_workspace(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if user.role != "admin":
-        raise HTTPException(status_code=403, detail="仅系统管理员可新建工作区")
-
-    workspace_kind = _normalize_workspace_kind(req.workspace_kind, req.brand)
-    if workspace_kind == "customer":
-        workspace = _ensure_crm_workspace(db, user, add_member=True)
-        return _workspace_response(db, workspace, user=user)
-
-    name = req.name.strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="工作区名称不能为空")
-    if len(name) > 128:
-        raise HTTPException(status_code=400, detail="工作区名称不能超过 128 个字符")
-
-    brand = _normalize_brand(req.brand)
-    slug = _slugify(name)
-    existing = db.query(Workspace).filter(Workspace.slug == slug).first()
-    if existing:
-        raise HTTPException(status_code=409, detail="已存在同名工作区，请选择已有工作区或使用不同名称")
-    target_path = _candidate_storage_path(slug, brand, workspace_kind)
-    root = WORKSPACES_ROOT.resolve()
-    if not target_path.is_relative_to(root):
-        raise HTTPException(status_code=400, detail="工作区目录不合法")
-    if workspace_kind == "project":
-        existing_folder = _find_existing_project_folder(brand, slug, name)
-        if existing_folder:
-            workspace = _register_existing_project_folder(db, user, brand, existing_folder, add_member=True)
-            if workspace:
-                return _workspace_response(db, workspace, user=user)
-            raise HTTPException(status_code=409, detail="后端已存在同名项目文件夹，请选择已有项目或更换项目名称")
-    if target_path.exists():
-        raise HTTPException(status_code=409, detail="后端已存在同名工作区文件夹，请选择已有工作区或更换名称")
-
-    workspace = Workspace(
-        name=name,
-        slug=slug,
-        description=req.description.strip(),
-        created_by=user.id,
-        brand=brand,
-        workspace_kind=workspace_kind,
-        is_default=False,
-        is_hidden=workspace_kind == "customer",
+    return workspace_catalog.create_workspace(
+        db,
+        req,
+        user,
+        normalize_workspace_kind=_normalize_workspace_kind,
+        ensure_crm_workspace=_ensure_crm_workspace,
+        workspace_response=_workspace_response,
+        normalize_brand=_normalize_brand,
+        slugify_name=_slugify,
+        candidate_storage_path=_candidate_storage_path,
+        workspaces_root=WORKSPACES_ROOT,
+        find_existing_project_folder=_find_existing_project_folder,
+        register_existing_project_folder=_register_existing_project_folder,
+        ensure_storage_path=_ensure_storage_path,
     )
-    db.add(workspace)
-    db.commit()
-    db.refresh(workspace)
-
-    workspace.storage_path = _ensure_storage_path(workspace)
-    db.commit()
-
-    db.add(WorkspaceMember(workspace_id=workspace.id, user_id=user.id, role="admin"))
-    db.commit()
-
-    return _workspace_response(db, workspace, member_count=1, user=user)
 
 
 @router.get("", response_model=list[WorkspaceResponse])
@@ -435,38 +395,17 @@ def list_workspaces(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    ensure_default_workspace(db, user)
-    _sync_project_folders(db, user)
-    _ensure_crm_workspace(db, user)
-    if user.role == "admin":
-        workspaces = (
-            db.query(Workspace)
-            .filter(or_(Workspace.workspace_kind != "user", Workspace.created_by == user.id))
-            .order_by(Workspace.is_default.desc(), Workspace.updated_at.desc())
-            .all()
-        )
-        workspaces = [w for w in workspaces if w.workspace_kind != "customer" or w.slug == CRM_WORKSPACE_SLUG]
-    else:
-        member_workspace_ids = select(WorkspaceMember.workspace_id).where(WorkspaceMember.user_id == user.id)
-        group_workspace_ids = select(WorkspaceGroupAccess.workspace_id).where(
-            WorkspaceGroupAccess.group_name == _normalize_group_name(user.work_group)
-        )
-        workspaces = (
-            db.query(Workspace)
-            .filter(
-                or_(
-                    Workspace.id.in_(member_workspace_ids),
-                    Workspace.workspace_kind == "project",
-                    Workspace.workspace_kind == "customer",
-                    Workspace.id.in_(group_workspace_ids),
-                )
-            )
-            .order_by(Workspace.is_default.desc(), Workspace.updated_at.desc())
-            .all()
-        )
-        workspaces = [w for w in workspaces if _can_open_workspace(db, user, w)]
-        workspaces = [w for w in workspaces if w.workspace_kind != "customer" or w.slug == CRM_WORKSPACE_SLUG]
-    return [_workspace_response(db, w, user=user) for w in workspaces]
+    return workspace_catalog.list_workspaces(
+        db,
+        user,
+        ensure_default_workspace=ensure_default_workspace,
+        sync_project_folders=_sync_project_folders,
+        ensure_crm_workspace=_ensure_crm_workspace,
+        normalize_group_name=_normalize_group_name,
+        can_open_workspace=_can_open_workspace,
+        workspace_response=_workspace_response,
+        crm_workspace_slug=CRM_WORKSPACE_SLUG,
+    )
 
 
 @router.get("/search")
@@ -476,77 +415,20 @@ def search_workspaces(
     db: Session = Depends(get_db),
     brand: str | None = None,
 ):
-    _sync_project_folders(db, user)
-    _ensure_crm_workspace(db, user)
-    query = q.strip()
-    raw_brand = (brand or "").strip().upper()
-    search_customer = raw_brand == CUSTOMER_BRAND
-    normalized_brand = _normalize_brand(raw_brand) if raw_brand and not search_customer else None
-    pattern = f"%{query}%" if query else "%"
-    workspace_query = (
-        db.query(Workspace)
-        .filter(
-            Workspace.workspace_kind == "customer" if search_customer else Workspace.workspace_kind.in_(("project", "customer")),
-            Workspace.is_archived == False,
-            Workspace.name.ilike(pattern) | Workspace.slug.ilike(pattern),
-        )
+    return workspace_catalog.search_workspaces(
+        db,
+        q,
+        user,
+        brand,
+        sync_project_folders=_sync_project_folders,
+        ensure_crm_workspace=_ensure_crm_workspace,
+        normalize_brand=_normalize_brand,
+        normalize_group_name=_normalize_group_name,
+        can_open_workspace=_can_open_workspace,
+        is_workspace_admin=_is_workspace_admin,
+        customer_brand=CUSTOMER_BRAND,
+        crm_workspace_slug=CRM_WORKSPACE_SLUG,
     )
-    if normalized_brand:
-        workspace_query = workspace_query.filter(Workspace.workspace_kind == "project", Workspace.brand == normalized_brand)
-    if search_customer:
-        workspace_query = workspace_query.filter(Workspace.slug == CRM_WORKSPACE_SLUG)
-    else:
-        workspace_query = workspace_query.filter(
-            or_(Workspace.workspace_kind == "project", Workspace.slug == CRM_WORKSPACE_SLUG)
-        )
-    if user.role != "admin":
-        member_workspace_ids = select(WorkspaceMember.workspace_id).where(WorkspaceMember.user_id == user.id)
-        group_workspace_ids = select(WorkspaceGroupAccess.workspace_id).where(
-            WorkspaceGroupAccess.group_name == _normalize_group_name(user.work_group)
-        )
-        workspace_query = workspace_query.filter(
-            or_(
-                (Workspace.workspace_kind == "project") & (Workspace.is_hidden == False),
-                Workspace.id.in_(member_workspace_ids),
-                Workspace.id.in_(group_workspace_ids),
-            )
-        )
-    workspaces = workspace_query.order_by(
-        Workspace.brand.asc(),
-        Workspace.updated_at.desc(),
-        Workspace.name.asc(),
-    ).limit(100).all()
-    member_ids = {
-        row.workspace_id
-        for row in db.query(WorkspaceMember.workspace_id)
-        .filter(WorkspaceMember.user_id == user.id)
-        .all()
-    }
-    manageable_ids = {w.id for w in workspaces if _is_workspace_admin(db, user, w.id)}
-    return [
-        {
-            "id": w.id,
-            "name": w.name,
-            "slug": w.slug,
-            "description": w.description,
-            "brand": w.brand,
-            "workspace_kind": w.workspace_kind,
-            "is_default": w.is_default,
-            "is_hidden": w.is_hidden,
-            "member_count": db.query(WorkspaceMember)
-            .filter(WorkspaceMember.workspace_id == w.id)
-            .count(),
-            "is_member": w.id in member_ids,
-            "can_open": _can_open_workspace(db, user, w),
-            "can_rename": not w.is_default and w.id in manageable_ids,
-            "can_delete": not w.is_default and w.id in manageable_ids,
-            "is_archived": w.is_archived,
-            "created_at": serialize_datetime_utc(w.created_at),
-            "updated_at": serialize_datetime_utc(w.updated_at),
-            "created_by": w.created_by,
-        }
-        for w in workspaces
-    ]
 
 
 @router.get("/{workspace_id}", response_model=WorkspaceDetailResponse)
@@ -555,51 +437,14 @@ def get_workspace(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-    if not workspace:
-        raise HTTPException(status_code=404, detail="项目不存在")
-
-    if not _can_open_workspace(db, user, workspace):
-        raise HTTPException(status_code=403, detail="你无权访问该隐藏项目")
-    member = _ensure_member(db, user.id, workspace_id)
-
-    members = (
-        db.query(WorkspaceMember, User)
-        .join(User, WorkspaceMember.user_id == User.id)
-        .filter(WorkspaceMember.workspace_id == workspace_id)
-        .all()
-    )
-    member_list = [
-        MemberResponse(
-            user_id=member_user.id,
-            username=member_user.username,
-            nickname=member_user.nickname,
-            role=wm.role,
-            joined_at=wm.joined_at,
-        )
-        for wm, member_user in members
-    ]
-
-    can_manage = _is_workspace_admin(db, user, workspace.id)
-    return WorkspaceDetailResponse(
-        id=workspace.id,
-        name=workspace.name,
-        slug=workspace.slug,
-        description=workspace.description,
-        created_by=workspace.created_by,
-        member_count=len(member_list),
-        brand=workspace.brand,
-        workspace_kind=workspace.workspace_kind,
-        is_default=workspace.is_default,
-        is_archived=workspace.is_archived,
-        is_hidden=workspace.is_hidden,
-        can_rename=not workspace.is_default and can_manage,
-        can_delete=not workspace.is_default and can_manage,
-        storage_path=workspace.storage_path,
-        members=member_list,
-        access_groups=_workspace_access_groups(db, workspace.id),
-        created_at=workspace.created_at,
-        updated_at=workspace.updated_at,
+    return workspace_catalog.get_workspace(
+        db,
+        workspace_id,
+        user,
+        can_open_workspace=_can_open_workspace,
+        ensure_member=_ensure_member,
+        is_workspace_admin=_is_workspace_admin,
+        workspace_access_groups=_workspace_access_groups,
     )
 
 
