@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
 
 import { WorkspaceAgentRunToast } from "./WorkspaceAgentRunToast";
+import {
+  WorkspaceConfirmationCard,
+  WorkspaceTextPromptDialog,
+  type WorkspaceConfirmation,
+  type WorkspaceTextPrompt,
+} from "./WorkspaceDialogs";
 import { WorkspaceFilePreviewSidecar } from "./WorkspaceFilePreviewSidecar";
 import {
   clearWorkspaceTrash,
@@ -120,28 +126,12 @@ export type WorkspaceFilePanelProps = {
   onCustomerIntelligenceClose?: () => void;
 };
 
-type WorkspaceConfirmation = {
-  title: string;
-  detail: string;
-  confirmLabel: string;
-  tone: "warning" | "danger";
-  onConfirm: () => Promise<void>;
-};
-
 type WorkspaceFileContextMenu = {
   item?: WorkspaceFileItemResponse;
   targetDirectory: string;
   kind: "item" | "blank";
   x: number;
   y: number;
-};
-
-type WorkspaceTextPrompt = {
-  title: string;
-  label: string;
-  initialValue: string;
-  confirmLabel: string;
-  onConfirm: (value: string) => Promise<void>;
 };
 
 type WorkspaceClipboardItem = {
@@ -1969,16 +1959,12 @@ export function WorkspaceFilePanel({
         </p>
       ) : null}
       {pendingConfirmation ? (
-        <div className={`workspace-confirm-card is-${pendingConfirmation.tone}`}>
-          <div>
-            <strong>{pendingConfirmation.title}</strong>
-            <span>{pendingConfirmation.detail}</span>
-          </div>
-          <div className="workspace-confirm-actions">
-            <button disabled={confirmationBusy} onClick={() => setPendingConfirmation(null)} type="button">取消</button>
-            <button disabled={confirmationBusy} onClick={() => void handleConfirmAction()} type="button">{pendingConfirmation.confirmLabel}</button>
-          </div>
-        </div>
+        <WorkspaceConfirmationCard
+          busy={confirmationBusy}
+          confirmation={pendingConfirmation}
+          onCancel={() => setPendingConfirmation(null)}
+          onConfirm={() => void handleConfirmAction()}
+        />
       ) : null}
       {loading ? <p className="agent-file-panel-note">正在读取目录...</p> : null}
       {!loading && !error && visibleItems.length === 0 ? (
@@ -2341,37 +2327,14 @@ export function WorkspaceFilePanel({
         </div>
       ) : null}
       {textPrompt ? (
-        <div className="workspace-text-prompt-overlay" onClick={() => !textPromptBusy && setTextPrompt(null)}>
-          <form
-            className="workspace-text-prompt"
-            onClick={(event) => event.stopPropagation()}
-            onSubmit={(event) => {
-              event.preventDefault();
-              void handleTextPromptSubmit();
-            }}
-          >
-            <header>
-              <strong>{textPrompt.title}</strong>
-              <button disabled={textPromptBusy} onClick={() => setTextPrompt(null)} type="button">×</button>
-            </header>
-            <label>
-              <span>{textPrompt.label}</span>
-              <input
-                autoFocus
-                disabled={textPromptBusy}
-                onChange={(event) => setTextPromptValue(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") setTextPrompt(null);
-                }}
-                value={textPromptValue}
-              />
-            </label>
-            <div>
-              <button disabled={textPromptBusy} onClick={() => setTextPrompt(null)} type="button">取消</button>
-              <button disabled={textPromptBusy || !textPromptValue.trim()} type="submit">{textPrompt.confirmLabel}</button>
-            </div>
-          </form>
-        </div>
+        <WorkspaceTextPromptDialog
+          busy={textPromptBusy}
+          prompt={textPrompt}
+          value={textPromptValue}
+          onCancel={() => setTextPrompt(null)}
+          onChange={setTextPromptValue}
+          onSubmit={() => void handleTextPromptSubmit()}
+        />
       ) : null}
       {meetingFolderForm.open ? (
         <div className="workspace-text-prompt-overlay" onClick={() => !meetingFolderForm.busy && setMeetingFolderForm((prev) => ({ ...prev, open: false }))}>
