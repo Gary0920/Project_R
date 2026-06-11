@@ -195,6 +195,7 @@ from app.features.workspaces.meetings.utils import (
     speaker_timeline_rows as _speaker_timeline_rows,
     write_meeting_meta as _write_meeting_meta,
 )
+from app.features.workspaces.meetings.validation import validate_meeting_folder as _validate_meeting_folder_core
 from app.features.workspaces.files.service import (
     DEFAULT_UNFILED_DIR,
     DEFAULT_PROJECT_WORKSPACE_TEMPLATE_DIRS,
@@ -1182,21 +1183,15 @@ def save_meeting_term_corrections(
 
 
 def _validate_meeting_folder(workspace: "Workspace", folder_path: str) -> None:
-    """Shared validation: check that folder_path is a valid meeting folder."""
-    from app.features.workspaces.files.service import MEETING_SUBDIRS, meeting_parent_path
     root = _workspace_file_root(workspace)
-    folder_rel = _safe_relative_path(folder_path)
-    _ensure_not_trash_path(folder_rel)
-    folder_dir = _resolve_workspace_child(root, folder_rel)
-    if not folder_dir.exists() or not folder_dir.is_dir():
-        raise HTTPException(status_code=400, detail="会议文件夹不存在")
-    missing = [sub for sub in MEETING_SUBDIRS if not (folder_dir / sub).is_dir()]
-    if missing:
-        raise HTTPException(status_code=400, detail="请选择会议文件夹")
-    expected_parent = meeting_parent_path(workspace.workspace_kind)
-    folder_posix = folder_rel.as_posix()
-    if folder_posix != expected_parent and not folder_posix.startswith(expected_parent + "/"):
-        raise HTTPException(status_code=400, detail=f"会议文件夹必须位于 {expected_parent}/ 下")
+    _validate_meeting_folder_core(
+        workspace_kind=workspace.workspace_kind,
+        root=root,
+        folder_path=folder_path,
+        safe_relative_path=_safe_relative_path,
+        ensure_not_trash_path=_ensure_not_trash_path,
+        resolve_workspace_child=_resolve_workspace_child,
+    )
 
 
 # ── Step 5: Media transcription ───────────────────────────────────────────
