@@ -24,7 +24,7 @@ from core.llm import LLMConfigurationError, LLMProviderError, get_llm_client
 from core import session_attachments
 from app.features.skills.execution import execute_ready_run, generated_file_payload
 from app.features.skills.runner import SkillRunner, run_to_dict
-from core.system_prompt import (
+from app.features.prompts.system_prompt import (
     DOCUMENT_GENERATION_PROMPT,
     FORMAT_GUIDANCE_PROMPT,
     TEXT_TRANSFORMATION_PROMPT_IDS,
