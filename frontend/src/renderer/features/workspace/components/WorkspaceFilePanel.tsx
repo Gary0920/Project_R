@@ -26,6 +26,7 @@ import {
   WorkspaceUploadProgress,
   type WorkspaceUploadProgressState,
 } from "./WorkspaceUploadProgress";
+import { WorkspaceTrashTable } from "./WorkspaceTrashTable";
 import {
   clearWorkspaceTrash,
   applyWorkspaceEntityMergeCandidateAction,
@@ -1881,20 +1882,11 @@ export function WorkspaceFilePanel({
       ) : null}
       {!loading && visibleItems.length > 0 ? (
         viewMode === "trash" ? (
-          <div className="workspace-trash-table">
-            {visibleItems.map((item) => (
-              <div className="workspace-trash-row" key={`${item.id}-${item.path}`}>
-                <span className="workspace-trash-name">{item.name}</span>
-                <span className="workspace-trash-path">{item.path}</span>
-                <span>{formatSize(item.size)}</span>
-                <span>{item.deleted_at ? parseApiDate(item.deleted_at).toLocaleString("zh-CN") : ""}</span>
-                <div>
-                  <button disabled={!item.can_restore} onClick={() => void handleRestore(item)} type="button">还原</button>
-                  <button disabled={!item.can_delete} onClick={() => void handlePermanentDelete(item)} type="button">删除</button>
-                </div>
-              </div>
-            ))}
-          </div>
+          <WorkspaceTrashTable
+            items={visibleItems}
+            onPermanentDelete={handlePermanentDelete}
+            onRestore={handleRestore}
+          />
         ) : (
           <div className="workspace-file-list" role="list">
             {visibleItems.map((item) => {
