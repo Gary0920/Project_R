@@ -108,6 +108,7 @@ from app.features.workspaces.files.signature import (
 )
 from app.features.workspaces.files import browser as workspace_file_browser
 from app.features.workspaces.files import lifecycle as workspace_file_lifecycle
+from app.features.workspaces.files import paths as workspace_file_paths
 from app.features.workspaces.files import uploads as workspace_file_uploads
 from app.features.workspaces.files.storage import (
     WorkspaceStorageConfig,
@@ -2085,38 +2086,22 @@ def delete_workspace_folder(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-    if not workspace:
-        raise HTTPException(status_code=404, detail="项目不存在")
-    _ensure_member(db, user.id, workspace_id)
-    root = _workspace_file_root(workspace)
-    rel = _safe_relative_path(path)
-    _ensure_not_trash_path(rel)
-    if _is_template_root(rel):
-        raise HTTPException(status_code=400, detail="默认模板文件夹不能删除")
-    target = _resolve_workspace_child(root, rel)
-    if not target.exists() or not target.is_dir():
-        raise HTTPException(status_code=404, detail="文件夹不存在")
-    if any(target.iterdir()):
-        raise HTTPException(status_code=400, detail="只能删除空文件夹")
-    target.rmdir()
-    rel_path = target.relative_to(root).as_posix()
-    _write_workspace_audit(
+    return workspace_file_paths.delete_workspace_folder(
         db,
-        user.id,
-        "workspace_folder_delete",
-        _audit_detail(workspace_id, rel_path, actor_id=user.id),
+        workspace_id,
+        path,
+        user,
+        ensure_member=_ensure_member,
+        workspace_file_root=_workspace_file_root,
+        safe_relative_path=_safe_relative_path,
+        ensure_not_trash_path=_ensure_not_trash_path,
+        is_template_root=_is_template_root,
+        resolve_workspace_child=_resolve_workspace_child,
+        write_workspace_audit=_write_workspace_audit,
+        audit_detail=_audit_detail,
+        write_workspace_file_agent_run=_write_workspace_file_agent_run,
+        serialize_agent_run=serialize_agent_run,
     )
-    agent_run = _write_workspace_file_agent_run(
-        db,
-        user_id=user.id,
-        workspace=workspace,
-        source_type="workspace_folder_delete",
-        title="删除项目文件夹",
-        path=rel_path,
-    )
-    db.commit()
-    return WorkspaceFileMutationResponse(ok=True, path=rel_path, agent_run=serialize_agent_run(db, agent_run))
 
 
 @router.put("/{workspace_id}/paths/rename", response_model=WorkspaceFileMutationResponse)
@@ -2126,57 +2111,25 @@ def rename_workspace_path(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-    if not workspace:
-        raise HTTPException(status_code=404, detail="项目不存在")
-    member = _ensure_member(db, user.id, workspace_id)
-    root = _workspace_file_root(workspace)
-    rel = _safe_relative_path(req.path)
-    _ensure_not_trash_path(rel)
-    if _is_template_root(rel):
-        raise HTTPException(status_code=400, detail="默认模板文件夹不能重命名")
-    source = _resolve_workspace_child(root, rel)
-    if not source.exists():
-        raise HTTPException(status_code=404, detail="文件或文件夹不存在")
-    source_is_file = source.is_file()
-    new_name = _safe_name(req.new_name)
-    target = _resolve_workspace_child(root, rel.parent / new_name)
-    if target.exists():
-        raise HTTPException(status_code=409, detail="目标位置已存在同名项目")
-
-    rel_path = source.relative_to(root).as_posix()
-    meta = (
-        db.query(WorkspaceFile)
-        .filter(WorkspaceFile.workspace_id == workspace_id, WorkspaceFile.relative_path == rel_path, WorkspaceFile.deleted_at.is_(None))
-        .first()
-    )
-    if source_is_file and not _member_can_mutate_file(member, user.id, meta, user.role):
-        raise HTTPException(status_code=403, detail="只有上传人或管理员可以重命名该文件")
-
-    shutil.move(str(source), str(target))
-    new_rel_path = target.relative_to(root).as_posix()
-    now = datetime.now(timezone.utc)
-    if source_is_file:
-        if meta:
-            meta.relative_path = new_rel_path
-            meta.original_name = target.name
-            meta.rag_status = "pending"
-            meta.updated_at = now
-    else:
-        _sync_file_descendant_paths(db, workspace_id, rel_path, new_rel_path)
-    _write_workspace_audit(db, user.id, "workspace_path_rename", _audit_detail(workspace_id, new_rel_path, meta.id if meta else None, actor_id=user.id, old_path=rel_path))
-    agent_run = _write_workspace_file_agent_run(
+    return workspace_file_paths.rename_workspace_path(
         db,
-        user_id=user.id,
-        workspace=workspace,
-        source_type="workspace_path_rename",
-        title="重命名项目路径",
-        path=new_rel_path,
-        detail=f"{rel_path} -> {new_rel_path}",
-        result={"file_id": meta.id if meta else None, "old_path": rel_path, "rag_status": meta.rag_status if meta else None},
+        workspace_id,
+        req,
+        user,
+        ensure_member=_ensure_member,
+        workspace_file_root=_workspace_file_root,
+        safe_relative_path=_safe_relative_path,
+        ensure_not_trash_path=_ensure_not_trash_path,
+        is_template_root=_is_template_root,
+        resolve_workspace_child=_resolve_workspace_child,
+        safe_name=_safe_name,
+        member_can_mutate_file=_member_can_mutate_file,
+        sync_file_descendant_paths=_sync_file_descendant_paths,
+        write_workspace_audit=_write_workspace_audit,
+        audit_detail=_audit_detail,
+        write_workspace_file_agent_run=_write_workspace_file_agent_run,
+        serialize_agent_run=serialize_agent_run,
     )
-    db.commit()
-    return WorkspaceFileMutationResponse(ok=True, path=new_rel_path, file_id=meta.id if meta else None, rag_status=meta.rag_status if meta else None, agent_run=serialize_agent_run(db, agent_run))
 
 
 @router.post("/{workspace_id}/paths/move", response_model=WorkspaceFileMutationResponse)
@@ -2186,93 +2139,25 @@ def move_workspace_path(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-    if not workspace:
-        raise HTTPException(status_code=404, detail="项目不存在")
-    member = _ensure_member(db, user.id, workspace_id)
-    root = _workspace_file_root(workspace)
-    rel = _safe_relative_path(req.path)
-    _ensure_not_trash_path(rel)
-    if _is_template_root(rel):
-        raise HTTPException(status_code=400, detail="默认模板文件夹不能移动")
-    source = _resolve_workspace_child(root, rel)
-    if not source.exists():
-        raise HTTPException(status_code=404, detail="文件或文件夹不存在")
-    source_is_file = source.is_file()
-    target_dir_rel = _safe_relative_path(req.target_directory)
-    _ensure_not_trash_path(target_dir_rel)
-    target_dir = _resolve_workspace_child(root, target_dir_rel)
-    if not target_dir.exists() or not target_dir.is_dir():
-        raise HTTPException(status_code=400, detail="目标文件夹不存在")
-    if not source_is_file and target_dir.resolve().is_relative_to(source.resolve()):
-        raise HTTPException(status_code=400, detail="不能移动到自身下级目录")
-
-    rel_path = source.relative_to(root).as_posix()
-    meta = (
-        db.query(WorkspaceFile)
-        .filter(WorkspaceFile.workspace_id == workspace_id, WorkspaceFile.relative_path == rel_path, WorkspaceFile.deleted_at.is_(None))
-        .first()
-    )
-    if source_is_file and not _member_can_mutate_file(member, user.id, meta, user.role):
-        raise HTTPException(status_code=403, detail="只有上传人或管理员可以移动该文件")
-
-    conflict_path = _resolve_conflict_path(target_dir, source.name, req.conflict_strategy)
-    if conflict_path is None:
-        agent_run = _write_workspace_file_agent_run(
-            db,
-            user_id=user.id,
-            workspace=workspace,
-            source_type="workspace_path_move",
-            title="移动项目路径",
-            path=rel_path,
-            status="cancelled",
-            detail="目标位置已存在同名路径，按策略跳过",
-            result={"file_id": meta.id if meta else None, "rag_status": "skipped"},
-        )
-        db.commit()
-        return WorkspaceFileMutationResponse(ok=False, path=rel_path, file_id=meta.id if meta else None, rag_status="skipped", agent_run=serialize_agent_run(db, agent_run))
-    target = _resolve_workspace_child(root, conflict_path.relative_to(root))
-    if target.exists() and target.is_dir() and source_is_file:
-        raise HTTPException(status_code=400, detail="不能覆盖文件夹")
-    if target.exists() and not source_is_file:
-        raise HTTPException(status_code=409, detail="目标位置已存在同名文件夹")
-    if target.exists() and req.conflict_strategy == "replace":
-        existing_meta = (
-            db.query(WorkspaceFile)
-            .filter(
-                WorkspaceFile.workspace_id == workspace_id,
-                WorkspaceFile.relative_path == target.relative_to(root).as_posix(),
-                WorkspaceFile.deleted_at.is_(None),
-            )
-            .first()
-        )
-        if existing_meta:
-            db.delete(existing_meta)
-        target.unlink()
-
-    shutil.move(str(source), str(target))
-    new_rel_path = target.relative_to(root).as_posix()
-    now = datetime.now(timezone.utc)
-    if source_is_file:
-        if meta:
-            meta.relative_path = new_rel_path
-            meta.rag_status = "pending"
-            meta.updated_at = now
-    else:
-        _sync_file_descendant_paths(db, workspace_id, rel_path, new_rel_path)
-    _write_workspace_audit(db, user.id, "workspace_path_move", _audit_detail(workspace_id, new_rel_path, meta.id if meta else None, actor_id=user.id, old_path=rel_path))
-    agent_run = _write_workspace_file_agent_run(
+    return workspace_file_paths.move_workspace_path(
         db,
-        user_id=user.id,
-        workspace=workspace,
-        source_type="workspace_path_move",
-        title="移动项目路径",
-        path=new_rel_path,
-        detail=f"{rel_path} -> {new_rel_path}",
-        result={"file_id": meta.id if meta else None, "old_path": rel_path, "rag_status": meta.rag_status if meta else None},
+        workspace_id,
+        req,
+        user,
+        ensure_member=_ensure_member,
+        workspace_file_root=_workspace_file_root,
+        safe_relative_path=_safe_relative_path,
+        ensure_not_trash_path=_ensure_not_trash_path,
+        is_template_root=_is_template_root,
+        resolve_workspace_child=_resolve_workspace_child,
+        member_can_mutate_file=_member_can_mutate_file,
+        resolve_conflict_path=_resolve_conflict_path,
+        sync_file_descendant_paths=_sync_file_descendant_paths,
+        write_workspace_audit=_write_workspace_audit,
+        audit_detail=_audit_detail,
+        write_workspace_file_agent_run=_write_workspace_file_agent_run,
+        serialize_agent_run=serialize_agent_run,
     )
-    db.commit()
-    return WorkspaceFileMutationResponse(ok=True, path=new_rel_path, file_id=meta.id if meta else None, rag_status=meta.rag_status if meta else None, agent_run=serialize_agent_run(db, agent_run))
 
 
 @router.post("/{workspace_id}/paths/copy", response_model=WorkspaceFileMutationResponse)
@@ -2282,103 +2167,25 @@ def copy_workspace_path(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-    if not workspace:
-        raise HTTPException(status_code=404, detail="项目不存在")
-    _ensure_member(db, user.id, workspace_id)
-    root = _workspace_file_root(workspace)
-    rel = _safe_relative_path(req.path)
-    _ensure_not_trash_path(rel)
-    if _is_template_root(rel):
-        raise HTTPException(status_code=400, detail="默认模板文件夹不能复制")
-    source = _resolve_workspace_child(root, rel)
-    if not source.exists():
-        raise HTTPException(status_code=404, detail="文件或文件夹不存在")
-    source_is_file = source.is_file()
-    target_dir_rel = _safe_relative_path(req.target_directory)
-    _ensure_not_trash_path(target_dir_rel)
-    target_dir = _resolve_workspace_child(root, target_dir_rel)
-    if not target_dir.exists() or not target_dir.is_dir():
-        raise HTTPException(status_code=400, detail="目标文件夹不存在")
-    if not source_is_file and target_dir.resolve().is_relative_to(source.resolve()):
-        raise HTTPException(status_code=400, detail="不能复制到自身下级目录")
-
-    rel_path = source.relative_to(root).as_posix()
-    source_meta = (
-        db.query(WorkspaceFile)
-        .filter(WorkspaceFile.workspace_id == workspace_id, WorkspaceFile.relative_path == rel_path, WorkspaceFile.deleted_at.is_(None))
-        .first()
-    )
-    conflict_path = _resolve_conflict_path(target_dir, source.name, req.conflict_strategy)
-    if conflict_path is None:
-        agent_run = _write_workspace_file_agent_run(
-            db,
-            user_id=user.id,
-            workspace=workspace,
-            source_type="workspace_path_copy",
-            title="复制项目路径",
-            path=rel_path,
-            status="cancelled",
-            detail="目标位置已存在同名路径，按策略跳过",
-            result={"file_id": source_meta.id if source_meta else None, "rag_status": "skipped"},
-        )
-        db.commit()
-        return WorkspaceFileMutationResponse(ok=False, path=rel_path, file_id=source_meta.id if source_meta else None, rag_status="skipped", agent_run=serialize_agent_run(db, agent_run))
-    target = _resolve_workspace_child(root, conflict_path.relative_to(root))
-    if target.exists() and target.is_dir() and source_is_file:
-        raise HTTPException(status_code=400, detail="不能覆盖文件夹")
-    if target.exists() and not source_is_file:
-        raise HTTPException(status_code=409, detail="目标位置已存在同名文件夹")
-    if target.exists() and req.conflict_strategy == "replace":
-        existing_meta = (
-            db.query(WorkspaceFile)
-            .filter(
-                WorkspaceFile.workspace_id == workspace_id,
-                WorkspaceFile.relative_path == target.relative_to(root).as_posix(),
-                WorkspaceFile.deleted_at.is_(None),
-            )
-            .first()
-        )
-        if existing_meta:
-            db.delete(existing_meta)
-        target.unlink()
-
-    if source_is_file:
-        shutil.copy2(source, target)
-        meta = _create_copied_file_metadata(
-            db,
-            workspace_id=workspace_id,
-            source_rel_path=rel_path,
-            target_file=target,
-            root=root,
-            user_id=user.id,
-        )
-    else:
-        shutil.copytree(source, target)
-        _copy_descendant_file_metadata(
-            db,
-            workspace_id=workspace_id,
-            source_dir=source,
-            target_dir=target,
-            root=root,
-            user_id=user.id,
-        )
-        meta = None
-
-    new_rel_path = target.relative_to(root).as_posix()
-    _write_workspace_audit(db, user.id, "workspace_path_copy", _audit_detail(workspace_id, new_rel_path, meta.id if meta else None, actor_id=user.id, old_path=rel_path))
-    agent_run = _write_workspace_file_agent_run(
+    return workspace_file_paths.copy_workspace_path(
         db,
-        user_id=user.id,
-        workspace=workspace,
-        source_type="workspace_path_copy",
-        title="复制项目路径",
-        path=new_rel_path,
-        detail=f"{rel_path} -> {new_rel_path}",
-        result={"file_id": meta.id if meta else None, "old_path": rel_path, "rag_status": meta.rag_status if meta else None},
+        workspace_id,
+        req,
+        user,
+        ensure_member=_ensure_member,
+        workspace_file_root=_workspace_file_root,
+        safe_relative_path=_safe_relative_path,
+        ensure_not_trash_path=_ensure_not_trash_path,
+        is_template_root=_is_template_root,
+        resolve_workspace_child=_resolve_workspace_child,
+        resolve_conflict_path=_resolve_conflict_path,
+        create_copied_file_metadata=_create_copied_file_metadata,
+        copy_descendant_file_metadata=_copy_descendant_file_metadata,
+        write_workspace_audit=_write_workspace_audit,
+        audit_detail=_audit_detail,
+        write_workspace_file_agent_run=_write_workspace_file_agent_run,
+        serialize_agent_run=serialize_agent_run,
     )
-    db.commit()
-    return WorkspaceFileMutationResponse(ok=True, path=new_rel_path, file_id=meta.id if meta else None, rag_status=meta.rag_status if meta else None, agent_run=serialize_agent_run(db, agent_run))
 
 
 @router.post("/{workspace_id}/knowledge/ingest", response_model=WorkspaceKnowledgeRefreshResponse)
