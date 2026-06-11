@@ -31,7 +31,7 @@ from app.features.prompts.system_prompt import (
     compose_system_prompt,
     should_reduce_knowledge_context,
 )
-from core.web_search import (
+from app.shared.web_search.service import (
     WEB_SEARCH_SKILL_NAME,
     WebSearchResponse,
     format_web_search_prompt,
