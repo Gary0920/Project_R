@@ -5,7 +5,6 @@ import json
 import os
 import re
 import shutil
-import signal
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -16,6 +15,19 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request
 import urllib.request
+
+from .adapter_utils import (
+    discover_gbrain_service_pids,
+    first_number,
+    mcp_tool_invocation_succeeded,
+    oauth_token_error_is_missing_client,
+    pid_exists,
+    should_retry_sync_with_service_restart,
+    source_status_from_snapshot,
+    terminate_pid,
+    timestamp_for_ui,
+    utc_now,
+)
 
 try:
     from dotenv import load_dotenv
@@ -668,11 +680,11 @@ class GBrainAdapter:
         manifest = self.latest_ingest_manifest()
         doctor = self.doctor()
         status_snapshot = self.status_snapshot()
-        sync_source = _source_status_from_snapshot(status_snapshot, self.settings.company_source_id)
-        page_count = _first_number(sync_source, "pages", "page_count") or _first_number(
+        sync_source = source_status_from_snapshot(status_snapshot, self.settings.company_source_id)
+        page_count = first_number(sync_source, "pages", "page_count") or first_number(
             source, "page_count", "pages", "pageCount"
         )
-        chunk_count = _first_number(sync_source, "chunks_total", "chunk_count", "chunks") or _first_number(
+        chunk_count = first_number(sync_source, "chunks_total", "chunk_count", "chunks") or first_number(
             source, "chunk_count", "chunks_total", "chunks", "chunkCount"
         )
         last_sync = sync_source.get("last_sync_at") or source.get("last_sync_at") or source.get("last_sync")
@@ -706,7 +718,7 @@ class GBrainAdapter:
             "embedding_model": embedding.get("model") or "",
             "indexed_files": page_count,
             "indexed_chunks": chunk_count,
-            "last_refresh": _timestamp_for_ui(last_sync or manifest.get("finished_at")),
+            "last_refresh": timestamp_for_ui(last_sync or manifest.get("finished_at")),
         }
 
     def latest_ingest_manifest(self) -> dict[str, Any]:
@@ -1149,8 +1161,8 @@ class GBrainAdapter:
     def service_process_status(self) -> dict[str, Any]:
         record = self._read_service_record()
         pid = record.get("pid")
-        discovered_pids = _discover_gbrain_service_pids(self.settings)
-        pid_alive = _pid_exists(int(pid)) if isinstance(pid, int) else False
+        discovered_pids = discover_gbrain_service_pids(self.settings.http_port)
+        pid_alive = pid_exists(int(pid)) if isinstance(pid, int) else False
         return {
             "record_exists": bool(record),
             "pid": pid,
@@ -1224,7 +1236,7 @@ class GBrainAdapter:
         self._write_service_record(
             {
                 "pid": process.pid,
-                "started_at": _utc_now(),
+                "started_at": utc_now(),
                 "base_url": self.settings.base_url,
                 "workdir": str(self.settings.cli_workdir.resolve()),
                 "command": args,
@@ -1245,9 +1257,9 @@ class GBrainAdapter:
         record = self._read_service_record()
         pid = record.get("pid")
         pids: list[int] = []
-        if isinstance(pid, int) and _pid_exists(pid):
+        if isinstance(pid, int) and pid_exists(pid):
             pids.append(pid)
-        for discovered_pid in _discover_gbrain_service_pids(self.settings):
+        for discovered_pid in discover_gbrain_service_pids(self.settings.http_port):
             if discovered_pid not in pids:
                 pids.append(discovered_pid)
 
@@ -1260,13 +1272,13 @@ class GBrainAdapter:
         stopped: list[int] = []
         failed: list[int] = []
         for target_pid in pids:
-            terminated = _terminate_pid(target_pid)
+            terminated = terminate_pid(target_pid)
             if terminated:
                 stopped.append(target_pid)
             else:
                 failed.append(target_pid)
         time.sleep(0.8)
-        still_alive = [target_pid for target_pid in pids if _pid_exists(target_pid)]
+        still_alive = [target_pid for target_pid in pids if pid_exists(target_pid)]
         ok = not failed and not still_alive
         if ok:
             self._delete_service_record()
@@ -1322,7 +1334,7 @@ class GBrainAdapter:
             try:
                 lock = json.loads(lock_file.read_text(encoding="utf-8-sig"))
                 lock_pid = lock.get("pid")
-                lock_pid_alive = isinstance(lock_pid, int) and _pid_exists(lock_pid)
+                lock_pid_alive = isinstance(lock_pid, int) and pid_exists(lock_pid)
             except (OSError, json.JSONDecodeError):
                 lock_pid_alive = False
             if not lock_pid_alive:
@@ -1659,7 +1671,7 @@ class GBrainAdapter:
                     "source_id": source_id,
                     **existing,
                 }
-            if not _oauth_token_error_is_missing_client(token_check):
+            if not oauth_token_error_is_missing_client(token_check):
                 return {
                     "ok": False,
                     "status": token_check.get("status") or "token_check_failed",
@@ -2277,7 +2289,7 @@ class GBrainAdapter:
                 "no_embed": no_embed,
             },
         )
-        if _mcp_tool_invocation_succeeded(mcp_response):
+        if mcp_tool_invocation_succeeded(mcp_response):
             return {**mcp_response, "method": "mcp"}
         return self._sync_source_via_cli(
             source_id=source_id,
@@ -2356,7 +2368,7 @@ class GBrainAdapter:
 
         self._clear_stale_pglite_state()
         first = self._run_sync_cli(args, env)
-        if first.get("status") == "ok" or not _should_retry_sync_with_service_restart(first):
+        if first.get("status") == "ok" or not should_retry_sync_with_service_restart(first):
             return {**first, "method": "cli", "mcp_response": mcp_response}
 
         stopped = self.stop_http_service()
@@ -2786,185 +2798,3 @@ def _project_source_display_name(workspace: Any) -> str:
     if name:
         parts.append(name)
     return " ".join(parts)
-
-
-def _first_number(payload: dict[str, Any], *keys: str) -> int:
-    for key in keys:
-        value = payload.get(key)
-        if isinstance(value, bool):
-            continue
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
-            return int(value)
-        if isinstance(value, str) and value.isdigit():
-            return int(value)
-    return 0
-
-
-def _source_status_from_snapshot(status_snapshot: dict[str, Any], source_id: str) -> dict[str, Any]:
-    if status_snapshot.get("status") != "ok":
-        return {}
-    result = status_snapshot.get("result")
-    if not isinstance(result, dict):
-        return {}
-    sync = result.get("sync")
-    if not isinstance(sync, dict):
-        return {}
-    sources = sync.get("sources")
-    if not isinstance(sources, list):
-        return {}
-    for source in sources:
-        if isinstance(source, dict) and source.get("source_id") == source_id:
-            return source
-    return {}
-
-
-def _mcp_tool_invocation_succeeded(response: dict[str, Any]) -> bool:
-    if response.get("status") != "ok":
-        return False
-    result = response.get("result")
-    if isinstance(result, dict) and result.get("error"):
-        return False
-    return True
-
-
-def _oauth_token_error_is_missing_client(response: dict[str, Any]) -> bool:
-    if response.get("status") == "ok":
-        return False
-    text = f"{response.get('error') or ''} {response.get('error_description') or ''}".lower()
-    return any(marker in text for marker in ("client not found", "invalid_client", "invalid_grant"))
-
-
-def _timestamp_for_ui(value: Any) -> float | None:
-    if isinstance(value, (int, float)):
-        return float(value)
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000
-    except ValueError:
-        return None
-
-
-def _pid_exists(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    if os.name == "nt":
-        try:
-            completed = subprocess.run(
-                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return False
-        if completed.stdout:
-            return str(pid) in completed.stdout
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
-
-
-def _terminate_pid(pid: int) -> bool:
-    if os.name == "nt":
-        try:
-            completed = subprocess.run(
-                ["taskkill", "/PID", str(pid), "/T", "/F"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
-            return completed.returncode == 0
-        except (OSError, subprocess.SubprocessError):
-            return False
-    try:
-        os.kill(pid, signal.SIGTERM)
-        return True
-    except OSError:
-        return False
-
-
-def _discover_gbrain_service_pids(settings: GBrainSettings) -> list[int]:
-    port = str(settings.http_port)
-    if os.name == "nt":
-        script = (
-            "$ErrorActionPreference='SilentlyContinue'; "
-            "Get-CimInstance Win32_Process -Filter \"Name = 'bun.exe'\" | "
-            "Where-Object { "
-            "$_.CommandLine -like '*src*cli.ts*' -and "
-            "$_.CommandLine -like '*serve*' -and "
-            "$_.CommandLine -like '*--port*' -and "
-            f"$_.CommandLine -like '*{port}*' "
-            "} | Select-Object -ExpandProperty ProcessId"
-        )
-        try:
-            completed = subprocess.run(
-                ["powershell", "-NoProfile", "-Command", script],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return []
-        return _parse_pid_lines(completed.stdout)
-
-    try:
-        completed = subprocess.run(
-            ["ps", "-eo", "pid=,command="],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return []
-    pids: list[int] = []
-    for line in completed.stdout.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        parts = stripped.split(maxsplit=1)
-        if len(parts) != 2 or not parts[0].isdigit():
-            continue
-        command = parts[1]
-        if "src/cli.ts" in command and "serve" in command and "--port" in command and port in command:
-            pids.append(int(parts[0]))
-    return pids
-
-
-def _parse_pid_lines(value: str) -> list[int]:
-    pids: list[int] = []
-    for line in value.splitlines():
-        stripped = line.strip()
-        if stripped.isdigit():
-            pids.append(int(stripped))
-    return pids
-
-
-def _should_retry_sync_with_service_restart(result: dict[str, Any]) -> bool:
-    if result.get("status") == "ok":
-        return False
-    error = str(result.get("error") or "").lower()
-    return any(
-        marker in error
-        for marker in (
-            "pglite failed to initialize",
-            "cannot connect to database",
-            "database is locked",
-            "timed out waiting for pglite lock",
-            "could not acquire pglite lock",
-            "resource busy",
-        )
-    )
-
-
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
