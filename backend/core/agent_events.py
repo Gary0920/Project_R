@@ -4,7 +4,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from core.time_utils import serialize_datetime_utc
+from app.shared.time.utils import serialize_datetime_utc
 from models.agent_run import AgentEvent, AgentRun
 
 

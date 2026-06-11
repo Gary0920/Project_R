@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from api.agent_models import AgentRunResponse
 from api.auth import get_current_user
-from core.time_utils import serialize_datetime_utc
+from app.shared.time.utils import serialize_datetime_utc
 from core.agent_events import add_agent_event, create_agent_run, finish_agent_run, get_agent_run_for_message, serialize_agent_run
 from core.notification_service import notify_file_generated, notify_knowledge_review_pending
 from core.intent import IntentType, classify_intent

@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
-from api.time_models import UTCDateTimeModel
+from app.shared.time.schemas import UTCDateTimeModel
 from core.notification_service import notify_skill_blocked
 from core.skill_execution import execute_ready_run, generated_file_payload
 from core.skill_runner import SkillRunner, run_to_dict

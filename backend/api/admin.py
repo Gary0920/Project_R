@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from api.time_models import UTCDateTimeModel
+from app.shared.time.schemas import UTCDateTimeModel
 from api.auth import get_current_user, pwd_context
 from core.gbrain_citation_fixer_jobs import (
     TERMINAL_JOB_STATUSES,

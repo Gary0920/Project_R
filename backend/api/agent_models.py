@@ -3,7 +3,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_serializer
 
-from core.time_utils import serialize_datetime_utc
+from app.shared.time.utils import serialize_datetime_utc
 
 
 class AgentEventResponse(BaseModel):

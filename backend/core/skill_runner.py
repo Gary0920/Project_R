@@ -6,7 +6,7 @@ from typing import Any
 import yaml
 from sqlalchemy.orm import Session
 
-from core.time_utils import serialize_datetime_utc
+from app.shared.time.utils import serialize_datetime_utc
 from models.skill_run import SkillRun
 
 BASE_DIR = Path(__file__).resolve().parent.parent

@@ -7,7 +7,7 @@ from pydantic import BaseModel
 import yaml
 
 from api.auth import get_current_user
-from api.time_models import UTCDateTimeModel
+from app.shared.time.schemas import UTCDateTimeModel
 from models.user import User
 
 router = APIRouter(prefix="/prompts", tags=["prompts"])

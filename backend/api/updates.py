@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
-from api.time_models import UTCDateTimeModel
+from app.shared.time.schemas import UTCDateTimeModel
 from models import BASE_DIR, get_db
 from models.audit_log import AuditLog
 from models.client_update import ClientUpdateRelease

@@ -17,8 +17,8 @@ from sqlalchemy.orm import Session
 
 from api.agent_models import AgentRunResponse
 from api.auth import get_current_user
-from api.time_models import UTCDateTimeModel
-from core.time_utils import serialize_datetime_utc
+from app.shared.time.schemas import UTCDateTimeModel
+from app.shared.time.utils import serialize_datetime_utc
 from core.agent_events import add_agent_event, create_agent_run, finish_agent_run, serialize_agent_run
 from core.gbrain import (
     GBrainAdapter,
@@ -2820,7 +2820,7 @@ def generate_meeting_minutes_and_actions(
     except Exception as exc:
         # If LLM fails, fall back to template-based generation
         model_used = "template-fallback"
-        from core.time_utils import serialize_datetime_utc
+        from app.shared.time.utils import serialize_datetime_utc
         now_ts = serialize_datetime_utc(datetime.now(timezone.utc))
         minutes_md = _build_fallback_minutes(transcript_text, now_ts, str(exc))
         actions_md = _build_fallback_actions(now_ts)

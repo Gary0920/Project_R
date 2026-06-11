@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
-from core.time_utils import serialize_datetime_utc
+from app.shared.time.utils import serialize_datetime_utc
 from models import get_db
 from models.distillation import DistillationSuggestion
 from models.notification import Notification
