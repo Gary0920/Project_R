@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core.agent_events import add_agent_event, create_agent_run, finish_agent_run, serialize_agent_run
-from core.workspace_ingest_run import workspace_ingest_result_payload, workspace_ingest_summary_text
+from app.features.workspaces.ingest.run import workspace_ingest_result_payload, workspace_ingest_summary_text
 from models.agent_run import AgentRun
 
 

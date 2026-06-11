@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 import unittest
 
-from core.workspace_ingest_gbrain_sync import sync_workspace_gbrain_source
+from app.features.workspaces.ingest.gbrain_sync import sync_workspace_gbrain_source
 
 
 class FakeAdapter:

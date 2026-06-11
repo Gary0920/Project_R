@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from core.workspace_ingest_run import workspace_ingest_run_payload, workspace_ingest_status_event
+from app.features.workspaces.ingest.run import workspace_ingest_run_payload, workspace_ingest_status_event
 
 
 def workspace_ingest_request_label(request: dict) -> str:

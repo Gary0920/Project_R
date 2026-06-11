@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Callable
 
-from core.workspace_ingest_gbrain_sync import sync_workspace_gbrain_source
-from core.workspace_ingest_projection import finalize_workspace_ingest_projection
-from core.workspace_ingest_run import workspace_ingest_manifest_counts, workspace_ingest_status_event
+from app.features.workspaces.ingest.gbrain_sync import sync_workspace_gbrain_source
+from app.features.workspaces.ingest.projection import finalize_workspace_ingest_projection
+from app.features.workspaces.ingest.run import workspace_ingest_manifest_counts, workspace_ingest_status_event
 
 
 WorkspaceCompiler = Callable[[Any, str, bool], dict]

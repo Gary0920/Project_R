@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 import unittest
 
-from core.workspace_ingest_executor import execute_workspace_ingest_core
+from app.features.workspaces.ingest.executor import execute_workspace_ingest_core
 
 
 class _FakeQuery:

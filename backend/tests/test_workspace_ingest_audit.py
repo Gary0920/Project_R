@@ -1,4 +1,4 @@
-from core.workspace_ingest_audit import workspace_ingest_audit_fields
+from app.features.workspaces.ingest.audit import workspace_ingest_audit_fields
 
 
 def test_workspace_ingest_audit_fields_projects_payload_and_request_scope():

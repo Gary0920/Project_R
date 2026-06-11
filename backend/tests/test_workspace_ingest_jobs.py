@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 import unittest
 
-from core.workspace_ingest_jobs import (
+from app.features.workspaces.ingest.jobs import (
     mark_workspace_ingest_job_completed,
     mark_workspace_ingest_job_failed,
     mark_workspace_ingest_job_queued,

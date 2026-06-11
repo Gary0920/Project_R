@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 
-from core.workspace_ingest_run import (
+from app.features.workspaces.ingest.run import (
     derive_workspace_ingest_run_status,
     finalize_workspace_ingest_manifest,
     overall_workspace_ingest_rag_status,

@@ -8,7 +8,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.NamedTemporaryFile(delete=Fal
 
 import api.workspaces as workspaces_api
 from fastapi import HTTPException
-from core.workspace_ingest_projection import update_workspace_file_rag_statuses_from_manifest
+from app.features.workspaces.ingest.projection import update_workspace_file_rag_statuses_from_manifest
 from models import Base, SessionLocal, engine
 from models.audit_log import AuditLog
 from models.generated_file import GeneratedFile

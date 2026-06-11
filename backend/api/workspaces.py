@@ -44,12 +44,12 @@ from core.workspace_file_signature import (
     file_signature as _file_signature,
     record_file_signature as _record_file_signature,
 )
-from core.workspace_ingest_projection import (
+from app.features.workspaces.ingest.projection import (
     finalize_workspace_ingest_projection as _finalize_workspace_ingest_projection,
     update_workspace_file_rag_statuses_from_manifest as _update_workspace_file_rag_statuses_from_manifest,
 )
-from core.workspace_ingest_executor import execute_workspace_ingest_core
-from core.workspace_ingest_agent_runs import (
+from app.features.workspaces.ingest.executor import execute_workspace_ingest_core
+from app.features.workspaces.ingest.agent_runs import (
     add_workspace_ingest_result_event,
     add_workspace_ingest_started_event,
     create_queued_workspace_ingest_agent_run,
@@ -59,8 +59,8 @@ from core.workspace_ingest_agent_runs import (
     serialize_workspace_ingest_agent_run as _serialize_workspace_ingest_agent_run,
     write_immediate_workspace_ingest_agent_run as _write_immediate_workspace_ingest_agent_run,
 )
-from core.workspace_ingest_audit import workspace_ingest_audit_fields
-from core.workspace_ingest_jobs import (
+from app.features.workspaces.ingest.audit import workspace_ingest_audit_fields
+from app.features.workspaces.ingest.jobs import (
     mark_workspace_ingest_job_completed,
     mark_workspace_ingest_job_failed,
     mark_workspace_ingest_job_queued,
@@ -71,12 +71,12 @@ from core.workspace_ingest_jobs import (
     workspace_ingest_request_label as _workspace_ingest_request_label,
     workspace_ingest_run_id_from_job as _workspace_ingest_run_id_from_job,
 )
-from core.workspace_ingest_notifications import (
+from app.features.workspaces.ingest.notifications import (
     notify_workspace_ingest_failed,
     notify_workspace_ingest_finished as _notify_workspace_ingest_finished,
     notify_workspace_ingest_queued,
 )
-from core.workspace_ingest_run import (
+from app.features.workspaces.ingest.run import (
     derive_workspace_ingest_run_status as _derive_workspace_ingest_run_status,
     finalize_workspace_ingest_manifest as _finalize_workspace_ingest_manifest,
     overall_workspace_ingest_rag_status as _overall_project_ingest_status,
