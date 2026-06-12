@@ -1201,278 +1201,40 @@ def delete_session_attachment(
     return chat_attachment_api.delete_session_attachment(db, session_id, attachment_id, user)
 
 
-def _message_query(
-    db: Session,
-    user_id: int,
-    session_id: int,
-    include_excluded: bool = False,
-    include_inactive: bool = False,
-):
-    query = db.query(ChatMessage).filter(
-        ChatMessage.session_id == session_id,
-        ChatMessage.user_id == user_id,
-    )
-    if not include_excluded:
-        query = query.filter(ChatMessage.is_excluded == False)
-    if not include_inactive:
-        query = query.filter(ChatMessage.active_version == True)
-    return query
-
-
-def _message_pair_delete_targets(
-    db: Session,
-    user_id: int,
-    session_id: int,
-    message: ChatMessage,
-) -> list[ChatMessage]:
-    visible = (
-        _message_query(db, user_id, session_id)
-        .filter(ChatMessage.id >= message.id)
-        .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
-        .all()
-    )
-    if not visible:
-        return [message]
-    if message.role != "user":
-        return [message]
-
-    targets: list[ChatMessage] = []
-    for item in visible:
-        if item.id != message.id and item.role == "user":
-            break
-        targets.append(item)
-    return targets or [message]
-
-
-def _ensure_version_group(message: ChatMessage) -> str:
-    if not message.version_group_id:
-        message.version_group_id = str(uuid.uuid4())
-    if not message.version_index:
-        message.version_index = 1
-    return message.version_group_id
-
-
-def _next_version_index(db: Session, message: ChatMessage) -> int:
-    group_id = _ensure_version_group(message)
-    versions = (
-        db.query(ChatMessage)
-        .filter(
-            ChatMessage.session_id == message.session_id,
-            ChatMessage.user_id == message.user_id,
-            ChatMessage.version_group_id == group_id,
-        )
-        .all()
-    )
-    return max((item.version_index or 1 for item in versions), default=1) + 1
+from app.features.chat.internal import (
+    message_query as _message_query,
+    message_pair_delete_targets as _message_pair_delete_targets,
+    ensure_version_group as _ensure_version_group,
+    next_version_index as _next_version_index,
+    build_llm_messages_before as _build_llm_messages_before,
+    exclude_active_messages_after as _exclude_active_messages_after,
+    set_active_version as _set_active_version,
+    build_llm_messages as _build_llm_messages,
+    message_llm_content as _message_llm_content,
+    bind_attachments_to_message as _bind_attachments_to_message,
+    parse_knowledge_command as _parse_knowledge_command,
+    load_attachment_context as _load_attachment_context,
+    load_selected_session_attachments as _load_selected_session_attachments,
+    load_attachment_context_from_attachments as _load_attachment_context_from_attachments,
+    is_image_attachment as _is_image_attachment,
+    is_audio_video_attachment as _is_audio_video_attachment,
+    load_vision_image_inputs as _load_vision_image_inputs,
+    normalize_vision_image_media_type as _normalize_vision_image_media_type,
+    delete_session_attachments as _delete_session_attachments,
+    cleanup_inactive_session_attachments_if_due,
+    cleanup_inactive_session_attachments,
+)
+from app.features.chat.internal import (
+    message_to_response_dict as _message_to_response_dict_core,
+)
 
 
 def _message_to_response_dict(db: Session, message: ChatMessage) -> dict:
-    return _message_to_response_dict_base(db, message, feedback_root=MESSAGE_FEEDBACK_ROOT)
+    return _message_to_response_dict_core(db, message, feedback_root=MESSAGE_FEEDBACK_ROOT)
 
 
-def _build_llm_messages_before(
-    db: Session,
-    user_id: int,
-    session_id: int,
-    before_message_id: int,
-    extra_tail: list[dict[str, str]] | None = None,
-) -> list[dict[str, str]]:
-    messages = (
-        _message_query(db, user_id, session_id)
-        .filter(
-            ChatMessage.status == "success",
-            ChatMessage.role.in_(["user", "assistant"]),
-            ChatMessage.id < before_message_id,
-        )
-        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
-        .limit(HISTORY_LIMIT)
-        .all()
-    )
-    payload = []
-    for message in reversed(messages):
-        content = _message_llm_content(db, message)
-        if content:
-            payload.append({"role": message.role, "content": content})
-    if extra_tail:
-        payload.extend(extra_tail)
-    return payload
 
 
-def _exclude_active_messages_after(
-    db: Session,
-    user_id: int,
-    session_id: int,
-    message_id: int,
-) -> list[int]:
-    affected = (
-        _message_query(db, user_id, session_id)
-        .filter(ChatMessage.id > message_id)
-        .order_by(ChatMessage.id.asc())
-        .all()
-    )
-    affected_ids = [message.id for message in affected]
-    groups = {message.version_group_id for message in affected if message.version_group_id}
-    related_versions: list[ChatMessage] = []
-    if groups:
-        related_versions = (
-            db.query(ChatMessage)
-            .filter(
-                ChatMessage.session_id == session_id,
-                ChatMessage.user_id == user_id,
-                ChatMessage.version_group_id.in_(groups),
-            )
-            .all()
-        )
-    for message in [*affected, *related_versions]:
-        message.is_excluded = True
-        message.active_version = False
-    return affected_ids
-
-
-def _set_active_version(db: Session, selected: ChatMessage) -> None:
-    group_id = _ensure_version_group(selected)
-    versions = (
-        db.query(ChatMessage)
-        .filter(
-            ChatMessage.session_id == selected.session_id,
-            ChatMessage.user_id == selected.user_id,
-            ChatMessage.version_group_id == group_id,
-            ChatMessage.is_excluded == False,
-        )
-        .all()
-    )
-    for version in versions:
-        version.active_version = version.id == selected.id
-
-
-def _build_llm_messages(db: Session, user_id: int, session_id: int) -> list[dict[str, str]]:
-    messages = (
-        _message_query(db, user_id, session_id)
-        .filter(ChatMessage.status == "success", ChatMessage.role.in_(["user", "assistant"]))
-        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
-        .limit(HISTORY_LIMIT)
-        .all()
-    )
-    payload = []
-    for message in reversed(messages):
-        content = _message_llm_content(db, message)
-        if content:
-            payload.append({"role": message.role, "content": content})
-    return payload
-
-
-def _message_llm_content(db: Session, message: ChatMessage) -> str:
-    if message.content:
-        return message.content
-    if message.role != "user":
-        return ""
-    return _attachment_only_prompt(_message_attachments(db, message))
-
-
-def _bind_attachments_to_message(
-    db: Session,
-    attachments: list[SessionAttachment],
-    message: ChatMessage,
-) -> None:
-    if not attachments:
-        return
-    for attachment in attachments:
-        attachment.message_id = message.id
-    db.commit()
-    for attachment in attachments:
-        db.refresh(attachment)
-
-
-def _parse_knowledge_command(content: str) -> tuple[bool, str]:
-    stripped = content.strip()
-    if stripped == KNOWLEDGE_COMMAND_PREFIX:
-        return True, stripped
-    if stripped.startswith(f"{KNOWLEDGE_COMMAND_PREFIX} "):
-        query = stripped[len(KNOWLEDGE_COMMAND_PREFIX) :].strip()
-        return True, query or stripped
-    return False, stripped
-
-
-def _load_attachment_context(
-    db: Session,
-    user_id: int,
-    session_id: int,
-    attachment_ids: list[str],
-) -> str:
-    return chat_attachment_api.load_attachment_context(
-        db,
-        user_id,
-        session_id,
-        attachment_ids,
-        supports_vision=False,
-        max_chars=MAX_ATTACHMENT_CONTEXT_CHARS,
-        logger=logger,
-    )
-
-
-def _load_selected_session_attachments(
-    db: Session,
-    user_id: int,
-    session_id: int,
-    attachment_ids: list[str],
-) -> list[SessionAttachment]:
-    return chat_attachment_api.load_selected_session_attachments(db, user_id, session_id, attachment_ids)
-
-
-def _load_attachment_context_from_attachments(
-    attachments: list[SessionAttachment],
-    *,
-    supports_vision: bool,
-) -> str:
-    return chat_attachment_api.load_attachment_context_from_attachments(
-        attachments,
-        supports_vision=supports_vision,
-        max_chars=MAX_ATTACHMENT_CONTEXT_CHARS,
-        logger=logger,
-    )
-
-
-def _is_image_attachment(attachment: SessionAttachment) -> bool:
-    return chat_attachment_api.is_image_attachment(attachment)
-
-
-def _is_audio_video_attachment(attachment: SessionAttachment) -> bool:
-    return chat_attachment_api.is_audio_video_attachment(attachment)
-
-
-def _load_vision_image_inputs(attachments: list[SessionAttachment]) -> list[dict[str, str]]:
-    return chat_attachment_api.load_vision_image_inputs(
-        attachments,
-        allowed_mime_types=VISION_IMAGE_MIME_TYPES,
-    )
-
-
-def _normalize_vision_image_media_type(attachment: SessionAttachment) -> str:
-    return chat_attachment_api.normalize_vision_image_media_type(
-        attachment,
-        allowed_mime_types=VISION_IMAGE_MIME_TYPES,
-    )
-
-
-def _delete_session_attachments(db: Session, user_id: int, session_id: int) -> None:
-    chat_attachment_api.delete_session_attachments(db, user_id, session_id)
-
-
-def cleanup_inactive_session_attachments_if_due(db: Session) -> int:
-    return chat_attachment_api.cleanup_inactive_session_attachments_if_due(
-        db,
-        cleanup_interval=SESSION_ATTACHMENT_CLEANUP_INTERVAL,
-        retention_days=SESSION_ATTACHMENT_RETENTION_DAYS,
-        logger=logger,
-    )
-
-
-def cleanup_inactive_session_attachments(db: Session | None = None) -> int:
-    return chat_attachment_api.cleanup_inactive_session_attachments(
-        db,
-        retention_days=SESSION_ATTACHMENT_RETENTION_DAYS,
-        logger=logger,
-    )
 
 
 def _create_generated_docx(
@@ -1512,142 +1274,30 @@ def _write_document_generation_agent_run(
     )
 
 
-def _write_skill_agent_run(
-    db: Session,
-    *,
-    user_id: int,
-    session: ChatSession,
-    message_id: int,
-    skill_response: dict,
-):
-    return _write_skill_agent_run_base(
-        db,
-        user_id=user_id,
-        session=session,
-        message_id=message_id,
-        skill_response=skill_response,
-        safe_event_detail=_safe_event_detail,
-        missing_input_instruction=_missing_input_instruction,
-        agent_status_for_skill_status=_agent_status_for_skill_status,
-    )
-
-
-def _write_gbrain_think_agent_run(
-    db: Session,
-    *,
-    user_id: int,
-    session: ChatSession,
-    message_id: int,
-    query: str,
-    think_result: dict,
-    response_sources: list[dict],
-):
-    return _write_gbrain_think_agent_run_base(
-        db,
-        user_id=user_id,
-        session=session,
-        message_id=message_id,
-        query=query,
-        think_result=think_result,
-        response_sources=response_sources,
-        safe_event_detail=_safe_event_detail,
-    )
-
-
-def _agent_status_for_skill_status(status: str) -> str:
-    if status in {"completed", "failed"}:
-        return status
-    if status == "collecting_inputs":
-        return "waiting"
-    return "running"
-
-
-def _safe_event_detail(value: object, limit: int = 240) -> str:
-    text = str(value or "").strip()
-    return text[:limit]
+from app.features.chat.internal import (
+    write_skill_agent_run as _write_skill_agent_run,
+    write_gbrain_think_agent_run as _write_gbrain_think_agent_run,
+    agent_status_for_skill_status as _agent_status_for_skill_status,
+    safe_event_detail as _safe_event_detail,
+)
+from app.features.chat.skill_dispatch import (
+    start_skill_run_from_chat as _start_skill_run_from_chat_core,
+    start_skill_run_by_name as _start_skill_run_by_name_core,
+    continue_active_skill_run as _continue_active_skill_run_core,
+    write_skill_assistant_response as _write_skill_assistant_response_core,
+)
 
 
 def _start_skill_run_from_chat(db: Session, user_id: int, session_id: int, content: str) -> dict | None:
-    runner = SkillRunner.get()
-    match = runner.match_skill(content)
-    if not match:
-        return None
-    return _start_skill_run_by_name(db, user_id, session_id, match["skill"]["name"])
+    return _start_skill_run_from_chat_core(db, user_id, session_id, content)
 
 
 def _start_skill_run_by_name(db: Session, user_id: int, session_id: int, skill_name: str) -> dict | None:
-    runner = SkillRunner.get()
-    skill = runner.get_skill(skill_name)
-    if not skill:
-        return None
-    run = runner.start_run(db, skill.name, user_id=user_id, session_id=session_id)
-    missing = run_to_dict(run, skill)["missing_inputs"]
-    if missing:
-        instruction = _missing_input_instruction(skill.name, missing)
-        fields = _missing_input_fields_text(missing)
-        reply = (
-            f"已识别到业务 Skill：{skill.display_name}，但还不能开始执行。\n\n"
-            f"请补充以下信息：\n{fields}\n\n"
-            f"下一步操作：\n```text\n{instruction}\n```"
-        )
-    else:
-        reply = f"已识别到业务 Skill：{skill.display_name}，信息已齐全，可以继续执行。"
-    return {
-        "reply": reply,
-        "skill_run": run_to_dict(run, skill),
-        "generated_file": generated_file_payload(db, run.generated_file_id),
-    }
+    return _start_skill_run_by_name_core(db, user_id, session_id, skill_name)
 
 
 def _continue_active_skill_run(db: Session, user_id: int, session_id: int, content: str) -> dict | None:
-    run = (
-        db.query(SkillRun)
-        .filter(
-            SkillRun.user_id == user_id,
-            SkillRun.session_id == session_id,
-            SkillRun.status == "collecting_inputs",
-        )
-        .order_by(SkillRun.id.desc())
-        .first()
-    )
-    if not run:
-        return None
-    runner = SkillRunner.get()
-    skill = runner.get_skill(run.skill_name)
-    if not skill:
-        return None
-    current = run_to_dict(run, skill)
-    extracted = _extract_skill_inputs(content, current["missing_inputs"])
-    if not extracted:
-        fields = _missing_input_fields_text(current["missing_inputs"])
-        instruction = _missing_input_instruction(run.skill_name, current["missing_inputs"])
-        return {
-            "reply": (
-                f"我还没有识别到可写入 {skill.display_name} 的字段。\n\n"
-                f"请按下面字段补充：\n{fields}\n\n"
-                f"下一步操作：\n```text\n{instruction}\n```"
-            ),
-            "skill_run": current,
-            "generated_file": generated_file_payload(db, run.generated_file_id),
-        }
-
-    run = runner.submit_input(db, run, extracted)
-    run = execute_ready_run(db, run)
-    payload = run_to_dict(run, skill)
-    if run.status == "completed":
-        reply = f"{skill.display_name} 已生成完成，可以下载结果文件。"
-    else:
-        fields = _missing_input_fields_text(payload["missing_inputs"])
-        instruction = _missing_input_instruction(run.skill_name, payload["missing_inputs"])
-        reply = (
-            f"已记录补充信息，还需要：\n{fields}\n\n"
-            f"下一步操作：\n```text\n{instruction}\n```"
-        )
-    return {
-        "reply": reply,
-        "skill_run": payload,
-        "generated_file": generated_file_payload(db, run.generated_file_id),
-    }
+    return _continue_active_skill_run_core(db, user_id, session_id, content)
 
 
 def _write_skill_assistant_response(
@@ -1659,59 +1309,18 @@ def _write_skill_assistant_response(
     skill_response: dict,
     context_trace: dict | None = None,
 ) -> dict:
-    context_trace = context_trace or {}
-    assistant_message = ChatMessage(
-        session_id=session.id,
-        user_id=user_id,
-        role="assistant",
-        content=skill_response["reply"],
-        provider="project_r",
-        model="skill_runner",
-        token_input=0,
-        token_output=0,
-        token_total=0,
-        status="success",
-        rag_used=False,
-        sources_json="[]",
-        context_json=json.dumps(context_trace, ensure_ascii=False),
-        version_group_id=str(uuid.uuid4()),
+    return _write_skill_assistant_response_core(
+        db, user_id, session, user_message_id, content, skill_response,
+        context_trace=context_trace,
+        write_skill_agent_run=_write_skill_agent_run,
+        write_chat_audit=_write_chat_audit,
     )
-    db.add(assistant_message)
-    session.updated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(assistant_message)
-    agent_run = _write_skill_agent_run(
-        db,
-        user_id=user_id,
-        session=session,
-        message_id=assistant_message.id,
-        skill_response=skill_response,
-    )
-    db.commit()
-    _write_chat_audit(
-        db,
-        user_id,
-        session.id,
-        content,
-        True,
-        f"skill_run={skill_response['skill_run']['skill_name']}",
-        token_cost=0,
-    )
-    return {
-        "user_message_id": user_message_id,
-        "assistant_message_id": assistant_message.id,
-        "reply": skill_response["reply"],
-        "provider": "project_r",
-        "model": "skill_runner",
-        "key_index": None,
-        "usage": {"input_tokens": 0, "output_tokens": 0},
-        "intent": IntentType.SKILL_TRIGGER.value,
-        "sources": [],
-        "generated_file": skill_response.get("generated_file"),
-        "skill_run": skill_response["skill_run"],
-        "agent_run": serialize_agent_run(db, agent_run),
-        "context_trace": context_trace,
-    }
+
+
+
+from app.features.chat.response_helpers import (
+    run_gbrain_think_response as _run_gbrain_think_response_core,
+)
 
 
 def _run_gbrain_think_response(
@@ -1722,82 +1331,18 @@ def _run_gbrain_think_response(
     content: str,
     knowledge_query: str,
 ) -> dict:
-    think_result = KNOWLEDGE_SOURCES.think(db, knowledge_query, workspace_id=session.workspace_id)
-    response_sources = _serialize_sources(think_result.get("sources", []))
-    ok = bool(think_result.get("ok"))
-    context_trace = build_context_trace(
-        session=session,
-        req=None,
-        attachments=[],
-        sources=response_sources,
-        intent=IntentType.RAG_QUERY,
-        provider="gbrain",
-        model=str(think_result.get("model") or ("think" if ok else "think-unavailable")),
-        requested_model="gbrain_think",
-        extra={
-            "knowledge_query": knowledge_query,
-            "gbrain_source_id": think_result.get("source_id"),
-            "gbrain_status": think_result.get("status"),
-            "gbrain_think": gbrain_think_trace(think_result),
-        },
+    return _run_gbrain_think_response_core(
+        db, user_id, session, user_message_id, content, knowledge_query,
+        knowledge_sources=KNOWLEDGE_SOURCES,
+        serialize_sources_fn=_serialize_sources,
+        write_gbrain_think_agent_run_fn=_write_gbrain_think_agent_run,
     )
-    assistant_message = ChatMessage(
-        session_id=session.id,
-        user_id=user_id,
-        role="assistant",
-        content=str(think_result.get("reply") or ""),
-        provider="gbrain",
-        model=str(think_result.get("model") or ("think" if ok else "think-unavailable")),
-        token_input=0,
-        token_output=0,
-        token_total=0,
-        status="success",
-        rag_used=bool(response_sources),
-        sources_json=json.dumps(response_sources, ensure_ascii=False),
-        context_json=json.dumps(context_trace, ensure_ascii=False),
-        version_group_id=str(uuid.uuid4()),
-    )
-    db.add(assistant_message)
-    session.updated_at = datetime.now(timezone.utc)
-    db.add(
-        AuditLog(
-            user_id=user_id,
-            action="chat",
-            detail=(
-                f"会话 {session.id}: {content[:50]}... | "
-                f"gbrain_think status={think_result.get('status')} source_id={think_result.get('source_id')}"
-            ),
-            token_cost=0,
-            success=ok,
-        )
-    )
-    db.commit()
-    db.refresh(assistant_message)
-    agent_run = _write_gbrain_think_agent_run(
-        db,
-        user_id=user_id,
-        session=session,
-        message_id=assistant_message.id,
-        query=knowledge_query,
-        think_result=think_result,
-        response_sources=response_sources,
-    )
-    db.commit()
-    return {
-        "user_message_id": user_message_id,
-        "assistant_message_id": assistant_message.id,
-        "reply": assistant_message.content,
-        "provider": "gbrain",
-        "model": assistant_message.model,
-        "key_index": None,
-        "usage": {"input_tokens": 0, "output_tokens": 0},
-        "intent": IntentType.RAG_QUERY.value,
-        "sources": response_sources,
-        "generated_file": None,
-        "skill_run": None,
-        "agent_run": serialize_agent_run(db, agent_run),
-        "context_trace": context_trace,
-    }
+
+
+
+from app.features.chat.response_helpers import (
+    run_chat_text_skill_by_name as _run_chat_text_skill_by_name_core,
+)
 
 
 def _run_chat_text_skill_by_name(
@@ -1810,155 +1355,34 @@ def _run_chat_text_skill_by_name(
     intent: IntentType,
     skill_name: str,
 ) -> dict | None:
-    runner = SkillRunner.get()
-    skill = runner.get_skill(skill_name)
-    if not skill or not _skill_outputs_chat_text(skill):
-        return None
-    _ensure_llm_chat_text_skill_allowed(skill)
-
-    input_payload = _chat_text_skill_input_payload(skill, content)
-    run = runner.start_run(db, skill.name, user_id=user.id, session_id=session.id, inputs=input_payload)
-    run.status = "completed"
-    db.commit()
-    db.refresh(run)
-
-    if skill_name == "audio-transcription":
-        return _run_audio_transcription_skill_response(
-            db,
-            user,
-            session,
-            user_message_id,
-            content,
-            req,
-            run,
-            skill,
-            load_selected_attachments=_load_selected_session_attachments,
-            write_skill_response=_write_skill_assistant_response,
-        )
-
-    reduce_knowledge_context = _should_reduce_knowledge_context(req.selected_prompt_id, False)
-    knowledge_sources = _search_knowledge_sources(
-        db,
-        content,
-        intent,
-        session.workspace_id,
-        reduce_knowledge_context=reduce_knowledge_context,
+    return _run_chat_text_skill_by_name_core(
+        db, user, session, user_message_id, content, req, intent, skill_name,
+        skill_outputs_chat_text=_skill_outputs_chat_text,
+        ensure_llm_chat_text_skill_allowed=_ensure_llm_chat_text_skill_allowed,
+        chat_text_skill_input_payload=_chat_text_skill_input_payload,
+        run_audio_transcription_skill_response=_run_audio_transcription_skill_response,
+        load_selected_session_attachments=_load_selected_session_attachments,
+        write_skill_assistant_response=_write_skill_assistant_response,
+        should_reduce_knowledge_context=_should_reduce_knowledge_context,
+        search_knowledge_sources=_search_knowledge_sources,
+        maybe_run_web_search=_maybe_run_web_search,
+        serialize_sources=_serialize_sources,
+        load_attachment_context_from_attachments=_load_attachment_context_from_attachments,
+        load_skill_prompt=_load_skill_prompt,
+        compose_system_prompt=_compose_system_prompt,
+        compose_skill_base_prompt=_compose_skill_base_prompt,
+        get_llm_client=get_llm_client,
+        build_llm_messages=_build_llm_messages,
+        write_failed_assistant_message=_write_failed_assistant_message,
+        write_chat_audit=_write_chat_audit,
+        write_skill_agent_run=_write_skill_agent_run,
+        serialize_agent_run=serialize_agent_run,
+        build_context_trace=build_context_trace,
+        skill_context_extra=skill_context_extra,
+        web_search_context_extra=_web_search_context_extra,
+        LLMConfigurationError=LLMConfigurationError,
+        LLMProviderError=LLMProviderError,
     )
-    web_sources, web_search_context, web_search_trace = _maybe_run_web_search(
-        content,
-        req.web_search,
-        source_start_index=len(knowledge_sources) + 1,
-    )
-    response_sources = _serialize_sources([*knowledge_sources, *web_sources])
-    selected_attachments = _load_selected_session_attachments(db, user.id, session.id, req.files)
-    attachment_context = _load_attachment_context_from_attachments(selected_attachments, supports_vision=False)
-    skill_prompt = _load_skill_prompt(skill)
-    system_prompt = _compose_system_prompt(
-        _compose_skill_base_prompt(req.system_prompt, skill.display_name, skill_prompt),
-        knowledge_sources,
-        intent,
-        attachment_context,
-        reduce_knowledge_context,
-        web_search_context=web_search_context,
-    )
-    requested_model = req.model_profile or req.provider
-
-    try:
-        llm_response = get_llm_client(requested_model).complete(
-            _build_llm_messages(db, user.id, session.id),
-            system_prompt=system_prompt,
-            thinking=req.thinking,
-        )
-    except LLMConfigurationError as exc:
-        _write_failed_assistant_message(db, user.id, session.id, str(exc), requested_model)
-        _write_chat_audit(db, user.id, session.id, content, False, str(exc))
-        raise HTTPException(status_code=503, detail="AI 服务暂时不可用，请稍后重试") from exc
-    except LLMProviderError as exc:
-        status_code = 503 if exc.retryable else 502
-        detail = f"{exc}"
-        if exc.key_index:
-            detail = f"{detail}（key_index={exc.key_index}）"
-        _write_failed_assistant_message(db, user.id, session.id, detail, requested_model)
-        _write_chat_audit(db, user.id, session.id, content, False, detail)
-        raise HTTPException(status_code=status_code, detail="AI 服务暂时不可用，请稍后重试") from exc
-
-    usage = llm_response.usage
-    skill_payload = run_to_dict(run, skill)
-    context_trace = build_context_trace(
-        session=session,
-        req=req,
-        attachments=selected_attachments,
-        sources=response_sources,
-        intent=IntentType.SKILL_TRIGGER,
-        provider=llm_response.provider,
-        model=llm_response.model,
-        requested_model=requested_model,
-        reduce_knowledge_context=reduce_knowledge_context,
-        extra={
-            **skill_context_extra({"skill_run": skill_payload}),
-            **_web_search_context_extra(web_search_trace),
-        },
-    )
-    assistant_message = ChatMessage(
-        session_id=session.id,
-        user_id=user.id,
-        role="assistant",
-        content=llm_response.text,
-        provider=llm_response.provider,
-        model=llm_response.model,
-        token_input=usage.get("input_tokens", 0),
-        token_output=usage.get("output_tokens", 0),
-        token_total=llm_response.token_cost,
-        status="success",
-        rag_used=bool(response_sources),
-        sources_json=json.dumps(response_sources, ensure_ascii=False),
-        context_json=json.dumps(context_trace, ensure_ascii=False),
-        version_group_id=str(uuid.uuid4()),
-    )
-    db.add(assistant_message)
-    session.updated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(assistant_message)
-    agent_run = _write_skill_agent_run(
-        db,
-        user_id=user.id,
-        session=session,
-        message_id=assistant_message.id,
-        skill_response={
-            "reply": llm_response.text,
-            "skill_run": skill_payload,
-            "generated_file": None,
-        },
-    )
-    db.commit()
-
-    _write_chat_audit(
-        db,
-        user.id,
-        session.id,
-        content,
-        True,
-        f"skill_run={skill.name}, provider={llm_response.provider}, model={llm_response.model}, key_index={llm_response.key_index}",
-        token_cost=llm_response.token_cost,
-    )
-
-    return {
-        "user_message_id": user_message_id,
-        "assistant_message_id": assistant_message.id,
-        "reply": llm_response.text,
-        "provider": llm_response.provider,
-        "model": llm_response.model,
-        "key_index": llm_response.key_index,
-        "usage": usage,
-        "intent": IntentType.SKILL_TRIGGER.value,
-        "sources": response_sources,
-        "generated_file": None,
-        "skill_run": skill_payload,
-        "agent_run": serialize_agent_run(db, agent_run),
-        "context_trace": context_trace,
-    }
-
-
 def _load_skill_prompt(skill) -> str:
     return _load_skill_prompt_base(skill, base_dir=BASE_DIR)
 
@@ -2007,89 +1431,13 @@ def _search_knowledge_sources(
     )
 
 
-def _serialize_sources(rag_sources: list[dict]) -> list[dict]:
-    return [
-        {
-            "file": source.get("file", ""),
-            "source_title": source.get("source_title", ""),
-            "section_path": source.get("section_path", ""),
-            "content": str(source.get("content", ""))[:600],
-            "score": float(source.get("score", 0.0)),
-            "source_file": source.get("source_file"),
-            "derived_file": source.get("derived_file"),
-            "source_line": source.get("source_line"),
-            "source_page": source.get("source_page"),
-            "source_locator": source.get("source_locator"),
-        }
-        for source in rag_sources
-    ]
+from app.features.chat.internal import (
+    serialize_sources as _serialize_sources,
+    compose_system_prompt as _compose_system_prompt,
+    load_global_base_prompt as _load_global_base_prompt,
+    write_failed_assistant_message as _write_failed_assistant_message,
+    write_chat_audit as _write_chat_audit,
+)
 
 
-def _compose_system_prompt(
-    base_prompt: str | None,
-    rag_sources: list[dict],
-    intent: IntentType | None = None,
-    attachment_context: str = "",
-    reduce_knowledge_context: bool = False,
-    *,
-    web_search_context: str = "",
-) -> str | None:
-    return compose_system_prompt(
-        base_prompt,
-        rag_sources,
-        intent=intent,
-        attachment_context=attachment_context,
-        reduce_knowledge_context=reduce_knowledge_context,
-        global_base_prompt=_load_global_base_prompt(),
-        web_search_context=web_search_context,
-    )
 
-
-def _load_global_base_prompt() -> str:
-    try:
-        return GLOBAL_BASE_PROMPT_PATH.read_text(encoding="utf-8").strip()
-    except FileNotFoundError:
-        return ""
-
-
-def _write_failed_assistant_message(
-    db: Session,
-    user_id: int,
-    session_id: int,
-    error_message: str,
-    provider: str | None,
-) -> None:
-    db.add(
-        ChatMessage(
-            session_id=session_id,
-            user_id=user_id,
-            role="assistant",
-            content="AI 服务暂时不可用，请稍后重试。",
-            provider=provider,
-            status="failed",
-            error_message=error_message[:1000],
-            version_group_id=str(uuid.uuid4()),
-        )
-    )
-    db.commit()
-
-
-def _write_chat_audit(
-    db: Session,
-    user_id: int,
-    session_id: int,
-    content: str,
-    success: bool,
-    detail: str,
-    token_cost: int | None = None,
-) -> None:
-    db.add(
-        AuditLog(
-            user_id=user_id,
-            action="chat",
-            detail=f"会话 {session_id}: {content[:50]}... | {detail}",
-            token_cost=token_cost,
-            success=success,
-        )
-    )
-    db.commit()

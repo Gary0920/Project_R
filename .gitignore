@@ -39,3 +39,8 @@ backend/update_packages/
 backend/knowledge_base/.agents/
 backend/knowledge_base/.claude/
 backend/knowledge_base/raw/
+
+# Local AI planning artifacts
+Spec/plans/
+Spec/latest-plan.md
+Spec/latest-plan.txt

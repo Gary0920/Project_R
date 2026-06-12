@@ -64,8 +64,144 @@ router = APIRouter(prefix="/admin/knowledge", tags=["gbrain"])
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 QUERY_REGRESSION_CASES_PATH = BACKEND_DIR / "tests" / "fixtures" / "gbrain_query_regression_cases.json"
 THINK_REGRESSION_CASES_PATH = BACKEND_DIR / "tests" / "fixtures" / "gbrain_think_regression_cases.json"
-QUALITY_REPORTS_MANIFEST_NAME = "gbrain-quality-reports.json"
-QUALITY_REPORTS_LIMIT = 20
+from app.features.knowledge.quality import report_manifest as _report_manifest  # noqa: E402, F401
+
+QUALITY_REPORTS_MANIFEST_NAME = _report_manifest.QUALITY_REPORTS_MANIFEST_NAME
+QUALITY_REPORTS_LIMIT = _report_manifest.QUALITY_REPORTS_LIMIT
+
+
+# Wrappers that pass the monkeypatch-compatible load_gbrain_settings
+def load_quality_reports():
+    return _report_manifest.load_quality_reports(manifests_path=load_gbrain_settings().manifests_path)
+
+
+def save_quality_report(report: dict, *, actor: str) -> dict:
+    return _report_manifest.save_quality_report(report, actor=actor, manifests_path=load_gbrain_settings().manifests_path)
+
+
+# Backward-compat re-exports
+_quality_report_summary = _report_manifest._quality_report_summary
+_quality_report_trend_item = _report_manifest._quality_report_trend_item
+
+from app.features.knowledge.quality import admin_regression as _admin_regression  # noqa: E402, F401
+
+# Re-export pure helpers from admin_regression (no monkeypatch-sensitive imports)
+_load_regression_cases = _admin_regression._load_regression_cases
+_query_regression_health_failures = _admin_regression._query_regression_health_failures
+_matches_query_expected = _admin_regression._matches_query_expected
+_think_config_failures = _admin_regression._think_config_failures
+_validate_think_case = _admin_regression._validate_think_case
+_citation_text = _admin_regression._citation_text
+
+
+def _run_query_regression_cases() -> dict[str, Any]:
+    """Run query regression cases using module-level adapter and sources (monkeypatch-compatible)."""
+    cases = _load_regression_cases(QUERY_REGRESSION_CASES_PATH)
+    health_failures = _query_regression_health_failures(GBrainAdapter().health())
+    if health_failures:
+        return {
+            "ok": False,
+            "total": len(cases),
+            "passed": 0,
+            "failed": len(cases),
+            "preflight_failures": health_failures,
+            "cases": [],
+        }
+
+    knowledge_sources = KnowledgeSources()
+    results: list[dict[str, Any]] = []
+    for case in cases:
+        sources = knowledge_sources.search_company_sources(case["query"])
+        if not sources:
+            results.append({"id": case.get("id"), "ok": False, "reason": "no sources returned", "candidates": []})
+            continue
+        ok, reason = _matches_query_expected(case, sources[0])
+        results.append(
+            {
+                "id": case.get("id"),
+                "ok": ok,
+                "reason": reason,
+                "query": case.get("query"),
+                "top_file": sources[0].get("file"),
+                "top_title": sources[0].get("source_title"),
+                "candidates": [source.get("file") for source in sources[:3]],
+            }
+        )
+    passed = sum(1 for item in results if item.get("ok"))
+    return {
+        "ok": passed == len(cases),
+        "total": len(cases),
+        "passed": passed,
+        "failed": len(cases) - passed,
+        "preflight_failures": [],
+        "cases": results,
+    }
+
+
+def _run_think_regression_cases() -> dict[str, Any]:
+    """Run think regression cases using module-level adapter (monkeypatch-compatible)."""
+    cases = _load_regression_cases(THINK_REGRESSION_CASES_PATH)
+    adapter = GBrainAdapter()
+    preflight_failures = _query_regression_health_failures(adapter.health(), require_embedding=False) + _think_config_failures()
+    if preflight_failures:
+        return {
+            "ok": False,
+            "total": len(cases),
+            "passed": 0,
+            "failed": len(cases),
+            "preflight_failures": preflight_failures,
+            "cases": [],
+        }
+
+    results: list[dict[str, Any]] = []
+    for case in cases:
+        response = adapter.think(case["query"], source_id=case.get("source_id"))
+        failures = _validate_think_case(case, response)
+        result = response.get("result") if isinstance(response.get("result"), dict) else {}
+        results.append(
+            {
+                "id": case.get("id"),
+                "ok": not failures,
+                "reason": "; ".join(failures),
+                "query": case.get("query"),
+                "source_id": response.get("source_id"),
+                "model": result.get("modelUsed"),
+                "citations": len(result.get("citations") or []) if isinstance(result.get("citations"), list) else 0,
+                "warnings": result.get("warnings") if isinstance(result.get("warnings"), list) else [],
+            }
+        )
+    passed = sum(1 for item in results if item.get("ok"))
+    return {
+        "ok": passed == len(cases),
+        "total": len(cases),
+        "passed": passed,
+        "failed": len(cases) - passed,
+        "preflight_failures": [],
+        "cases": results,
+    }
+
+
+from app.features.knowledge.quality import admin_helpers as _admin_helpers  # noqa: E402, F401
+
+# Pure helpers (no monkeypatch-sensitive dependencies)
+_refresh_error = _admin_helpers.refresh_error
+_sync_chunks = _admin_helpers.sync_chunks
+_write_audit = _admin_helpers.write_audit
+_gbrain_tool_ok = _admin_helpers.gbrain_tool_ok
+_gbrain_job_id = _admin_helpers.gbrain_job_id
+
+
+# Wrappers that use module-level monkeypatched names
+def _create_pending_reviews_from_manifest(db: Session, user_id: int, manifest: dict[str, Any]) -> int:
+    return _admin_helpers.create_pending_reviews_from_manifest(db, user_id, manifest, settings=load_gbrain_settings())
+
+
+def _project_source_statuses(db: Session) -> list[dict[str, Any]]:
+    return _admin_helpers.project_source_statuses(db, gbrain_adapter_cls=GBrainAdapter)
+
+
+def _graph_source_derived_path(db: Session, source_id: str) -> Path | None:
+    return _admin_helpers.graph_source_derived_path(db, source_id, settings=load_gbrain_settings())
 
 
 class GBrainJobSubmitRequest(BaseModel):
@@ -871,448 +1007,3 @@ def get_quality_report(
             return report
     raise HTTPException(status_code=404, detail="质量报告不存在")
 
-
-def _create_pending_reviews_from_manifest(db: Session, user_id: int, manifest: dict[str, Any]) -> int:
-    settings = load_gbrain_settings()
-    created = 0
-    for item in manifest.get("items", []):
-        if not isinstance(item, dict):
-            continue
-        if item.get("review_status") != "pending_review":
-            continue
-        target_file = item.get("target_file")
-        if not isinstance(target_file, str) or not target_file:
-            continue
-        source = f"gbrain_pending_review:{target_file}"
-        existing = (
-            db.query(KnowledgeReview)
-            .filter(KnowledgeReview.source == source, KnowledgeReview.status == "pending")
-            .first()
-        )
-        if existing:
-            continue
-        content_path = (settings.derived_path / target_file).resolve()
-        try:
-            content_path.relative_to(settings.derived_path.resolve())
-            content = content_path.read_text(encoding="utf-8")
-        except (OSError, ValueError):
-            content = f"Pending review file: {target_file}"
-        db.add(
-            KnowledgeReview(
-                submitter_id=user_id,
-                content=content,
-                source=source,
-                status="pending",
-                created_at=datetime.now(timezone.utc),
-            )
-        )
-        created += 1
-    return created
-
-
-def load_quality_reports() -> dict[str, Any]:
-    path = _quality_reports_path()
-    reports: list[dict[str, Any]] = []
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        payload = {}
-    if isinstance(payload, dict) and isinstance(payload.get("reports"), list):
-        reports = [item for item in payload["reports"] if isinstance(item, dict)]
-    latest = reports[0] if reports else None
-    visible_reports = reports[:QUALITY_REPORTS_LIMIT]
-    return {
-        "path": str(path.resolve()),
-        "count": len(reports),
-        "latest": latest,
-        "reports": visible_reports,
-        "trend": [_quality_report_trend_item(item) for item in visible_reports],
-    }
-
-
-def save_quality_report(report: dict[str, Any], *, actor: str) -> dict[str, Any]:
-    path = _quality_reports_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    reports = load_quality_reports().get("reports")
-    current_reports = reports if isinstance(reports, list) else []
-    ran_at = str(report.get("ran_at") or datetime.now(timezone.utc).isoformat())
-    report_id = f"gbrain-quality-{ran_at.replace(':', '').replace('.', '').replace('+', 'Z')}"
-    saved = {
-        "id": report_id,
-        "actor": actor,
-        **report,
-        "summary": _quality_report_summary(report),
-    }
-    next_reports = [saved, *[item for item in current_reports if item.get("id") != report_id]][:QUALITY_REPORTS_LIMIT]
-    payload = {
-        "schema_version": 1,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-        "reports": next_reports,
-    }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return saved
-
-
-def _quality_reports_path() -> Path:
-    return load_gbrain_settings().manifests_path / QUALITY_REPORTS_MANIFEST_NAME
-
-
-def _quality_report_summary(report: dict[str, Any]) -> dict[str, Any]:
-    query = report.get("query") if isinstance(report.get("query"), dict) else {}
-    think = report.get("think") if isinstance(report.get("think"), dict) else {}
-    query_failed_cases = [
-        str(item.get("id") or item.get("query") or "unknown")
-        for item in query.get("cases", [])
-        if isinstance(item, dict) and not item.get("ok")
-    ]
-    think_failed_cases = [
-        str(item.get("id") or item.get("query") or "unknown")
-        for item in think.get("cases", [])
-        if isinstance(item, dict) and not item.get("ok")
-    ]
-    preflight_failures = []
-    for suite in (query, think):
-        failures = suite.get("preflight_failures") if isinstance(suite.get("preflight_failures"), list) else []
-        preflight_failures.extend(str(item) for item in failures if item)
-    return {
-        "query": {
-            "total": int(query.get("total") or 0),
-            "passed": int(query.get("passed") or 0),
-            "failed": int(query.get("failed") or 0),
-        },
-        "think": {
-            "total": int(think.get("total") or 0),
-            "passed": int(think.get("passed") or 0),
-            "failed": int(think.get("failed") or 0),
-            "skipped": bool(think.get("skipped")),
-        },
-        "failed_cases": [*query_failed_cases, *think_failed_cases][:20],
-        "preflight_failures": preflight_failures[:20],
-    }
-
-
-def _quality_report_trend_item(report: dict[str, Any]) -> dict[str, Any]:
-    summary = report.get("summary") if isinstance(report.get("summary"), dict) else _quality_report_summary(report)
-    query = summary.get("query") if isinstance(summary.get("query"), dict) else {}
-    think = summary.get("think") if isinstance(summary.get("think"), dict) else {}
-    failed_cases = summary.get("failed_cases") if isinstance(summary.get("failed_cases"), list) else []
-    preflight_failures = (
-        summary.get("preflight_failures") if isinstance(summary.get("preflight_failures"), list) else []
-    )
-
-    def rate(suite: dict[str, Any]) -> float | None:
-        total = int(suite.get("total") or 0)
-        if total <= 0:
-            return None
-        return round(int(suite.get("passed") or 0) / total, 4)
-
-    return {
-        "id": report.get("id"),
-        "ran_at": report.get("ran_at"),
-        "actor": report.get("actor"),
-        "ok": bool(report.get("ok")),
-        "include_think": bool(report.get("include_think")),
-        "query_pass_rate": rate(query),
-        "think_pass_rate": rate(think),
-        "query_failed": int(query.get("failed") or 0),
-        "think_failed": int(think.get("failed") or 0),
-        "failed_case_count": len(failed_cases),
-        "preflight_failure_count": len(preflight_failures),
-    }
-
-
-def _refresh_error(manifest: dict[str, Any], sync_result: dict[str, Any]) -> str:
-    failed = int((manifest.get("summary") or {}).get("failed", 0) or 0)
-    if failed:
-        return f"raw 编译有 {failed} 个失败项，请查看 manifest 中的 error 后重试。"
-    if sync_result.get("status") != "ok":
-        return f"GBrain sync 未完成：{sync_result.get('status') or 'unknown'} {sync_result.get('error') or ''}".strip()
-    return "刷新失败。"
-
-
-def _sync_chunks(sync_result: dict[str, Any]) -> int:
-    result = sync_result.get("result")
-    if isinstance(result, dict):
-        for key in ("chunksCreated", "chunks_created", "chunks"):
-            value = result.get(key)
-            if isinstance(value, int):
-                return value
-            if isinstance(value, str) and value.isdigit():
-                return int(value)
-    return 0
-
-
-def _write_audit(db: Session, user_id: int, action: str, detail: str) -> None:
-    db.add(AuditLog(user_id=user_id, action=action, detail=detail[:1000], success=True))
-
-
-def _gbrain_tool_ok(result: dict[str, Any]) -> bool:
-    return result.get("status") == "ok" and not (isinstance(result.get("result"), dict) and result["result"].get("error"))
-
-
-def _gbrain_job_id(result: dict[str, Any]) -> int | None:
-    payload = result.get("result")
-    if isinstance(payload, dict):
-        value = payload.get("id")
-        if isinstance(value, int):
-            return value
-        if isinstance(value, str) and value.isdigit():
-            return int(value)
-    return None
-
-
-def _run_query_regression_cases() -> dict[str, Any]:
-    cases = _load_regression_cases(QUERY_REGRESSION_CASES_PATH)
-    health_failures = _query_regression_health_failures(GBrainAdapter().health())
-    if health_failures:
-        return {
-            "ok": False,
-            "total": len(cases),
-            "passed": 0,
-            "failed": len(cases),
-            "preflight_failures": health_failures,
-            "cases": [],
-        }
-
-    knowledge_sources = KnowledgeSources()
-    results: list[dict[str, Any]] = []
-    for case in cases:
-        sources = knowledge_sources.search_company_sources(case["query"])
-        if not sources:
-            results.append({"id": case.get("id"), "ok": False, "reason": "no sources returned", "candidates": []})
-            continue
-        ok, reason = _matches_query_expected(case, sources[0])
-        results.append(
-            {
-                "id": case.get("id"),
-                "ok": ok,
-                "reason": reason,
-                "query": case.get("query"),
-                "top_file": sources[0].get("file"),
-                "top_title": sources[0].get("source_title"),
-                "candidates": [source.get("file") for source in sources[:3]],
-            }
-        )
-    passed = sum(1 for item in results if item.get("ok"))
-    return {
-        "ok": passed == len(cases),
-        "total": len(cases),
-        "passed": passed,
-        "failed": len(cases) - passed,
-        "preflight_failures": [],
-        "cases": results,
-    }
-
-
-def _run_think_regression_cases() -> dict[str, Any]:
-    cases = _load_regression_cases(THINK_REGRESSION_CASES_PATH)
-    adapter = GBrainAdapter()
-    preflight_failures = _query_regression_health_failures(adapter.health(), require_embedding=False) + _think_config_failures()
-    if preflight_failures:
-        return {
-            "ok": False,
-            "total": len(cases),
-            "passed": 0,
-            "failed": len(cases),
-            "preflight_failures": preflight_failures,
-            "cases": [],
-        }
-
-    results: list[dict[str, Any]] = []
-    for case in cases:
-        response = adapter.think(case["query"], source_id=case.get("source_id"))
-        failures = _validate_think_case(case, response)
-        result = response.get("result") if isinstance(response.get("result"), dict) else {}
-        results.append(
-            {
-                "id": case.get("id"),
-                "ok": not failures,
-                "reason": "; ".join(failures),
-                "query": case.get("query"),
-                "source_id": response.get("source_id"),
-                "model": result.get("modelUsed"),
-                "citations": len(result.get("citations") or []) if isinstance(result.get("citations"), list) else 0,
-                "warnings": result.get("warnings") if isinstance(result.get("warnings"), list) else [],
-            }
-        )
-    passed = sum(1 for item in results if item.get("ok"))
-    return {
-        "ok": passed == len(cases),
-        "total": len(cases),
-        "passed": passed,
-        "failed": len(cases) - passed,
-        "preflight_failures": [],
-        "cases": results,
-    }
-
-
-def _load_regression_cases(path: Path) -> list[dict[str, Any]]:
-    try:
-        cases = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise HTTPException(status_code=500, detail=f"无法读取 GBrain 回归用例：{exc}") from exc
-    if not isinstance(cases, list):
-        raise HTTPException(status_code=500, detail="GBrain 回归用例格式错误。")
-    return [case for case in cases if isinstance(case, dict)]
-
-
-def _query_regression_health_failures(health: dict[str, Any], *, require_embedding: bool = True) -> list[str]:
-    failures: list[str] = []
-    if health.get("service", {}).get("status") != "ok":
-        failures.append("GBrain HTTP service is not ok.")
-    company_source = health.get("company_source", {})
-    if not company_source.get("registered"):
-        failures.append("company-wiki source is not registered.")
-    elif not company_source.get("path_matches", True):
-        failures.append("company-wiki source path does not match Project_R derived path.")
-    if require_embedding:
-        embedding = health.get("local_config", {}).get("embedding") or {}
-        if not embedding.get("semantic_search_ready"):
-            failures.append(f"Embedding is not ready: {embedding.get('reason') or 'unknown reason'}")
-    return failures
-
-
-def _matches_query_expected(case: dict[str, Any], source: dict[str, Any]) -> tuple[bool, str]:
-    file_value = str(source.get("file") or "").lower()
-    title_value = str(source.get("source_title") or "").lower()
-    content_value = str(source.get("content") or "").lower()
-    expected_file = str(case.get("expected_top_file_contains") or "").lower()
-    expected_title = str(case.get("expected_top_title_contains") or "").lower()
-    expected_terms = [str(term).lower() for term in case.get("expected_top_content_terms", [])]
-    if expected_file and expected_file not in file_value:
-        return False, f"top file {source.get('file')!r} does not contain {case.get('expected_top_file_contains')!r}"
-    if expected_title and expected_title not in title_value:
-        return False, f"top title {source.get('source_title')!r} does not contain {case.get('expected_top_title_contains')!r}"
-    if expected_terms and not any(term in content_value for term in expected_terms):
-        return False, f"top content does not include any expected term {case.get('expected_top_content_terms')!r}"
-    return True, ""
-
-
-def _think_config_failures() -> list[str]:
-    failures: list[str] = []
-    if str(os.getenv("GBRAIN_THINK_ENABLED") or "").strip().lower() not in {"1", "true", "yes", "on"}:
-        failures.append("GBRAIN_THINK_ENABLED is not true.")
-    if str(os.getenv("GBRAIN_THINK_SOURCE_SCOPE_VERIFIED") or "").strip().lower() not in {"1", "true", "yes", "on"}:
-        failures.append("GBRAIN_THINK_SOURCE_SCOPE_VERIFIED is not true.")
-    for key in ("GBRAIN_THINK_OAUTH_CLIENT_ID", "GBRAIN_THINK_OAUTH_CLIENT_SECRET", "GBRAIN_THINK_MODEL"):
-        if not str(os.getenv(key) or "").strip():
-            failures.append(f"{key} is not configured.")
-    return failures
-
-
-def _validate_think_case(case: dict[str, Any], response: dict[str, Any]) -> list[str]:
-    failures: list[str] = []
-    if response.get("status") != "ok":
-        return [f"status={response.get('status')!r} error={response.get('error')!r}"]
-    if response.get("source_id") != case.get("source_id"):
-        failures.append(f"source_id={response.get('source_id')!r}, expected {case.get('source_id')!r}")
-    scope = response.get("source_scope") if isinstance(response.get("source_scope"), dict) else {}
-    if not scope.get("verified"):
-        failures.append("source_scope.verified is not true")
-    if not scope.get("scope_is_token_bound"):
-        failures.append("source_scope.scope_is_token_bound is not true")
-    allowed_sources = scope.get("allowed_sources") if isinstance(scope.get("allowed_sources"), list) else []
-    if case.get("source_id") not in allowed_sources:
-        failures.append(f"source {case.get('source_id')!r} is not in token allowed_sources")
-
-    result = response.get("result") if isinstance(response.get("result"), dict) else {}
-    if result.get("error"):
-        failures.append(f"result.error={result.get('error')!r}")
-    expected_model = str(case.get("expected_model_contains") or "")
-    model = str(result.get("modelUsed") or "")
-    if expected_model and expected_model.lower() not in model.lower():
-        failures.append(f"modelUsed={model!r} does not contain {expected_model!r}")
-    warnings = result.get("warnings") if isinstance(result.get("warnings"), list) else []
-    max_warnings = int(case.get("max_warnings", 0))
-    if len(warnings) > max_warnings:
-        failures.append(f"warnings={warnings!r}, expected at most {max_warnings}")
-    expected_terms = [str(term) for term in case.get("expected_answer_terms_any", []) if str(term).strip()]
-    answer = str(result.get("answer") or "")
-    if expected_terms and not any(term.lower() in answer.lower() for term in expected_terms):
-        failures.append(f"answer does not contain any expected term {expected_terms!r}")
-    citations = result.get("citations") if isinstance(result.get("citations"), list) else []
-    min_citations = int(case.get("min_citations", 1))
-    if len(citations) < min_citations:
-        failures.append(f"citations={len(citations)}, expected at least {min_citations}")
-    expected_citation = str(case.get("expected_citation_contains") or "").lower()
-    if expected_citation and not any(
-        expected_citation in _citation_text(citation).lower() for citation in citations if isinstance(citation, dict)
-    ):
-        failures.append(f"no citation contains {case.get('expected_citation_contains')!r}")
-    return failures
-
-
-def _citation_text(citation: dict[str, Any]) -> str:
-    values: list[str] = []
-    for key in ("page_slug", "slug", "page", "source", "title"):
-        value = citation.get(key)
-        if value is not None:
-            values.append(str(value))
-    return " ".join(values)
-
-
-def _project_source_statuses(db: Session) -> list[dict[str, Any]]:
-    projects = (
-        db.query(Workspace)
-        .filter(Workspace.workspace_kind == "project", Workspace.is_archived == False)
-        .order_by(Workspace.updated_at.desc(), Workspace.id.desc())
-        .limit(100)
-        .all()
-    )
-    if not projects:
-        return []
-    adapter = GBrainAdapter()
-    statuses: list[dict[str, Any]] = []
-    for workspace in projects:
-        source_status = adapter.project_source_status(workspace)
-        expected = source_status.get("expected") or {}
-        statuses.append(
-            {
-                "workspace_id": workspace.id,
-                "workspace_name": workspace.name,
-                "brand": workspace.brand,
-                "slug": workspace.slug,
-                "source_id": expected.get("source_id"),
-                "source_path": expected.get("path"),
-                "status": source_status.get("status"),
-                "registered": bool(source_status.get("registered")),
-                "path_matches": bool(source_status.get("path_matches")),
-                "source": source_status.get("source") or {},
-                "error": source_status.get("error"),
-            }
-        )
-    return statuses
-
-
-def _graph_source_derived_path(db: Session, source_id: str) -> Path | None:
-    source_id = str(source_id or "").strip()
-    settings = load_gbrain_settings()
-    if source_id == settings.company_source_id:
-        return settings.derived_path
-    if source_id == CUSTOMER_INTELLIGENCE_SOURCE_ID:
-        return CUSTOMER_REFERENCE_DERIVED
-    if source_id.startswith("project-"):
-        projects = (
-            db.query(Workspace)
-            .filter(Workspace.workspace_kind == "project", Workspace.is_archived == False)
-            .all()
-        )
-        for workspace in projects:
-            try:
-                if project_source_id_for_workspace(workspace) == source_id:
-                    return project_source_paths_for_workspace(workspace)["derived"]
-            except ValueError:
-                continue
-    if source_id.startswith("customer-"):
-        customers = (
-            db.query(Workspace)
-            .filter(Workspace.workspace_kind == "customer", Workspace.is_archived == False)
-            .all()
-        )
-        for workspace in customers:
-            try:
-                if customer_source_id_for_workspace(workspace) == source_id:
-                    return customer_source_paths_for_workspace(workspace)["derived"]
-            except ValueError:
-                continue
-    return None
