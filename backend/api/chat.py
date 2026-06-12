@@ -15,7 +15,9 @@ from app.features.chat.access import (
     ensure_workspace_access as _ensure_workspace_access,
     get_user_session as _get_user_session,
 )
-from app.features.chat.audio_attachments import find_audio_attachments as _find_audio_attachments
+from app.features.chat.audio_transcription_skill import (
+    run_audio_transcription_skill_response as _run_audio_transcription_skill_response,
+)
 from app.features.chat import attachment_api as chat_attachment_api
 from app.features.chat import feedback_api as chat_feedback_api
 from app.features.chat.intent import IntentType, classify_intent
@@ -41,7 +43,6 @@ from app.features.chat.message_serialization import (
 from app.features.chat.skill_agent_run import write_skill_agent_run as _write_skill_agent_run_base
 from app.features.chat.skill_text import (
     extract_skill_inputs as _extract_skill_inputs,
-    format_audio_transcription_reply as _format_audio_transcription_reply,
     missing_input_fields_text as _missing_input_fields_text,
     missing_input_instruction as _missing_input_instruction,
 )
@@ -1821,89 +1822,19 @@ def _run_chat_text_skill_by_name(
     db.commit()
     db.refresh(run)
 
-    # ── Audio transcription special path ────────────────────────────
     if skill_name == "audio-transcription":
-        from app.features.preprocessing.tools.media_transcription import (
-            run_media_transcription_tool,
-            MediaTranscriptionToolInput,
-        )
-
-        selected_attachments = _load_selected_session_attachments(db, user.id, session.id, req.files)
-        audio_attachments = _find_audio_attachments(selected_attachments)
-
-        if not audio_attachments:
-            instruction = _missing_input_instruction(
-                "audio-transcription",
-                [{"name": "audio_source", "label": "音频或视频文件"}],
-            )
-            skill_response = {
-                "reply": (
-                    "还不能开始录音转文字，因为当前消息没有可处理的音频/视频附件。\n\n"
-                    f"下一步操作：\n```text\n{instruction}\n```"
-                ),
-                "skill_run": run_to_dict(run, skill),
-                "generated_file": None,
-            }
-            return _write_skill_assistant_response(
-                db,
-                user.id,
-                session,
-                user_message_id,
-                content,
-                skill_response,
-                context_trace=build_context_trace(
-                    session=session,
-                    req=req,
-                    attachments=selected_attachments,
-                    sources=[],
-                    intent=IntentType.SKILL_TRIGGER,
-                    provider="project_r",
-                    model="audio-transcription",
-                    requested_model=req.model_profile or req.provider,
-                    extra=skill_context_extra(skill_response),
-                ),
-            )
-
-        audio_path = Path(audio_attachments[0].stored_path)
-        if len(audio_attachments) > 1:
-            reply_extra = "\n\n> 注意：检测到多个音频文件，只处理第一个。"
-        else:
-            reply_extra = ""
-
-        try:
-            tool_result = run_media_transcription_tool(
-                MediaTranscriptionToolInput(media_path=audio_path)
-            )
-            reply = _format_audio_transcription_reply(tool_result.text, reply_extra=reply_extra)
-        except Exception as exc:
-            reply = f"转录失败：{exc}\n\n请检查音频文件是否有效。"
-
-        skill_response = {
-            "reply": reply,
-            "skill_run": run_to_dict(run, skill),
-            "generated_file": None,
-        }
-        return _write_skill_assistant_response(
+        return _run_audio_transcription_skill_response(
             db,
-            user.id,
+            user,
             session,
             user_message_id,
             content,
-            skill_response,
-            context_trace=build_context_trace(
-                session=session,
-                req=req,
-                attachments=selected_attachments,
-                sources=[],
-                intent=IntentType.SKILL_TRIGGER,
-                provider="project_r",
-                model="audio-transcription",
-                requested_model=req.model_profile or req.provider,
-                extra=skill_context_extra(skill_response),
-            ),
+            req,
+            run,
+            skill,
+            load_selected_attachments=_load_selected_session_attachments,
+            write_skill_response=_write_skill_assistant_response,
         )
-
-    # ── End audio transcription special path ─────────────────────────
 
     reduce_knowledge_context = _should_reduce_knowledge_context(req.selected_prompt_id, False)
     knowledge_sources = _search_knowledge_sources(
