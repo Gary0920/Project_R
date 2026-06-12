@@ -25,7 +25,7 @@ references:
 
 # <Skill 名称>
 
-> 这是 Project_R Skill 的占位模板。复制本模板到 `backend/skills/builtin/<skill-name>/SKILL.md` 后填写；业务状态同步维护在根目录 `Project_R 业务工作流清单.md`。
+> 这是 Project_R Skill 的占位模板。复制本模板到 `backend/skills/builtin/<skill-name>/SKILL.md` 后填写；业务状态同步维护在`docs/product/Project_R 业务工作流清单.md`。
 
 ## 目的
 
@@ -104,8 +104,8 @@ backend/skills/builtin/<skill-name>/
 
 ## 维护说明
 
-- 修改本 Skill 时同步更新根目录 `Project_R 业务工作流清单.md` 中对应行的状态
-- 如果 Skill 阶段状态或验收范围变化，同步更新根目录 `Project_R 开发流程.md`
+- 修改本 Skill 时同步更新`docs/product/Project_R 业务工作流清单.md` 中对应行的状态
+- 如果 Skill 阶段状态或验收范围变化，同步更新`docs/milestones/Project_R 开发流程.md`
 - 如果本 Skill 涉及的业务规则发生变化，先在知识库中更新对应规则文档，再调整本 SKILL.md
 - 不要在 SKILL.md 中硬编码业务规则细节，所有规则来自知识库（保持单一信息源）
 - 本模板仅描述 Skill 结构，不替代 `docs/agents/skills-design.md` 的设计规范

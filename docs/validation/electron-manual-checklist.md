@@ -8,7 +8,7 @@
 - 前端已启动：在 `frontend/` 中运行 `bun run dev` 并打开 Electron 窗口。
 - 管理员账号可用：`admin / Project_R_2026`。
 - 已完成后端 `python -m unittest discover -s tests` 与前端 `bun run build`。
-- 产品文档以根目录 `Project_R PRD.md`、`Project_R 开发流程.md`、`Project_R 业务工作流清单.md` 为准。
+- 产品文档以`docs/product/Project_R PRD.md`、`docs/milestones/Project_R 开发流程.md`、`docs/product/Project_R 业务工作流清单.md` 为准。
 
 ## 1. 首次引导
 

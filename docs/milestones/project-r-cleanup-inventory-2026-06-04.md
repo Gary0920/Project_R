@@ -16,7 +16,7 @@
 - `backend/workspace_data/user/`：用户默认工作台目录；本次确认 `sysadmin`、`test001`、`test002` 均保留。
 - `backend/tests/`：自动化测试资产，当前约 97 个文件，属于必要回归保护。
 - `backend/scripts/gbrain_*`、`backend/scripts/clean_notion_markdown_once.py` 等脚本：当前 GBrain 初始化、回归、agent/citation-fixer smoke 和一次性清洗仍有运维价值。
-- `docs/adr/`、`docs/gbrain-*.md`、`docs/ui-design-language.md`：当前架构与产品决策依据。
+- `docs/adr/`、`docs/gbrain-*.md`、`docs/design/ui-design-language.md`：当前架构与产品决策依据。
 
 ## 可清理但需确认
 

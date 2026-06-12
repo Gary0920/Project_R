@@ -1,7 +1,7 @@
 # Project_R Skills 设计规范
 
 - **格式来源**：参考 Proma Skill 格式（与 Claude Agent SDK 兼容）
-- **配套文档**：根目录 `Project_R PRD.md`、`Project_R 开发流程.md`、`Project_R 业务工作流清单.md`
+- **配套文档**：`docs/product/Project_R PRD.md`、`docs/milestones/Project_R 开发流程.md`、`docs/product/Project_R 业务工作流清单.md`
 
 ---
 
@@ -369,9 +369,9 @@ uvicorn main:app --reload
 
 - 本规范的 Skill 示例参见 `backend/skills/builtin/<example>/SKILL.md`
 - 标签打印源文件生成已退役，不再作为端到端样板或测试目标。
-- 业务工作流清单：根目录 `Project_R 业务工作流清单.md`
-- 产品范围：根目录 `Project_R PRD.md`
-- 阶段进度：根目录 `Project_R 开发流程.md`
+- 业务工作流清单：`docs/product/Project_R 业务工作流清单.md`
+- 产品范围：`docs/product/Project_R PRD.md`
+- 阶段进度：`docs/milestones/Project_R 开发流程.md`
 - GBrain source repo 新架构：`backend/workspace_data/_preprocessed/.../gbrain-ready/`
 - 预处理 Skill 目录说明：`backend/skills/preprocessors/README.md`
 - Proma 参考文件不再保留在 Git 仓库内；需要参考时由 Gary 提供本机参考副本或截图

@@ -26,7 +26,7 @@ The worker runs inside the Project_R backend process and does not depend on a GB
 
 1. The gbrain_maintenance_worker.py daemon thread is the canonical long-running maintenance scheduler. It starts on backend init (gated by PR_GBRAIN_MAINTENANCE_WORKER_ENABLED, default on), runs at configurable intervals (default 300 s), and exposes status through GET /admin/knowledge/gbrain/maintenance and the admin frontend worker diagnostic card.
 
-2. GBrain native Postgres worker is deferred. It remains documented as available in docs/gbrain-feature-inventory.md but is not on the current roadmap.
+2. GBrain native Postgres worker is deferred. It remains documented as available in docs/product/gbrain-feature-inventory.md but is not on the current roadmap.
 
 3. PGLite inline execution is accepted as the current path. GBrain jobs submit subagent runs inline within the PGLite process. The maintenance worker job tracking works correctly against PGLite jobs.
 

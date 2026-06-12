@@ -2,7 +2,7 @@
 
 状态：v0.1，Project_R 接入 GBrain 前置盘点。  
 来源：本地 `reference/gbrain-master`，`package.json` 版本 `0.41.26.0`，以及 GBrain README、docs、skills、`src/core/operations.ts` 等源码。  
-目的：后续 Project_R 的知识库、检索、纠错、维护、Skill 和 Agent 能力，默认先判断 GBrain 是否已有原生后处理能力；原始文件提炼已收口为 Project_R Agent / Skills 负责，GBrain 只接收 Project_R 生成的 Markdown source。原始资料进入 GBrain source 的具体操作流程见 `docs/gbrain-ingest-workflow.md`；Project_R 对 GBrain 的真实开发进度见 `docs/gbrain-adaptation-progress.md`；边界决策见 `docs/adr/0009-pr-owned-extraction-to-gbrain-markdown.md`、`docs/adr/0010-source-scoped-knowledge-ingest-review-policy.md` 和 `docs/adr/0011-automatic-extractor-routing-by-file-type.md`。
+目的：后续 Project_R 的知识库、检索、纠错、维护、Skill 和 Agent 能力，默认先判断 GBrain 是否已有原生后处理能力；原始文件提炼已收口为 Project_R Agent / Skills 负责，GBrain 只接收 Project_R 生成的 Markdown source。原始资料进入 GBrain source 的具体操作流程见 `docs/specs/gbrain-ingest-workflow.md`；Project_R 对 GBrain 的真实开发进度见 `docs/milestones/gbrain-adaptation-progress.md`；边界决策见 `docs/adr/0009-pr-owned-extraction-to-gbrain-markdown.md`、`docs/adr/0010-source-scoped-knowledge-ingest-review-policy.md` 和 `docs/adr/0011-automatic-extractor-routing-by-file-type.md`。
 
 ## 分类
 
@@ -86,7 +86,7 @@ _preprocessed/
 7. 问答 adapter：Project_R 的知识库问答统一通过 `/query` 调用 GBrain native `think`，前端展示引用、gap、冲突；底层仍保留 `query(..., source_id=company-wiki)` 作为质量回归、diagnostic 和维护工具，不作为普通用户的最终回答层。产品语义上，`/query` 是“查询知识库”Skill 调用指令，不影响普通 chatbot 对日常问题的回答。
 8. 纠错闭环：用户反馈错误答案后，Project_R 建立审核项，定位引用和来源，再调用 citation-fixer、maintain、contradiction review 或 Skillify 后的 Project_R 专用修正流程。当前第一段已落地：低分且带 GBrain 引用的回答反馈会生成管理员知识纠错审核项；citation-fixer 已补 `submit_agent` 提交入口、管理员表单和 `backend/scripts/gbrain_agent_preflight.py` 预检；`patches/gbrain/0004-agent-bound-oauth-client-registration.patch` 已补齐 GBrain 侧绑定型 agent OAuth client 注册入口；`0005`/`0006` 已补齐 source scope 与 DeepSeek gateway-loop 执行兼容。真实 client 注册、gateway loop、submit_agent 绑定、PGLite 只读 inline 执行、2026-06-02 真实改写型 smoke、管理员 job 追踪、低分审核项受控触发、单任务回滚和 Project_R worker 轮询均已验收；仍待 GBrain 原生 Postgres worker 长跑或 PGLite inline 管理员执行策略、批量任务费用/权限边界和复杂恢复策略。
 
-本节只描述能力边界和切片顺序；文件进入源文件目录、如何生成 `gbrain-ready/`、GBrain import/sync 的职责、PDF/音视频如何提炼，统一以 `docs/gbrain-ingest-workflow.md` 为准。
+本节只描述能力边界和切片顺序；文件进入源文件目录、如何生成 `gbrain-ready/`、GBrain import/sync 的职责、PDF/音视频如何提炼，统一以 `docs/specs/gbrain-ingest-workflow.md` 为准。
 
 ## 2026-05-28 本机准备状态
 

@@ -11,10 +11,10 @@
 第一阶段：现状核对
 1. 阅读并更新以下文档作为事实基准：
    - `AGENTS.md`
-   - `docs/gbrain-adaptation-progress.md`
-   - `docs/gbrain-feature-inventory.md`
-   - `docs/gbrain-ingest-workflow.md`
-   - `docs/gbrain-agent-citation-fixer-runbook.md`
+   - `docs/milestones/gbrain-adaptation-progress.md`
+   - `docs/product/gbrain-feature-inventory.md`
+   - `docs/specs/gbrain-ingest-workflow.md`
+   - `docs/operations/gbrain-agent-citation-fixer-runbook.md`
 2. 核对当前 GBrain source 状态：
    - `company-wiki`
    - 受限客户情报数据范围（当前早期实现 source id 为 `customer-reference`）
@@ -81,7 +81,7 @@
 5. 不允许自动无审核改写公司知识。任何事实修改、引用修复、实体合并都必须进入审核或明确的管理员动作。
 
 第五阶段：真实 citation-fixer 改写型任务
-1. 使用现有 `docs/gbrain-agent-citation-fixer-runbook.md` 和 adapter，补齐真实 citation-fixer 执行闭环。
+1. 使用现有 `docs/operations/gbrain-agent-citation-fixer-runbook.md` 和 adapter，补齐真实 citation-fixer 执行闭环。
 2. 准备一个安全测试页，不能使用敏感资料，不能破坏正式知识。
 3. 提交 citation-fixer subagent 改写型任务：
    - source scope 必须绑定
@@ -140,9 +140,9 @@
    - customer intelligence regression
    - 新增 graph/entity/worker/permission 回归
 3. 更新：
-   - `docs/gbrain-adaptation-progress.md`
-   - `docs/gbrain-feature-inventory.md`
-   - `docs/gbrain-ingest-workflow.md`
+   - `docs/milestones/gbrain-adaptation-progress.md`
+   - `docs/product/gbrain-feature-inventory.md`
+   - `docs/specs/gbrain-ingest-workflow.md`
    - 必要时新增 ADR
 4. 最终输出必须明确：
    - 已完成模块

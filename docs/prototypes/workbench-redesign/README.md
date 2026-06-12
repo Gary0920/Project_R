@@ -35,7 +35,7 @@ workbench-redesign/
 
 **继承点：**
 - 延续 Proma 布局节奏和 Project_R 用户已有的肌肉记忆
-- 绿色强调色与现有 `docs/ui-design-language.md` 中 `--control-active-*` token 一致
+- 绿色强调色与现有 `docs/design/ui-design-language.md` 中 `--control-active-*` token 一致
 - 三栏布局下，用户可以同时看到"对话、文件、情报"三重视角
 
 **改进点：**

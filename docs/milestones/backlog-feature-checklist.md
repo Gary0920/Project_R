@@ -1,12 +1,12 @@
 # 后补功能 Checklist
 
-本文档用于管理 Project_R 当前“已识别但不阻塞本地使用”的后补功能。这里的功能不纳入当前本地必须通过项；当某项进入开发时，应先补充验收标准，再实现代码，最后从本文档迁移到根目录开发流程或 `docs/electron-manual-checklist.md` 的正式验收区。
+本文档用于管理 Project_R 当前“已识别但不阻塞本地使用”的后补功能。这里的功能不纳入当前本地必须通过项；当某项进入开发时，应先补充验收标准，再实现代码，最后从本文档迁移到根目录开发流程或 `docs/validation/electron-manual-checklist.md` 的正式验收区。
 
 当前产品范围、阶段状态和业务 Skill 清单已从 `references/` 移到仓库根目录：
 
-- `Project_R PRD.md`
-- `Project_R 开发流程.md`
-- `Project_R 业务工作流清单.md`
+- `docs/product/Project_R PRD.md`
+- `docs/milestones/Project_R 开发流程.md`
+- `docs/product/Project_R 业务工作流清单.md`
 
 ## 使用规则
 

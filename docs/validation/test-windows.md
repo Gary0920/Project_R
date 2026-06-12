@@ -2,8 +2,8 @@
 
 本文档仅保留 Phase 17 Windows 联调的历史记录与说明。当前正式验收入口以以下文件为准：
 
-- 根目录 `Project_R 开发流程.md`
-- `docs/electron-manual-checklist.md`
+- `docs/milestones/Project_R 开发流程.md`
+- `docs/validation/electron-manual-checklist.md`
 - 自动化检查：后端 `python -m unittest discover -s tests`，前端 `bun run build`
 
 ## 2026-05-21 代码级检查
@@ -29,7 +29,7 @@ bun run build
 
 - 同时启动后端与 Electron 前端。
 - 使用管理员账号完成：登录 -> Chat -> /query 知识库问答 -> 手动选择 U03 Skill 并补参生成文件 -> 管理员后台 -> 知识审核。当前显式路由阶段，普通自然语言文件生成入口待后续补齐。
-- 按 `docs/electron-manual-checklist.md` 记录关键截图、耗时、失败点和修复结论。
+- 按 `docs/validation/electron-manual-checklist.md` 记录关键截图、耗时、失败点和修复结论。
 
 ## Phase 16 说明
 

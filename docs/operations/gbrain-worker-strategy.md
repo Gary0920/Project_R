@@ -131,5 +131,5 @@ FastAPI startup
 | `backend/core/gbrain_contradiction_probe.py` | 冲突探针配置、运行、调度 |
 | `backend/api/rag.py` | 管理员 API：worker restart、dream cycle CRUD、citation-fixer、contradiction probe |
 | `docs/adr/0003-gbrain-service-adapter.md` | Project_R 通过 GBrain HTTP/MCP adapter 调用 GBrain |
-| `docs/gbrain-agent-citation-fixer-runbook.md` | Citation-fixer 的 OAuth、gateway loop、预检和执行流程 |
+| `docs/operations/gbrain-agent-citation-fixer-runbook.md` | Citation-fixer 的 OAuth、gateway loop、预检和执行流程 |
 | `patches/gbrain/` | GBrain 上游本地 patch 集合 |

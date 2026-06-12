@@ -93,5 +93,5 @@ pytest tests/test_workspace_files.py -k "meeting or generate or speaker or term 
 - **必须修复项**：无 P0 问题。3 个端点用内联校验而非 `_validate_meeting_folder()` 是 P2 级一致性建议，不影响功能。
 - **可后续优化项**：
   - 统一 3 个端点的校验调用为 `_validate_meeting_folder()`
-  - 前端 inline style 收敛到 `docs/ui-design-language.md`
+  - 前端 inline style 收敛到 `docs/design/ui-design-language.md`
   - `transcript-v1 (1).md` 冲突命名在 Step 3 重跑场景下不优雅，后续考虑 vN 统一

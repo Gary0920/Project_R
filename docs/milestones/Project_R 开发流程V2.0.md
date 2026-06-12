@@ -7,7 +7,7 @@
 
 ## 1. V2.0 定位
 
-V2.0 不是推翻旧开发流程，也不是继续堆业务工作流。旧 `Project_R 开发流程.md` 保留 Phase 1-10、GBrain 迁移、项目资料质量、9.E 会议 Skill 第一版闭环等历史事实；本文件作为下一阶段主计划。
+V2.0 不是推翻旧开发流程，也不是继续堆业务工作流。旧 `docs/milestones/Project_R 开发流程.md` 保留 Phase 1-10、GBrain 迁移、项目资料质量、9.E 会议 Skill 第一版闭环等历史事实；本文件作为下一阶段主计划。
 
 V2.0 的核心目标：
 
@@ -310,10 +310,10 @@ V2.0 明确不做：
 
 ### 9.3 文档验收
 
-- `Project_R 开发流程V2.0.md` 是 V2.0 主计划。
-- `Project_R 开发流程.md` 保留历史事实和旧主线状态。
+- `docs/milestones/Project_R 开发流程V2.0.md` 是 V2.0 主计划。
+- `docs/milestones/Project_R 开发流程.md` 保留历史事实和旧主线状态。
 - 若修改 Chat / GBrain 边界，必须同步 `CONTEXT.md` 和 ADR；当前 V2.0 不修改该边界。
-- 若修改前端视觉语言，必须同步 `docs/ui-design-language.md`。
+- 若修改前端视觉语言，必须同步 `docs/design/ui-design-language.md`。
 
 ## 10. 推荐执行节奏
 
@@ -360,4 +360,3 @@ V2.0 明确不做：
 3. 为 `/query` 建立三工作区 source scope 前端验收脚本。
 4. 抽象统一来源预览面板：文件预览、citation 预览、搜索结果预览共用。
 5. 为 Agent 补参卡片建立固定 schema：字段名、业务说明、示例、是否必填、来源。
-

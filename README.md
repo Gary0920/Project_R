@@ -6,8 +6,12 @@
 
 | 路径 | 作用 | 适合 Gary 自定义吗 | 常见修改 |
 |---|---|---|---|
-| `references/` | PRD、开发流程、业务工作流、V3.0 方案、Proma 参考材料 | 是，但只改 Project_R 自有文档 | 更新需求、阶段进度、下一步计划、验收记录 |
-| `docs/` | 项目维护说明、测试说明、Agent 设计规范 | 是 | 写维护手册、测试清单、故障排查、操作说明 |
+| `docs/product/` | PRD、产品边界、业务工作流和 GBrain 能力盘点 | 是，但只改 Project_R 自有文档 | 更新需求、业务范围、Skill 候选清单 |
+| `docs/milestones/` | 阶段计划、开发流程、迭代进度和历史清理盘点 | 是 | 更新阶段进度、下一步计划、完成状态 |
+| `docs/specs/` | 具体功能方案、实现规格、GBrain ingest 流程和提示词模板 | 是 | 写功能方案、验收标准、实现说明 |
+| `docs/validation/` | 测试说明、手工验收、Windows 联调和验收报告 | 是 | 写测试清单、故障排查、验收记录 |
+| `docs/design/` | UI 设计语言、设计稿和视觉参考 | 是 | 更新视觉规范、设计参考、界面调整说明 |
+| `docs/operations/` | 安装、运行、维护和 GBrain 运维手册 | 是 | 写部署、维护、运行排查步骤 |
 | `backend/prompt_presets/` | 后端强制注入或预留的提示词文件 | 是，尤其是 `global-base-prompt.md` | 填写公司全局底层规则、统一业务背景、回答边界 |
 | `backend/skills/` | Project_R 后端业务 Skill | 是，但建议一次只改一个 Skill | 新增/修改业务 Skill、输出格式、字段要求 |
 | `.agents/skills/` | Codex/Agent 本地工作技能说明 | 是，偏开发协作 | 修改 Agent 如何分析、提问、写方案、生成文档 |
@@ -90,8 +94,8 @@
 | 改聊天消息排版 | `frontend/src/renderer/pages/AppPage.tsx`、`styles.css` | `npm run build` + Electron 手工看界面 |
 | 改设置页 | `SettingsModal.tsx`、`styles.css` | `npm run build` + 登录管理员/普通用户检查 |
 | 新增业务 Skill | `backend/skills/`、`docs/agents/skills-design.md` | Skill 列表、匹配、启动、补参、输出文件测试 |
-| 更新开发进度 | `references/Project_R 开发流程.md` | 勾选必须对应已验证功能 |
-| 更新产品范围 | `references/Project_R PRD.md` | 保持与开发流程一致 |
+| 更新开发进度 | `docs/milestones/Project_R 开发流程.md` | 勾选必须对应已验证功能 |
+| 更新产品范围 | `docs/product/Project_R PRD.md` | 保持与开发流程一致 |
 | 更新 Agent 工作规则 | `AGENTS.md` | 当前只维护 AGENTS.md |
 
 ## 修改前后建议流程
@@ -102,4 +106,4 @@
 4. 后端改动跑：`cd backend && .\venv\Scripts\python.exe -m unittest discover -s tests`
 5. 前端改动跑：`cd frontend && npm run build`
 6. 涉及 UI、上传、文件下载、RAG 引用时，再做 Electron 手工验收。
-7. 验证通过后，同步更新 `references/Project_R 开发流程.md`。
+7. 验证通过后，同步更新 `docs/milestones/Project_R 开发流程.md`。
