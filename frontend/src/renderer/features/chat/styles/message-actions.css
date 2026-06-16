@@ -60,6 +60,15 @@
   color: hsl(var(--primary));
 }
 
+.message-action-btn.is-text-action {
+  width: 26px;
+  height: 26px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  font-size: 12px;
+  font-weight: 750;
+}
+
 .message-action-btn.is-copied::after {
   content: "复制成功";
   position: absolute;
@@ -266,4 +275,3 @@
   color: hsl(var(--primary));
   background: color-mix(in srgb, hsl(var(--primary)) 10%, transparent);
 }
-

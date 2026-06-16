@@ -85,8 +85,11 @@ from app.features.chat.schemas import (
     SendMessageRequest,
     SessionDetailResponse,
     SessionResponse,
+    TransformTextRequest,
+    TransformTextResponse,
     UpdateSessionRequest,
 )
+from app.features.chat.transform_service import transform_chat_text
 from app.features.knowledge.sources import KnowledgeSources
 from app.shared.llm.client import LLMConfigurationError, LLMProviderError, get_llm_client
 from app.features.chat import attachments as session_attachments
@@ -122,6 +125,8 @@ FILE_COMMAND_FORMATS = {
     "/ppt": "pptx",
     "/pptx": "pptx",
     "/pdf": "pdf",
+    "/eml": "eml",
+    "/email": "eml",
 }
 BASE_DIR = Path(__file__).resolve().parent.parent
 SESSION_ATTACHMENTS_ROOT = BASE_DIR / "session_attachments"
@@ -263,6 +268,28 @@ def search_sessions(
                 )
             )
     return results
+
+
+@router.post("/transform", response_model=TransformTextResponse)
+def transform_text(
+    req: TransformTextRequest,
+    user: User = Depends(get_current_user),
+):
+    try:
+        llm_response = transform_chat_text(req, get_llm_client=get_llm_client)
+    except LLMConfigurationError as exc:
+        raise HTTPException(status_code=503, detail="AI 服务暂时不可用，请稍后重试") from exc
+    except LLMProviderError as exc:
+        status_code = 503 if exc.retryable else 502
+        raise HTTPException(status_code=status_code, detail="AI 服务暂时不可用，请稍后重试") from exc
+    return {
+        "ok": True,
+        "action": req.action.strip().lower(),
+        "text": llm_response.text,
+        "provider": llm_response.provider,
+        "model": llm_response.model,
+        "usage": llm_response.usage,
+    }
 
 
 @router.get("/sessions/{session_id}", response_model=SessionDetailResponse)

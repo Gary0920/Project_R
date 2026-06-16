@@ -101,6 +101,8 @@ governance:
   9. What to Avoid Saying
   10. Suggested Next Steps
 
+如果分析结果已经形成清晰的建议立场，应在 `Suggested Next Steps` 中提示：用户确认立场后，可继续使用 `client-reply-drafting` 生成客户英文回复草稿。不要在本 Skill 内直接代替用户发送或承诺回复。
+
 ## 错误处理
 
 | 失败点 | 处理方式 |

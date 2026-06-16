@@ -60,6 +60,14 @@ SUPPORTED_OUTPUT_FORMATS: dict[str, OutputFormat] = {
         display_name="PDF 文件",
         aliases=(),
     ),
+    "eml": OutputFormat(
+        key="eml",
+        extension=".eml",
+        mime_type="message/rfc822",
+        display_name="邮件草稿",
+        aliases=("email", "mail"),
+        is_text=True,
+    ),
 }
 
 

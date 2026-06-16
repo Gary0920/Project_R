@@ -28,6 +28,10 @@ inputs:
 outputs:
   - type: chat_text
     format: markdown
+  - type: file
+    format: eml
+    optional: true
+    description: 用户确认邮件草稿后，可通过 Project_R 邮件草稿能力生成 .eml 文件
 references:
   - rules/项目邮件相关规则.md
   - rules/项目沟通与书面留痕原则.md
@@ -44,6 +48,10 @@ execution:
     - id: llm_complete
       label: 生成英文回复草稿
       tool: llm.complete
+    - id: optional_email_draft
+      label: 用户确认后生成邮件草稿文件
+      tool: project_r.document.render
+      optional: true
 governance:
   risk_level: medium
   requires_confirmation: false
@@ -51,6 +59,7 @@ governance:
     - project_r.context.compose
     - knowledge.search
     - llm.complete
+    - project_r.document.render
 ---
 
 # 客户英文回复起草
@@ -92,11 +101,14 @@ governance:
 ## 输出形式
 
 - **主输出**：聊天文本 / Markdown。
+- **可选文件输出**：用户确认草稿后，可生成邮件草稿 `.eml`，供下载、复制正文或打开默认邮件客户端。
 - **固定结构**：
   1. Reply Strategy
   2. English Email Draft
   3. 中文说明
   4. Optional Stronger / Softer Alternatives（仅在有价值时输出）
+
+`English Email Draft` 必须包含清晰的 `Subject:` 和完整正文。若用户提供收件人、抄送人或密送人，应保留为结构化字段，供 Sprint 6 邮件草稿卡使用。
 
 ## 错误处理
 

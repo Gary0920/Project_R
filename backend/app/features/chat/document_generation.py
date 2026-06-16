@@ -20,6 +20,9 @@ def create_generated_output_file(
     output_format: str = "docx",
     generated_files_root: Path,
 ) -> dict:
+    metadata = None
+    if output_format == "eml":
+        metadata = {"email_draft": {"subject": safe_document_title(user_prompt), "body": content}}
     return create_generated_file(
         db,
         user_id,
@@ -28,6 +31,7 @@ def create_generated_output_file(
         content,
         output_format=output_format,
         generated_files_root=generated_files_root,
+        metadata=metadata,
     )
 
 
@@ -74,6 +78,8 @@ def write_document_generation_agent_run(
         output_format = "pptx"
     elif "application/pdf" in mime_type or str(generated_file.get("filename") or "").lower().endswith(".pdf"):
         output_format = "pdf"
+    elif "message/rfc822" in mime_type or str(generated_file.get("filename") or "").lower().endswith(".eml"):
+        output_format = "eml"
     format_name = normalize_output_format(output_format).display_name
     run = create_agent_run(
         db,

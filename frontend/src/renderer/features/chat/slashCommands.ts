@@ -84,6 +84,15 @@ export const BUILTIN_SLASH_COMMANDS: BuiltinSlashCommand[] = [
     scope: "文件",
     aliases: ["pdf", "归档", "发送版"],
   },
+  {
+    kind: "command",
+    name: "email",
+    displayName: "生成邮件草稿",
+    description: "将本次要求整理为邮件草稿，可复制正文、打开邮件客户端或下载 .eml。",
+    insertText: "/email ",
+    scope: "邮件",
+    aliases: ["email", "eml", "邮件", "邮件草稿", "客户回复"],
+  },
 ];
 
 export function findSlashCommand(text: string, caret: number): SlashCommandMatch | null {

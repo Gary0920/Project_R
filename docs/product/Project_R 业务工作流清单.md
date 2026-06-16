@@ -165,7 +165,7 @@
 | **U04** | **跨项目热工建议** | 🟢 | ⏸️ | 基于项目文件 + 跨项目知识库给出热工意见 |
 | **U05** | **合同文件审核** | 🟢 | ⏸️ | 提供合同模板和项目信息 → 输出审核报告 |
 | **U06** | **项目沟通风险分析** | 🟢 | ✅ | 分析复杂邮件、顾问 comment、现场问题、投诉和商务争议 → 输出真实意图、技术/进度影响、VO/EOT/back-charge 风险与下一步动作（[SKILL.md](../../backend/skills/builtin/project-communication-analysis/SKILL.md)） |
-| **U07** | **客户英文回复起草** | 🟢 | ✅ | 基于原始沟通和我方立场 → 起草专业、克制、保留责任边界的英文回复邮件（[SKILL.md](../../backend/skills/builtin/client-reply-drafting/SKILL.md)） |
+| **U07** | **客户英文回复起草** | 🟢 | ✅ | 基于原始沟通和我方立场 → 起草专业、克制、保留责任边界的英文回复邮件；Sprint 6 已补邮件草稿产品路径，可衔接复制正文、打开邮件客户端和 `.eml` 下载（[SKILL.md](../../backend/skills/builtin/client-reply-drafting/SKILL.md)） |
 
 ---
 

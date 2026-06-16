@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from typing import Callable
 
 from app.features.documents.renderers.docx import render_docx
+from app.features.documents.renderers.eml import render_eml
 from app.features.documents.renderers.pdf import render_pdf
 from app.features.documents.renderers.pptx import render_pptx
 from app.features.documents.renderers.text import render_markdown, render_txt
@@ -23,7 +25,16 @@ RENDERERS: dict[str, Renderer] = {
 }
 
 
-def render_document(output_format: str, title: str, content: str, output_path: Path) -> Path:
+def render_document(
+    output_format: str,
+    title: str,
+    content: str,
+    output_path: Path,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> Path:
+    if output_format == "eml":
+        return render_eml(title, content, output_path, metadata=metadata)
     renderer = RENDERERS.get(output_format)
     if not renderer:
         raise ValueError(f"Unsupported document output format: {output_format}")

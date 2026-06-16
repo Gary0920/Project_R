@@ -211,6 +211,10 @@ Format:
 
 Subject: [subject line]
 
+To: [recipient email or recipient name if known]
+
+Cc: [cc recipient if known, otherwise omit]
+
 Hi [Name],
 
 [Email body]
@@ -223,6 +227,8 @@ If the recipient name or sender name is unknown, use placeholders:
 Hi [Name],  
 Kind regards,  
 [Your Name]
+
+Keep the email body clean and directly reusable. Do not include Markdown bullets unless they are genuinely part of the email body.
 
 ---
 

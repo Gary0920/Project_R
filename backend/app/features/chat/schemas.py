@@ -75,6 +75,26 @@ class EditMessageRequest(BaseModel):
     system_prompt: str | None = None
 
 
+class TransformTextRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=20000)
+    action: str
+    provider: str | None = None
+    model_profile: str | None = None
+    target_language: str | None = None
+    tone: str | None = None
+    thinking: bool = False
+    temperature: float | None = Field(default=None, ge=0, le=2)
+
+
+class TransformTextResponse(BaseModel):
+    ok: bool = True
+    action: str
+    text: str
+    provider: str
+    model: str
+    usage: dict[str, int] = Field(default_factory=dict)
+
+
 class MessageFeedbackRequest(BaseModel):
     rating: int = Field(ge=1, le=5)
     comment: str = ""

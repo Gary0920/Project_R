@@ -124,8 +124,15 @@ class DocumentsPhase11Tests(unittest.TestCase):
         self.assertIn("继续推进", text)
         self.assertNotIn("**", text)
 
-        with self.assertRaises(ValueError):
-            render_document("eml", "x", "y", Path(self.temp.name) / "bad.eml")
+        eml_path = Path(self.temp.name) / "result.eml"
+        render_document(
+            "eml",
+            "邮件主题",
+            "邮件正文",
+            eml_path,
+            metadata={"email_draft": {"to": "client@example.com", "subject": "邮件主题", "body": "邮件正文"}},
+        )
+        self.assertTrue(eml_path.exists())
 
     def test_renderer_registry_supports_xlsx_and_pptx(self):
         from openpyxl import load_workbook
@@ -280,6 +287,39 @@ class DocumentsPhase11Tests(unittest.TestCase):
         self.assertTrue(record.filename.endswith(".pdf"))
         self.assertEqual(record.mime_type, "application/pdf")
         self.assertTrue(Path(record.path).exists())
+
+    def test_create_generated_file_uses_eml_format_metadata(self):
+        from email import policy
+        from email.parser import BytesParser
+
+        payload = create_generated_file(
+            self.db,
+            self.user.id,
+            None,
+            "客户回复",
+            "Fallback body",
+            output_format="eml",
+            generated_files_root=Path(self.temp.name),
+            metadata={
+                "email_draft": {
+                    "subject": "Project update",
+                    "to": "builder@example.com",
+                    "cc": "pm@example.com",
+                    "body": "Hi Team,\n\nWe will review and revert.",
+                }
+            },
+        )
+
+        record = self.db.get(GeneratedFile, payload["id"])
+        self.assertIsNotNone(record)
+        self.assertTrue(record.filename.endswith(".eml"))
+        self.assertEqual(record.mime_type, "message/rfc822")
+        self.assertEqual(payload["email_draft"]["subject"], "Project update")
+        message = BytesParser(policy=policy.default).parsebytes(Path(record.path).read_bytes())
+        self.assertEqual(message["Subject"], "Project update")
+        self.assertEqual(message["To"], "builder@example.com")
+        self.assertEqual(message["Cc"], "pm@example.com")
+        self.assertIn("We will review and revert.", message.get_body(preferencelist=("plain",)).get_content())
 
     def test_save_generated_file_to_project_workspace_unfiled_dir(self):
         workspace_root = Path(self.temp.name) / "project" / "BFI" / "test-project"

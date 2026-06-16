@@ -269,6 +269,23 @@ export type GeneratedFileResponse = {
   filename: string;
   mime_type: string;
   download_url: string;
+  email_draft?: {
+    subject?: string;
+    body?: string;
+    from?: string;
+    to?: string | string[];
+    cc?: string | string[];
+    bcc?: string | string[];
+  } | null;
+};
+
+export type TransformTextResponse = {
+  ok: boolean;
+  action: "rewrite" | "translate" | "summarize" | "expand" | string;
+  text: string;
+  provider: string;
+  model: string;
+  usage: Record<string, number>;
 };
 
 export type ChatSourceResponse = {

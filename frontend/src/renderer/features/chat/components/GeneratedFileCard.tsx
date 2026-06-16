@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import type { GeneratedFileResponse, WorkspaceResponse } from "../../../shared/api/types";
-import { CheckIcon, NoteIcon, WorkspaceIcon } from "../../../shared/icons/LineIcons";
+import { CheckIcon, CopyIcon, NoteIcon, WorkspaceIcon } from "../../../shared/icons/LineIcons";
 
 type SaveResult = {
   path: string;
@@ -11,6 +11,8 @@ export type GeneratedFileCardProps = {
   file: GeneratedFileResponse;
   workspace?: WorkspaceResponse | null;
   onDownload: (file: GeneratedFileResponse) => void;
+  onCopyEmailBody?: (file: GeneratedFileResponse) => Promise<void>;
+  onOpenEmailClient?: (file: GeneratedFileResponse) => void;
   onSaveToWorkspace?: (file: GeneratedFileResponse) => Promise<SaveResult>;
 };
 
@@ -23,6 +25,7 @@ function generatedFileKindLabel(file: GeneratedFileResponse) {
   if (mime.includes("spreadsheet") || name.endsWith(".xlsx")) return "已生成 Excel 文件";
   if (mime.includes("presentation") || name.endsWith(".pptx")) return "已生成演示文稿";
   if (mime.includes("pdf") || name.endsWith(".pdf")) return "已生成 PDF 文件";
+  if (mime.includes("message/rfc822") || name.endsWith(".eml")) return "已生成邮件草稿";
   return "已生成文件";
 }
 
@@ -35,12 +38,16 @@ export function GeneratedFileCard({
   file,
   workspace,
   onDownload,
+  onCopyEmailBody,
+  onOpenEmailClient,
   onSaveToWorkspace,
 }: GeneratedFileCardProps) {
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "failed">("idle");
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const [savedPath, setSavedPath] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const canSaveToWorkspace = Boolean(workspace && workspace.workspace_kind !== "user" && onSaveToWorkspace);
+  const isEmailDraft = Boolean(file.email_draft || (file.filename || "").toLowerCase().endsWith(".eml"));
 
   async function handleSave() {
     if (!onSaveToWorkspace || !workspace || saveStatus === "saving") return;
@@ -56,16 +63,47 @@ export function GeneratedFileCard({
     }
   }
 
+  async function handleCopyEmailBody() {
+    if (!onCopyEmailBody) return;
+    setCopyStatus("idle");
+    try {
+      await onCopyEmailBody(file);
+      setCopyStatus("copied");
+      window.setTimeout(() => setCopyStatus("idle"), 1600);
+    } catch {
+      setCopyStatus("failed");
+    }
+  }
+
   return (
-    <div className={`message-file-card is-${saveStatus}`}>
+    <div className={`message-file-card is-${saveStatus} ${isEmailDraft ? "is-email-draft" : ""}`}>
       <div className="message-file-card-main">
         <span className="message-file-icon"><NoteIcon /></span>
         <div>
           <strong>{file.filename}</strong>
-          <span>{generatedFileKindLabel(file)}</span>
+          <span>{isEmailDraft && file.email_draft?.subject ? `邮件草稿：${file.email_draft.subject}` : generatedFileKindLabel(file)}</span>
         </div>
       </div>
       <div className="message-file-actions">
+        {isEmailDraft && onCopyEmailBody ? (
+          <button
+            className={`message-file-download ${copyStatus !== "idle" ? `is-${copyStatus}` : ""}`}
+            onClick={() => void handleCopyEmailBody()}
+            type="button"
+          >
+            {copyStatus === "copied" ? <CheckIcon /> : <CopyIcon />}
+            {copyStatus === "copied" ? "已复制" : copyStatus === "failed" ? "复制失败" : "复制正文"}
+          </button>
+        ) : null}
+        {isEmailDraft && onOpenEmailClient ? (
+          <button
+            className="message-file-download"
+            onClick={() => onOpenEmailClient(file)}
+            type="button"
+          >
+            打开邮件
+          </button>
+        ) : null}
         <button
           className="message-file-download"
           onClick={() => onDownload(file)}

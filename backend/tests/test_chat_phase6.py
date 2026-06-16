@@ -1265,6 +1265,22 @@ class ChatPhase6Tests(unittest.TestCase):
         self.assertEqual(response["reply"], "mock reply: 写一份会议纪要")
         self.assertTrue((Path(self.generated_root.name) / str(self.user.id) / f"{generated['id']}.pdf").exists())
 
+    def test_email_command_explicitly_generates_draft_file(self):
+        response = chat_api.send_message(
+            self.session.id,
+            chat_api.SendMessageRequest(content="/email 回复客户说明我们会先复核现场问题"),
+            self.user,
+            self.db,
+        )
+
+        generated = response["generated_file"]
+        self.assertEqual(response["intent"], "document_generation")
+        self.assertIsNotNone(generated)
+        self.assertTrue(generated["filename"].endswith(".eml"))
+        self.assertEqual(generated["mime_type"], "message/rfc822")
+        self.assertEqual(generated["email_draft"]["body"], "mock reply: 回复客户说明我们会先复核现场问题")
+        self.assertTrue((Path(self.generated_root.name) / str(self.user.id) / f"{generated['id']}.eml").exists())
+
     def test_convert_previous_notice_to_word_stays_chat_without_explicit_route(self):
         self.db.add(
             ChatMessage(

@@ -11,6 +11,7 @@ import type {
   RestoreMessagesResponse,
   SendChatMessageResponse,
   SessionAttachmentResponse,
+  TransformTextResponse,
 } from "../../shared/api/types";
 
 export function listChatSessions(options: ApiClientOptions, workspaceId?: number | null) {
@@ -192,6 +193,34 @@ export function sendChatMessage(
       thinking: Boolean(thinking),
       web_search: Boolean(webSearch),
       temperature: temperature ?? null,
+    }),
+  });
+}
+
+export function transformChatText(
+  options: ApiClientOptions,
+  data: {
+    text: string;
+    action: "rewrite" | "translate" | "summarize" | "expand";
+    provider?: string | null;
+    modelProfile?: string | null;
+    targetLanguage?: string | null;
+    tone?: string | null;
+    thinking?: boolean;
+    temperature?: number;
+  },
+) {
+  return apiRequest<TransformTextResponse>(options, "/chat/transform", {
+    method: "POST",
+    body: JSON.stringify({
+      text: data.text,
+      action: data.action,
+      provider: data.provider ?? null,
+      model_profile: data.modelProfile ?? null,
+      target_language: data.targetLanguage ?? null,
+      tone: data.tone ?? null,
+      thinking: Boolean(data.thinking),
+      temperature: data.temperature ?? null,
     }),
   });
 }

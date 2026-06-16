@@ -713,6 +713,11 @@
   background: hsl(156 28% 96%);
 }
 
+.message-file-card.is-email-draft {
+  border-color: hsl(214 22% 82%);
+  background: hsl(210 24% 97%);
+}
+
 .message-file-card-main {
   display: flex;
   align-items: center;
@@ -736,6 +741,11 @@
   border-radius: 7px;
   background: hsl(156 34% 90%);
   color: hsl(156 45% 28%);
+}
+
+.message-file-card.is-email-draft .message-file-icon {
+  background: hsl(214 30% 91%);
+  color: hsl(214 38% 32%);
 }
 
 .message-file-card-main strong,
@@ -779,6 +789,16 @@
 .message-file-save {
   background: hsl(156 45% 28%);
   color: #fff;
+}
+
+.message-file-download.is-copied {
+  border-color: hsl(156 34% 76%);
+  color: hsl(156 45% 28%);
+}
+
+.message-file-download.is-failed {
+  border-color: hsl(0 64% 76%);
+  color: hsl(0 70% 42%);
 }
 
 .message-file-save:disabled {

@@ -27,6 +27,7 @@ def render_document_tool(
     output_format = _resolve_output_format(skill, step)
     content = _resolve_content(step, inputs)
     title = _resolve_title(skill, step, inputs)
+    metadata = _resolve_metadata(step, inputs, title, content, output_format)
     payload = create_generated_file(
         db,
         run.user_id,
@@ -35,6 +36,7 @@ def render_document_tool(
         content,
         output_format=output_format,
         generated_files_root=generated_root,
+        metadata=metadata,
     )
     run.generated_file_id = payload["id"]
     db.flush()
@@ -84,3 +86,40 @@ def _format_template(template: str, inputs: dict[str, Any]) -> str:
         return str(inputs.get(key) or "")
 
     return re.sub(r"\{([^{}]+)\}", replace, template).strip() or "Project_R 生成文件"
+
+
+def _resolve_metadata(
+    step: dict[str, Any],
+    inputs: dict[str, Any],
+    title: str,
+    content: str,
+    output_format: str,
+) -> dict[str, Any] | None:
+    if output_format != "eml":
+        return None
+    draft: dict[str, Any] = {
+        "subject": _resolve_optional_value(step, inputs, "subject_field") or title,
+        "body": _resolve_optional_value(step, inputs, "body_field") or content,
+    }
+    for key in ("from", "to", "cc", "bcc"):
+        value = _resolve_optional_value(step, inputs, f"{key}_field")
+        if value:
+            draft[key] = value
+    inline = step.get("email_draft")
+    if isinstance(inline, dict):
+        draft.update({key: _format_or_value(value, inputs) for key, value in inline.items() if value})
+    return {"email_draft": draft}
+
+
+def _resolve_optional_value(step: dict[str, Any], inputs: dict[str, Any], field_key: str) -> str:
+    field = str(step.get(field_key) or "").strip()
+    if not field:
+        return ""
+    value = inputs.get(field)
+    return "" if value is None else str(value).strip()
+
+
+def _format_or_value(value: Any, inputs: dict[str, Any]) -> Any:
+    if isinstance(value, str) and "{" in value and "}" in value:
+        return _format_template(value, inputs)
+    return value

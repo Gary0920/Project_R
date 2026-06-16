@@ -63,7 +63,10 @@ export type ChatMessageListController = Record<string, any> & {
   sessionIsSending: boolean;
   token: string | null;
   activeWorkspace?: WorkspaceResponse | null;
+  onCopyGeneratedEmailBody?: (file: GeneratedFileResponse) => Promise<void>;
+  onOpenGeneratedEmailClient?: (file: GeneratedFileResponse) => void;
   onSaveGeneratedFileToWorkspace?: (file: GeneratedFileResponse) => Promise<{ path: string }>;
+  onTransformMessage?: (message: ChatMessage, action: "rewrite" | "translate" | "summarize" | "expand") => void;
 };
 
 export type ChatMessageListProps = {
@@ -523,6 +526,8 @@ function renderSkillRunCard(
   options: {
     showGeneratedFile?: boolean;
     onDownloadGeneratedFile?: (file: GeneratedFileResponse) => void;
+    onCopyGeneratedEmailBody?: (file: GeneratedFileResponse) => Promise<void>;
+    onOpenGeneratedEmailClient?: (file: GeneratedFileResponse) => void;
     onSaveGeneratedFileToWorkspace?: (file: GeneratedFileResponse) => Promise<{ path: string }>;
     workspace?: WorkspaceResponse | null;
   } = {},
@@ -563,6 +568,8 @@ function renderSkillRunCard(
         <GeneratedFileCard
           file={skillRun.generated_file}
           onDownload={options.onDownloadGeneratedFile}
+          onCopyEmailBody={options.onCopyGeneratedEmailBody}
+          onOpenEmailClient={options.onOpenGeneratedEmailClient}
           onSaveToWorkspace={options.onSaveGeneratedFileToWorkspace}
           workspace={options.workspace}
         />
@@ -815,7 +822,10 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
     mode,
     openFeedbackDialog,
     openRegenerateDialog,
+    onCopyGeneratedEmailBody,
+    onOpenGeneratedEmailClient,
     onSaveGeneratedFileToWorkspace,
+    onTransformMessage,
     paneSessionId,
     renderAvatar,
     requestDeleteMessageContext,
@@ -1076,6 +1086,8 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
             <GeneratedFileCard
               file={message.generated_file}
               onDownload={(file) => void downloadGeneratedFile(serverUrl, token, file)}
+              onCopyEmailBody={onCopyGeneratedEmailBody}
+              onOpenEmailClient={onOpenGeneratedEmailClient}
               onSaveToWorkspace={onSaveGeneratedFileToWorkspace}
               workspace={activeWorkspace}
             />
@@ -1084,6 +1096,8 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
           {message.skill_run ? renderSkillRunCard(message.skill_run, {
             showGeneratedFile: !message.generated_file,
             onDownloadGeneratedFile: (file) => void downloadGeneratedFile(serverUrl, token, file),
+            onCopyGeneratedEmailBody,
+            onOpenGeneratedEmailClient,
             onSaveGeneratedFileToWorkspace,
             workspace: activeWorkspace,
           }) : null}
@@ -1128,6 +1142,14 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
               >
                 <RefreshIcon />
               </button>
+            ) : null}
+            {onTransformMessage ? (
+              <>
+                <button className="message-action-btn is-text-action" disabled={message.isOptimistic || isBusy} onClick={() => onTransformMessage(message, "rewrite")} title="改写到输入框" type="button">改</button>
+                <button className="message-action-btn is-text-action" disabled={message.isOptimistic || isBusy} onClick={() => onTransformMessage(message, "translate")} title="翻译到输入框" type="button">译</button>
+                <button className="message-action-btn is-text-action" disabled={message.isOptimistic || isBusy} onClick={() => onTransformMessage(message, "summarize")} title="总结到输入框" type="button">摘</button>
+                <button className="message-action-btn is-text-action" disabled={message.isOptimistic || isBusy} onClick={() => onTransformMessage(message, "expand")} title="扩写到输入框" type="button">扩</button>
+              </>
             ) : null}
             {message.role === "user" ? (
               <button

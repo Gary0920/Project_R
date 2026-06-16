@@ -191,12 +191,12 @@
 | A1 | Excel(xlsx) 生成 | 已实现（`openpyxl` 渲染并可反读验证） | P0 |
 | A2 | PPT(pptx) 生成 | 已实现（新增 `python-pptx`，可反读验证） | P0 |
 | A5 | 产出保存到工作区 `99-未归档文件` | 已实现（项目/客户工作区确认保存，个人工作台仅下载） | P0 |
-| 触发 | 文档生成显式入口（命令/Skill） | 已实现命令入口（`/doc` `/md` `/txt` `/xlsx` `/pptx`；不解冻 intent） | P0 |
-| B1 | `.eml` 文件生成 | 未实现 | P1 |
-| B2 | `mailto:` 启动邮件客户端 | 未实现 | P1 |
-| B3 | 自动复制草稿到剪贴板 | 部分实现（有手动复制，无自动） | P1 |
-| T2 | `POST /chat/transform` 文本变换端点 | 未实现 | P1 |
-| T1 | 改写/翻译/总结一键按钮 | 未实现 | P2 |
+| 触发 | 文档生成显式入口（命令/Skill） | 已实现命令入口（`/doc` `/md` `/txt` `/xlsx` `/pptx` `/pdf` `/email`；不解冻 intent） | P0 |
+| B1 | `.eml` 文件生成 | 已实现（`/email` 显式命令 + Skill dispatcher；标准库 email 生成，可解析 subject/to/cc/body） | P1 |
+| B2 | `mailto:` 启动邮件客户端 | 已实现（邮件草稿卡显式打开，不自动发送） | P1 |
+| B3 | 自动复制草稿到剪贴板 | 已实现手动复制正文；不默认自动复制 | P1 |
+| T2 | `POST /chat/transform` 文本变换端点 | 已实现薄路由 + `app/features/chat/transform_service.py` | P1 |
+| T1 | 改写/翻译/总结一键按钮 | 已实现消息操作区按钮，结果回填输入框 | P2 |
 | A3 | PDF 生成 | 文本类 Markdown/txt → PDF 已实现；xlsx/pptx 转 PDF 不做 | P1 |
 | A4 | tag-printing Skill | 不存在于代码库（Codex 误标在 `_release/`） | 后续/待确认需求 |
 
@@ -221,11 +221,11 @@
 
 | # | 改动范围 | 验收 |
 |---|---|---|
-| B1 | 后端用标准库 `email`/`email.policy` 生成 `.eml` → `GeneratedFile`；前端结果卡片加"下载 .eml" | 后端 `pytest`（.eml 可被邮件客户端解析头/正文） |
-| B2 | 前端结果卡片生成 `mailto:` 链接并由主进程/默认客户端打开 | 手工：点击拉起本地邮件客户端 |
-| B3 | 邮件草稿 Skill 结果卡片加"复制到剪贴板"（含自动复制可选项） | `bun run typecheck` + 手工 |
+| B1 | 后端用标准库 `email`/`email.policy` 生成 `.eml` → `GeneratedFile`；前端结果卡片按邮件草稿展示 | 后端 `pytest`（.eml 可被邮件客户端解析头/正文） |
+| B2 | 前端结果卡片生成 `mailto:` 链接并由默认邮件客户端打开 | 手工：点击拉起本地邮件客户端 |
+| B3 | 邮件草稿结果卡片加"复制正文"；不默认静默写剪贴板 | `bun run typecheck` + 手工 |
 | T2 | `backend/api/chat.py` 新增薄路由 `POST /chat/transform`（text+action: rewrite/translate/summarize/expand），逻辑放 `app/features/chat/` | 后端 `pytest` 四类 action |
-| T1 | 工具栏/选中文本浮动按钮，调用 T2；结果可替换或作为新消息 | `bun run typecheck` + Playwright |
+| T1 | 消息操作区一键改写/翻译/总结/扩写，调用 T2；结果回填输入框由用户确认 | `bun run typecheck` |
 
 ---
 
@@ -319,9 +319,10 @@ Sprint 5.2  Skill dispatcher 文件输出 tool（P0）
 └── 复用现有下载卡片与工作区手动保存边界；不自动保存、不自动入库 GBrain
 
 Sprint 6  Agent 邮件与文本变换（P1/P2）
-├── B1 .eml（作为一个 exporter 接入产出接缝）/ B2 mailto / B3 剪贴板
-├── T2 transform 端点（薄路由 + app/features/chat/ 服务）【Codex审核】
-└── T1 一键变换按钮（调用 T2）
+├── B1 .eml 已作为 exporter 接入产出接缝，Skill dispatcher 可传 subject/body/to/cc/bcc
+├── B2/B3 邮件草稿卡：复制正文、打开默认邮件客户端、下载 .eml；不自动发送
+├── T2 transform 端点已保持薄路由，逻辑在 `app/features/chat/transform_service.py`
+└── T1 消息操作区一键改写/翻译/总结/扩写，结果回填输入框等待用户确认
 
 板块三 · GBrain
 Sprint 7  知识库前端模块接缝（架构地基，P0）【Codex接管】
