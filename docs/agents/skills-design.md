@@ -176,7 +176,49 @@ references:
 
 一个 Skill 可以有多个 output，按顺序执行。
 
-### 6.1 输出保存边界
+### 6.1 文件输出工具
+
+业务 Skill 需要生成文件时，使用 dispatcher 工具 `project_r.document.render`。该工具复用 Project_R 文档生成接缝，支持 `docx`、`markdown`、`txt`、`xlsx`、`pptx`、`pdf`；其中 PDF 只用于 Markdown/txt 等文本类内容渲染，不做 xlsx/pptx 转 PDF。
+
+最小示例：
+
+```yaml
+outputs:
+  - type: file
+    format: pdf
+execution:
+  mode: dispatcher
+  steps:
+    - id: render
+      label: 生成会议纪要 PDF
+      tool: project_r.document.render
+      format: pdf
+      title_template: 会议纪要_{project_code}
+      content_field: content
+governance:
+  risk_level: low
+  requires_confirmation: false
+  allowed_tools:
+    - project_r.document.render
+```
+
+字段说明：
+
+| 字段 | 含义 |
+|---|---|
+| `format` | 输出格式；优先使用 step 上的 `format`，未设置时读取 `outputs[0].format` |
+| `content_field` | 从已收集的 Skill 输入中读取正文内容 |
+| `title_template` | 文件标题模板，支持 `{input_name}` 替换 |
+| `title_field` | 可选；从某个输入字段读取标题 |
+
+边界：
+
+- Skill 必须在 `governance.allowed_tools` 中显式允许 `project_r.document.render`。
+- 生成后只返回下载卡片；项目/客户工作区保存仍需用户点击确认。
+- 保存到工作区不等于自动入库 GBrain。
+- 当前 Sprint 5.2 不做 `llm.complete -> document.render` 的跨 step 结果传递；文件正文来自已收集输入。
+
+### 6.2 输出保存边界
 
 - 个人工作台中的轻量业务 Skill / Agent 输出默认只作为本轮结果展示，可复制内容或下载到本地；不提供保存到项目/客户资料的跨工作区动作。
 - 项目/客户工作区中的业务 Skill / Agent 输出也必须先作为本轮结果展示；只有用户确认保存后，才写入当前工作区文件面板。
@@ -184,7 +226,7 @@ references:
 - 保存到工作区文件面板不等于自动入库 GBrain；GBrain 入库仍需要显式入库动作或另行确认的自动规则。
 - 保存后的工作区 Skill / Agent 输出如果属于当前预处理 Skill 支持的文件类型，可进入该工作区待录入候选；个人工作台输出不进入待录入候选。
 
-### 6.2 预处理 Skill 输出模板
+### 6.3 预处理 Skill 输出模板
 
 预处理 Skill 的输出模板服从 GBrain 吸收质量，而不是 Project_R 自己的展示偏好。设计模板前必须先检查 GBrain schema pack、enrich skill、entity detection、timeline、graph、citation、source sync 和相关 recipe。
 
@@ -227,7 +269,7 @@ created_at: ...
 
 各 Skill 可以增加专属章节，但必须保留 evidence，不允许只输出总结。事实、解释和不确定点必须分开。
 
-### 6.3 预处理模型路由
+### 6.4 预处理模型路由
 
 - 纯文本资料处理使用 DeepSeek。
 - PDF、截图、图纸、设计图片、视觉版式资料统一使用 MiMo V2.5；不使用 MiMo V2.5 Pro。

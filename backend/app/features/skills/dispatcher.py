@@ -3,6 +3,7 @@ from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
+from app.features.skills.document_tools import default_document_tools
 from app.features.skills.runner import SkillDefinition, SkillRunner, run_to_dict
 from models.skill_run import SkillRun
 
@@ -16,8 +17,10 @@ class SkillDispatchBlocked(SkillDispatchError):
 
 
 class SkillDispatcher:
-    def __init__(self):
-        self._tools: dict[str, Callable[..., dict[str, Any]]] = {}
+    def __init__(self, tools: dict[str, Callable[..., dict[str, Any]]] | None = None):
+        self._tools: dict[str, Callable[..., dict[str, Any]]] = default_document_tools()
+        if tools:
+            self._tools.update(tools)
 
     def execute(self, db: Session, run: SkillRun, *, generated_root: Path) -> SkillRun:
         skill = SkillRunner.get().get_skill(run.skill_name)
@@ -39,6 +42,10 @@ class SkillDispatcher:
                 raise SkillDispatchError(f"Skill tool not registered: {tool_name}")
             result = tool(db=db, run=run, skill=skill, step=step, inputs=inputs, generated_root=generated_root)
             results.append({"step_id": str(step.get("id") or ""), "tool": tool_name, **result})
+            generated_file = result.get("generated_file")
+            if isinstance(generated_file, dict) and generated_file.get("id"):
+                run.generated_file_id = str(generated_file["id"])
+                db.flush()
         run.status = "completed"
         return run
 

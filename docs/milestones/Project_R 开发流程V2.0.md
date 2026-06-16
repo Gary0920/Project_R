@@ -19,6 +19,7 @@
 | 2026-06-15 | 架构优先重排 | 引入"接缝优先 + 反堆叠护栏"，按技术依赖重排执行顺序，新增任务完成定义（DoD）；详见 §3.6 与 §7 |
 | 2026-06-16 | Sprint 5 MVP 闭环 | Agent 文件产出新增 xlsx/pptx 格式，复用显式命令、renderer 注册表与工作区保存链路 |
 | 2026-06-16 | Sprint 5.1 优化闭环 | 建立 Markdown 结构化解析接缝，拆分 renderer，新增文本类 PDF 渲染；不做 xlsx/pptx 转 PDF |
+| 2026-06-16 | Sprint 5.2 设计落地 | 新增 `project_r.document.render` dispatcher tool，Skill 可从已收集输入生成 `GeneratedFile` |
 
 本次修订对照了 Codex 生成的计划框架（`steady-yawning-phoenix.md`）并逐项核对真实代码，修正了其中的依赖误判（`playwright` 实际不在依赖、`openpyxl` 已存在）、状态误判（多项"未实现"实为"部分实现"），以及一个被忽略的关键约束：`intent.py` 已冻结显式路由，使旧 docx 生成分支成为不可达死代码。
 
@@ -311,6 +312,11 @@ Sprint 5.1  Agent 文件渲染质量优化（P0/P1）
 ├── Markdown 结构化解析接缝：标题/列表/表格/引用/代码语义统一解析
 ├── renderer 拆分：docx/md/txt/xlsx/pptx/pdf 各自独立实现并复用解析结果
 └── 文本类 PDF：仅 Markdown/txt 渲染，不做 xlsx/pptx 转 PDF
+
+Sprint 5.2  Skill dispatcher 文件输出 tool（P0）
+├── 新增 `project_r.document.render` 默认 dispatcher tool
+├── Skill 可通过 `content_field`、`title_template`、`format` 从已收集输入生成 `GeneratedFile`
+└── 复用现有下载卡片与工作区手动保存边界；不自动保存、不自动入库 GBrain
 
 Sprint 6  Agent 邮件与文本变换（P1/P2）
 ├── B1 .eml（作为一个 exporter 接入产出接缝）/ B2 mailto / B3 剪贴板

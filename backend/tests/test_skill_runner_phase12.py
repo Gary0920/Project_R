@@ -8,6 +8,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.NamedTemporaryFile(delete=Fal
 import api.skills as skills_api
 import app.features.skills.execution as skill_execution
 from app.features.skills.dispatcher import SkillDispatchError, SkillDispatcher
+from app.features.skills.document_tools import DOCUMENT_RENDER_TOOL
 from app.features.skills.runner import SkillDefinition
 from app.features.skills.runner import SkillRunner
 from fastapi import HTTPException
@@ -207,6 +208,59 @@ class SkillRunnerPhase12Tests(unittest.TestCase):
 
         with self.assertRaises(SkillDispatchError):
             SkillDispatcher().execute(self.db, run, generated_root=Path(self.generated_root.name))
+
+    def test_dispatcher_document_render_tool_generates_file(self):
+        runner = SkillRunner.get()
+        runner._skills["document-render-test"] = SkillDefinition(
+            name="document-render-test",
+            display_name="文件生成测试",
+            description="Render a file from collected skill input",
+            category="test",
+            priority="low",
+            trigger=[],
+            inputs=[
+                {"name": "project_code", "type": "string", "label": "项目编号", "required": True},
+                {"name": "content", "type": "text", "label": "正文", "required": True},
+            ],
+            outputs=[{"type": "file", "format": "pdf"}],
+            references=[],
+            execution={
+                "mode": "dispatcher",
+                "steps": [
+                    {
+                        "id": "render",
+                        "label": "生成 PDF 文件",
+                        "tool": DOCUMENT_RENDER_TOOL,
+                        "format": "pdf",
+                        "title_template": "会议纪要_{project_code}",
+                        "content_field": "content",
+                    }
+                ],
+            },
+            governance={"risk_level": "low", "allowed_tools": [DOCUMENT_RENDER_TOOL]},
+            path="skills/builtin/document-render-test/SKILL.md",
+        )
+
+        response = skills_api.start_skill_run(
+            skills_api.StartSkillRunRequest(
+                skill_name="document-render-test",
+                session_id=self.session.id,
+                inputs={
+                    "project_code": "BG2026-001",
+                    "content": "# 会议纪要\n\n**决策**：继续推进\n\n| 字段 | 内容 |\n| --- | --- |\n| 负责人 | 张三 |",
+                },
+            ),
+            self.employee,
+            self.db,
+        )
+
+        self.assertEqual(response.status, "completed")
+        self.assertIsNotNone(response.generated_file)
+        assert response.generated_file is not None
+        self.assertTrue(response.generated_file["filename"].endswith(".pdf"))
+        self.assertEqual(response.generated_file["mime_type"], "application/pdf")
+        self.assertIsNotNone(self.db.get(SkillRun, response.id).generated_file_id)
+        self.assertTrue((Path(self.generated_root.name) / str(self.employee.id) / f"{response.generated_file['id']}.pdf").exists())
 
 
 if __name__ == "__main__":

@@ -10,7 +10,6 @@ from models.skill_run import SkillRun
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 GENERATED_FILES_ROOT = Path(os.getenv("GENERATED_FILES_PATH", str(BASE_DIR / "generated_files")))
-XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def generated_file_payload(db: Session, file_id: str | None) -> dict[str, str] | None:
@@ -20,7 +19,7 @@ def generated_file_payload(db: Session, file_id: str | None) -> dict[str, str] |
     return {
         "id": file_id,
         "filename": file_record.filename if file_record else "",
-        "mime_type": file_record.mime_type if file_record else XLSX_MIME,
+        "mime_type": file_record.mime_type if file_record else "application/octet-stream",
         "download_url": f"/documents/{file_id}/download",
     }
 
