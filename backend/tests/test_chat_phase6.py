@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 import json
 import os
@@ -10,7 +11,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.NamedTemporaryFile(delete=Fal
 
 import api.chat as chat_api
 import app.features.skills.execution as skill_execution
-from app.shared.llm.client import LLMProviderError, LLMResponse
+from app.shared.llm.client import LLMProviderError, LLMResponse, StreamChunk, StreamResponse
 from app.shared.web_search.service import WebSearchResponse, WebSearchResult
 from fastapi import HTTPException
 from models import Base, SessionLocal, engine
@@ -46,6 +47,32 @@ class FakeLLMClient:
             key_index=1,
             usage={"input_tokens": 2, "output_tokens": 3},
         )
+
+
+class FakeStreamingLLMClient(FakeLLMClient):
+    def stream(self, messages, *, system_prompt=None, thinking=False, reasoning_effort=None, temperature=None):
+        self.last_system_prompt = system_prompt
+        self.last_thinking = thinking
+        self.last_temperature = temperature
+        yield StreamChunk(text_delta="hello ")
+        yield StreamChunk(text_delta="stream")
+        return StreamResponse(
+            text="hello stream",
+            model="mock-stream-model",
+            provider="mock",
+            key_index=1,
+            usage={"input_tokens": 4, "output_tokens": 5},
+        )
+
+
+async def collect_streaming_response_body(response) -> str:
+    chunks: list[str] = []
+    async for chunk in response.body_iterator:
+        if isinstance(chunk, bytes):
+            chunks.append(chunk.decode("utf-8"))
+        else:
+            chunks.append(str(chunk))
+    return "".join(chunks)
 
 
 def fake_gbrain_company_sources():
@@ -1327,6 +1354,63 @@ class ChatPhase6Tests(unittest.TestCase):
         with self.assertRaises(HTTPException) as exc:
             chat_api.get_session(self.session.id, self.user, self.db)
         self.assertEqual(exc.exception.status_code, 404)
+
+    def test_stream_persistence_uses_fresh_db_session_after_request_session_closes(self):
+        chat_api.get_llm_client = lambda provider=None: FakeStreamingLLMClient()
+        original_session_factory = chat_api.SessionLocal
+        created_stream_sessions = []
+
+        def tracking_session_factory():
+            stream_db = SessionLocal()
+            created_stream_sessions.append(stream_db)
+            return stream_db
+
+        chat_api.SessionLocal = tracking_session_factory
+        session_id = self.session.id
+        user_id = self.user.id
+        original_updated_at = self.session.updated_at
+        try:
+            response = chat_api.send_message(
+                session_id,
+                chat_api.SendMessageRequest(content="hello", stream=True),
+                self.user,
+                self.db,
+            )
+            self.db.close()
+
+            body = asyncio.run(collect_streaming_response_body(response))
+        finally:
+            chat_api.SessionLocal = original_session_factory
+
+        self.assertTrue(created_stream_sessions)
+        self.assertIn('"delta": "hello "', body)
+        self.assertIn('"done": true', body)
+
+        verify_db = SessionLocal()
+        try:
+            messages = (
+                verify_db.query(ChatMessage)
+                .filter(ChatMessage.session_id == session_id)
+                .order_by(ChatMessage.id.asc())
+                .all()
+            )
+            self.assertEqual([message.role for message in messages], ["user", "assistant"])
+            self.assertEqual(messages[0].content, "hello")
+            self.assertEqual(messages[1].content, "hello stream")
+            self.assertEqual(messages[1].status, "success")
+            self.assertEqual(messages[1].provider, "mock")
+            self.assertEqual(messages[1].model, "mock-stream-model")
+            self.assertEqual(messages[1].token_total, 9)
+
+            audit = verify_db.query(AuditLog).filter(AuditLog.action == "chat_stream").one()
+            self.assertEqual(audit.user_id, user_id)
+            self.assertTrue(audit.success)
+
+            refreshed_session = verify_db.get(ChatSession, session_id)
+            self.assertIsNotNone(refreshed_session)
+            self.assertNotEqual(refreshed_session.updated_at, original_updated_at)
+        finally:
+            verify_db.close()
 
     def test_llm_failure_keeps_user_message_and_writes_failed_audit(self):
         chat_api.get_llm_client = lambda provider=None: FakeLLMClient(should_fail=True)

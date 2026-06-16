@@ -5,7 +5,8 @@ import os
 import re
 import socket
 import threading
-from dataclasses import dataclass
+from collections.abc import Generator
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
@@ -87,6 +88,34 @@ class LLMResponse:
         )
 
 
+@dataclass
+class StreamChunk:
+    """单次流式增量块。"""
+    text_delta: str
+    finish_reason: str | None = None
+    usage: dict[str, int] | None = None
+    model: str | None = None
+    raw_id: str | None = None
+
+
+@dataclass
+class StreamResponse:
+    """流式完成后聚合的结果。"""
+    text: str
+    model: str
+    provider: str
+    key_index: int
+    usage: dict[str, int]
+    raw_id: str | None = None
+    finish_reason: str | None = None
+
+    @property
+    def token_cost(self) -> int:
+        return int(self.usage.get("input_tokens", 0)) + int(
+            self.usage.get("output_tokens", 0)
+        )
+
+
 class LLMClient(Protocol):
     settings: ProviderSettings
 
@@ -99,6 +128,18 @@ class LLMClient(Protocol):
         reasoning_effort: str | None = None,
         temperature: float | None = None,
     ) -> LLMResponse:
+        ...
+
+    def stream(
+        self,
+        messages: list[LLMMessage],
+        *,
+        system_prompt: str | None = None,
+        thinking: bool = False,
+        reasoning_effort: str | None = None,
+        temperature: float | None = None,
+    ) -> Generator[StreamChunk, None, StreamResponse]:
+        """流式完成。yield 增量文本块，最后 return StreamResponse（汇总信息）。"""
         ...
 
 
@@ -152,6 +193,46 @@ class BaseProviderClient:
                 last_error = exc
                 if not exc.retryable and exc.status_code not in KEY_SPECIFIC_STATUS_CODES:
                     raise exc
+                # 对 retryable + KEY_SPECIFIC 异常，继续换 key 重试
+                # (与完全请求失败不同，partial consume 后端丢弃)
+
+        if last_error:
+            raise last_error
+        raise LLMConfigurationError("未配置当前 Provider 的 API Key")
+
+    def stream(
+        self,
+        messages: list[LLMMessage],
+        *,
+        system_prompt: str | None = None,
+        thinking: bool = False,
+        reasoning_effort: str | None = None,
+        temperature: float | None = None,
+    ) -> Generator[StreamChunk, None, StreamResponse]:
+        self._validate_messages(messages)
+        payload = self._build_stream_payload(
+            messages,
+            system_prompt or self.settings.system_prompt,
+            thinking,
+            reasoning_effort or self.settings.reasoning_effort,
+            temperature,
+        )
+
+        last_error: LLMProviderError | None = None
+        for key in self._pool.next_rotation():
+            aggregated: list[StreamChunk] = []
+            try:
+                for chunk in self._stream_post(key, payload):
+                    aggregated.append(chunk)
+                    yield chunk
+                return self._aggregate_stream_response(aggregated, key.index)
+            except LLMProviderError as exc:
+                exc.key_index = key.index
+                if aggregated:
+                    raise exc  # 已有 token 发出，不可重试（否则重复/混合回复）
+                last_error = exc
+                if not exc.retryable and exc.status_code not in KEY_SPECIFIC_STATUS_CODES:
+                    raise exc
 
         if last_error:
             raise last_error
@@ -172,6 +253,93 @@ class BaseProviderClient:
 
     def _parse_response(self, raw: dict[str, Any], key_index: int) -> LLMResponse:
         raise NotImplementedError
+
+    def _build_stream_payload(
+        self,
+        messages: list[LLMMessage],
+        system_prompt: str | None,
+        thinking: bool,
+        reasoning_effort: str | None,
+        temperature: float | None = None,
+    ) -> dict[str, Any]:
+        """默认复用非流式 payload 并追加 stream:true。子类按需覆写。"""
+        payload = self._build_payload(
+            messages, system_prompt, thinking, reasoning_effort, temperature
+        )
+        payload["stream"] = True
+        return payload
+
+    def _stream_post(self, key: ProviderKey, payload: dict[str, Any]) -> Generator[StreamChunk, None, None]:
+        """发起流式 POST 请求，逐行读取 SSE 并 yield 解析后的 StreamChunk。"""
+        raise NotImplementedError
+
+    def _aggregate_stream_response(
+        self, chunks: list[StreamChunk], key_index: int
+    ) -> StreamResponse:
+        """从已收集的 chunk 列表聚合最终 StreamResponse。"""
+        text = "".join(chunk.text_delta for chunk in chunks)
+        model = self.settings.model
+        raw_id: str | None = None
+        usage: dict[str, int] = {}
+        finish_reason: str | None = None
+        for chunk in chunks:
+            if chunk.model:
+                model = chunk.model
+            if chunk.raw_id:
+                raw_id = chunk.raw_id
+            if chunk.usage:
+                usage = chunk.usage
+            if chunk.finish_reason:
+                finish_reason = chunk.finish_reason
+        return StreamResponse(
+            text=text,
+            model=model,
+            provider=self.settings.provider,
+            key_index=key_index,
+            usage=usage,
+            raw_id=raw_id,
+            finish_reason=finish_reason,
+        )
+
+    def _read_sse_stream(
+        self,
+        url: str,
+        key: ProviderKey,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+    ) -> Generator[dict[str, Any], None, None]:
+        """发送流式 POST 请求，逐行读取 SSE 并 yield 每个解析后的 data JSON 对象。"""
+        body = json.dumps(payload).encode("utf-8")
+        request = Request(url, data=body, method="POST", headers=headers)
+
+        try:
+            with urlopen(request, timeout=self.settings.timeout_seconds) as response:
+                for raw_line in response:
+                    line = raw_line.decode("utf-8").strip()
+                    if not line:
+                        continue
+                    if line.startswith("data:"):
+                        data_str = line[len("data:"):].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            yield json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+                    # Anthropic SSE 格式：event: <name> 行后跟 data: <json> 行
+                    # 上面已处理 data: 行，"event:" 行可忽略（data 自带 type 字段）
+        except HTTPError as exc:
+            message = self._read_error_message(exc)
+            raise LLMProviderError(
+                message,
+                status_code=exc.code,
+                retryable=exc.code in RETRYABLE_STATUS_CODES,
+            ) from exc
+        except (TimeoutError, socket.timeout, URLError) as exc:
+            raise LLMProviderError(
+                f"{self.settings.provider} API 流式连接中断: {exc}",
+                retryable=True,
+            ) from exc
 
     def _request_json(
         self,
@@ -231,6 +399,63 @@ class BaseProviderClient:
 
 
 class AnthropicMessagesClient(BaseProviderClient):
+    def _stream_post(self, key: ProviderKey, payload: dict[str, Any]) -> Generator[StreamChunk, None, None]:
+        url = f"{self.settings.base_url.rstrip('/')}/v1/messages"
+        headers = {
+            "x-api-key": key.value,
+            "anthropic-version": self.settings.api_version or "2023-06-01",
+            "content-type": "application/json",
+        }
+        model = self.settings.model
+        raw_id: str | None = None
+        usage: dict[str, int] = {}
+        finish_reason: str | None = None
+
+        for event in self._read_sse_stream(url, key, payload, headers):
+            event_type = event.get("type", "")
+            if event_type == "content_block_delta":
+                delta = event.get("delta") or {}
+                if isinstance(delta, dict) and delta.get("type") == "text_delta":
+                    yield StreamChunk(text_delta=delta.get("text", ""))
+            elif event_type == "content_block_start":
+                pass  # 源块元数据，暂无需要提取
+            elif event_type == "content_block_stop":
+                pass
+            elif event_type == "message_delta":
+                if event.get("usage"):
+                    usage["output_tokens"] = int(event["usage"].get("output_tokens", 0))
+                    # message_start 已设置 input_tokens，message_delta 只提供累积 output_tokens
+                    if "input_tokens" not in usage:
+                        usage["input_tokens"] = int(event["usage"].get("input_tokens", 0))
+                if event.get("delta", {}).get("stop_reason"):
+                    finish_reason = event["delta"]["stop_reason"]
+            elif event_type == "message_start":
+                model = event.get("message", {}).get("model", model)
+                raw_id = event.get("message", {}).get("id")
+                if event.get("message", {}).get("usage"):
+                    usage = {
+                        "input_tokens": int(event["message"]["usage"].get("input_tokens", 0)),
+                        "output_tokens": 0,
+                    }
+            elif event_type == "message_stop":
+                # 最终发送汇总（含 finish_reason 与 usage）
+                pass
+            elif event_type == "error":
+                raise LLMProviderError(
+                    event.get("error", {}).get("message", "Anthropic 流式错误"),
+                    retryable=False,
+                    key_index=key.index,
+                )
+
+        # 发送最终 chunk 携带 usage 与 finish_reason
+        yield StreamChunk(
+            text_delta="",
+            finish_reason=finish_reason,
+            usage=usage,
+            model=model,
+            raw_id=raw_id,
+        )
+
     def _build_payload(
         self,
         messages: list[LLMMessage],
@@ -288,6 +513,64 @@ class AnthropicMessagesClient(BaseProviderClient):
 
 
 class OpenAICompatibleChatClient(BaseProviderClient):
+    def _build_stream_payload(
+        self,
+        messages: list[LLMMessage],
+        system_prompt: str | None,
+        thinking: bool,
+        reasoning_effort: str | None,
+        temperature: float | None = None,
+    ) -> dict[str, Any]:
+        payload = self._build_payload(
+            messages, system_prompt, thinking, reasoning_effort, temperature
+        )
+        payload["stream"] = True
+        payload["stream_options"] = {"include_usage": True}
+        return payload
+
+    def _stream_post(self, key: ProviderKey, payload: dict[str, Any]) -> Generator[StreamChunk, None, None]:
+        base_url = self.settings.base_url.rstrip("/")
+        if base_url.endswith("/v1"):
+            url = f"{base_url}/chat/completions"
+        else:
+            url = f"{base_url}/v1/chat/completions"
+        headers = {
+            "authorization": f"Bearer {key.value}",
+            "content-type": "application/json",
+        }
+        model = self.settings.model
+        raw_id: str | None = None
+        usage: dict[str, int] = {}
+        finish_reason: str | None = None
+        # 流式模式通常不返回 usage，约定在最后一个 chunk 携带 usage=0
+        # 标记以便业务层只在非零时覆盖
+
+        for event in self._read_sse_stream(url, key, payload, headers):
+            raw_id = event.get("id", raw_id)
+            model = event.get("model", model)
+            choices = event.get("choices") or []
+            choice = choices[0] if choices else {}
+            delta = (choice.get("delta") if isinstance(choice, dict) else {}) or {}
+            content = delta.get("content", "")
+            if isinstance(content, str) and content:
+                yield StreamChunk(text_delta=content)
+            if choice.get("finish_reason"):
+                finish_reason = choice["finish_reason"]
+            evt_usage = event.get("usage")
+            if isinstance(evt_usage, dict):
+                usage = {
+                    "input_tokens": int(evt_usage.get("prompt_tokens", 0)),
+                    "output_tokens": int(evt_usage.get("completion_tokens", 0)),
+                }
+
+        yield StreamChunk(
+            text_delta="",
+            finish_reason=finish_reason,
+            usage=usage,
+            model=model,
+            raw_id=raw_id,
+        )
+
     def _build_payload(
         self,
         messages: list[LLMMessage],

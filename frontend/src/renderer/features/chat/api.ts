@@ -194,6 +194,144 @@ export function sendChatMessage(
   });
 }
 
+export interface ChatStreamDelta {
+  delta?: string;
+  done?: boolean;
+  reply?: string;
+  provider?: string;
+  model?: string;
+  usage?: Record<string, number>;
+  assistant_message_id?: number;
+  user_message_id?: number;
+  intent?: string;
+  error?: string;
+  sources?: any[];
+  user_attachments?: any[];
+  context_trace?: any;
+  generated_file?: any;
+  skill_run?: any;
+  agent_run?: any;
+}
+
+export async function sendChatMessageStream(
+  options: ApiClientOptions,
+  sessionId: number,
+  content: string,
+  systemPrompt: string | null | undefined,
+  files: string[],
+  provider: string | null | undefined,
+  modelProfile: string | null | undefined,
+  selectedSkill: string | null | undefined,
+  selectedPromptId: string | null | undefined,
+  forceKnowledgeQuery: boolean | undefined,
+  thinking: boolean | undefined,
+  webSearch: boolean | undefined,
+  signal: AbortSignal | undefined,
+  onDelta: (text: string) => void,
+): Promise<ChatStreamDelta> {
+  const url = `${options.baseUrl.replace(/\/+$/, "")}/chat/sessions/${sessionId}/messages`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+    },
+    signal,
+    body: JSON.stringify({
+      content,
+      system_prompt: systemPrompt ?? null,
+      files,
+      provider: provider ?? null,
+      model_profile: modelProfile ?? null,
+      selected_skill: selectedSkill ?? null,
+      selected_prompt_id: selectedPromptId ?? null,
+      force_knowledge_query: Boolean(forceKnowledgeQuery),
+      thinking: Boolean(thinking),
+      web_search: Boolean(webSearch),
+      stream: true,
+    }),
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      options.onUnauthorized?.();
+      throw new ApiError("认证失效", 401);
+    }
+    const text = await response.text().catch(() => "");
+    throw new ApiError(text || `HTTP ${response.status}`, response.status);
+  }
+
+  // 非 SSE 响应（后端在流式分支前返回的 JSON，如自动 Skill 触发/知识查询）→ 直接解析
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json") || !contentType.includes("text/event-stream")) {
+    const json: any = await response.json();
+    return {
+      done: true,
+      reply: json.reply ?? "",
+      provider: json.provider,
+      model: json.model,
+      usage: json.usage ?? {},
+      assistant_message_id: json.assistant_message_id,
+      user_message_id: json.user_message_id,
+      sources: json.sources ?? [],
+      user_attachments: json.user_attachments ?? [],
+      context_trace: json.context_trace ?? null,
+      intent: json.intent ?? "chat",
+      generated_file: json.generated_file ?? null,
+      skill_run: json.skill_run ?? null,
+      agent_run: json.agent_run ?? null,
+    } satisfies ChatStreamDelta;
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new ApiError("浏览器不支持流式读取", 0);
+
+  const decoder = new TextDecoder();
+  let lastDelta: ChatStreamDelta = {};
+
+  try {
+    let buffer = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith("data:")) continue;
+        const payload = trimmed.slice(5).trim();
+        if (payload === "[STREAM-DONE]") continue;
+
+        try {
+          const event: ChatStreamDelta = JSON.parse(payload);
+          if (event.delta) {
+            onDelta(event.delta);
+          }
+          if (event.done) {
+            lastDelta = event;
+          }
+          if (event.error) {
+            throw new ApiError(event.error, 503);
+          }
+        } catch (err) {
+          if (err instanceof ApiError) throw err;
+          // 非 JSON 行跳过
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (!lastDelta.done) {
+    throw new ApiError("流式响应未完成", 503);
+  }
+  return lastDelta;
+}
+
 export function createSessionAttachment(
   options: ApiClientOptions,
   sessionId: number,

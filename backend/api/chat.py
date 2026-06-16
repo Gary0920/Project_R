@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
@@ -20,6 +21,7 @@ from app.features.chat.audio_transcription_skill import (
 )
 from app.features.chat import attachment_api as chat_attachment_api
 from app.features.chat import feedback_api as chat_feedback_api
+from app.features.chat import stream_service as chat_stream
 from app.features.chat.intent import IntentType, classify_intent
 from app.features.chat.context_trace import (
     build_context_trace,
@@ -95,7 +97,7 @@ from app.features.prompts.system_prompt import (
     compose_system_prompt,
     should_reduce_knowledge_context,
 )
-from models import get_db
+from models import SessionLocal, get_db
 from models.audit_log import AuditLog
 from models.attachment import SessionAttachment
 from models.message import ChatMessage
@@ -995,6 +997,52 @@ def send_message(
         reduce_knowledge_context,
         web_search_context=web_search_context,
     )
+
+    if req.stream:
+        # ============================================================
+        # 流式分支：返回 SSE StreamingResponse
+        # ============================================================
+        ctx_trace = build_context_trace(
+            session=session,
+            req=req,
+            attachments=selected_attachments,
+            sources=response_sources,
+            intent=effective_intent,
+            provider="streaming",
+            model=requested_model,
+            requested_model=requested_model,
+            reduce_knowledge_context=reduce_knowledge_context,
+            extra={
+                **_web_search_context_extra(web_search_trace),
+            },
+        )
+        return StreamingResponse(
+            chat_stream.generate_sse_stream(
+                llm_client=llm_client,
+                llm_messages=llm_messages,
+                system_prompt=system_prompt,
+                thinking=req.thinking,
+                session_factory=SessionLocal,
+                session_id=session.id,
+                user_id=user.id,
+                requested_model=requested_model,
+                sources_json=json.dumps(response_sources, ensure_ascii=False),
+                context_json=json.dumps(ctx_trace, ensure_ascii=False),
+                rag_used=bool(response_sources),
+                llm_user_content=llm_user_content,
+                user_message_id=user_message.id,
+                user_attachments_json=json.dumps(
+                    [_attachment_to_response_dict(a) for a in selected_attachments],
+                    ensure_ascii=False,
+                ),
+                intent=effective_intent.value,
+            ),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     try:
         llm_response = llm_client.complete(
