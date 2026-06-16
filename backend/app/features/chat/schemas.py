@@ -53,6 +53,7 @@ class SendMessageRequest(BaseModel):
     thinking: bool = False
     web_search: bool = False
     system_prompt: str | None = None
+    temperature: float | None = Field(default=None, ge=0, le=2)
 
 
 class RegenerateMessageRequest(BaseModel):
@@ -61,7 +62,7 @@ class RegenerateMessageRequest(BaseModel):
     thinking: bool = False
     web_search: bool = False
     system_prompt: str | None = None
-    temperature: float = Field(default=0.9, ge=0, le=2)
+    temperature: float | None = Field(default=None, ge=0, le=2)
 
 
 class EditMessageRequest(BaseModel):

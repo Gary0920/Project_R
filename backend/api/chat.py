@@ -2,11 +2,13 @@ from datetime import datetime, timedelta, timezone
 import json
 import logging
 import os
+import re
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
@@ -22,6 +24,7 @@ from app.features.chat.audio_transcription_skill import (
 from app.features.chat import attachment_api as chat_attachment_api
 from app.features.chat import feedback_api as chat_feedback_api
 from app.features.chat import stream_service as chat_stream
+from app.features.chat.export_service import export_session as _export_session
 from app.features.chat.intent import IntentType, classify_intent
 from app.features.chat.context_trace import (
     build_context_trace,
@@ -779,6 +782,32 @@ def list_messages(
     )
 
 
+@router.get("/sessions/{session_id}/export")
+def export_session_route(
+    session_id: int,
+    format: str = Query(default="markdown", pattern="^(markdown|json)$"),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """导出会话为 Markdown 或 JSON。"""
+    session = _get_user_session(db, user.id, session_id)  # 已包含所有权校验
+    filename, content = _export_session(db, session, format, user_id=user.id)  # type: ignore
+    media_type = "text/markdown" if format == "markdown" else "application/json"
+    # 使用 RFC 5987 编码确保非 ASCII 文件名安全，避免 Content-Disposition 参数注入
+    # filename*="UTF-8''..." 是现代浏览器标准，`quote` 转义特殊字符
+    encoded_filename = quote(filename, safe="")
+    # filename="" 作为旧客户端 fallback，仅保留 ASCII 安全字符
+    ascii_fallback = re.sub(r'[^\x20-\x7E]', '_', filename)
+    ascii_fallback = ascii_fallback.replace('"', "_").replace("\\", "_").replace(";", "_")
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{ascii_fallback}"; filename*=UTF-8\'\'{encoded_filename}'
+        },
+    )
+
+
 @router.post("/sessions/{session_id}/messages")
 def send_message(
     session_id: int,
@@ -1022,6 +1051,7 @@ def send_message(
                 llm_messages=llm_messages,
                 system_prompt=system_prompt,
                 thinking=req.thinking,
+                temperature=req.temperature,
                 session_factory=SessionLocal,
                 session_id=session.id,
                 user_id=user.id,
@@ -1049,6 +1079,7 @@ def send_message(
             llm_messages,
             system_prompt=system_prompt,
             thinking=req.thinking,
+            temperature=req.temperature,
         )
     except LLMConfigurationError as exc:
         _write_failed_assistant_message(db, user.id, session_id, str(exc), requested_model)

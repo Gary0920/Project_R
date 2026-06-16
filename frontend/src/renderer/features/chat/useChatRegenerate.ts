@@ -70,7 +70,7 @@ export function useChatRegenerate({
         systemPrompt: composeSystemPrompt(selectedPromptContent, mode),
         thinking: thinkingEnabled,
         webSearch: webSearchEnabled,
-        temperature: 0.9,
+        temperature: undefined,
       });
       const excludedIds = new Set(response.excluded_message_ids);
       const typingMessage: ChatMessage = {

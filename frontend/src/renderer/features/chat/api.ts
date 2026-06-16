@@ -76,7 +76,7 @@ export function regenerateChatMessage(
         system_prompt: data.systemPrompt ?? null,
         thinking: Boolean(data.thinking),
         web_search: Boolean(data.webSearch),
-        temperature: data.temperature ?? 0.9,
+        temperature: data.temperature ?? null,
       }),
     },
   );
@@ -174,6 +174,7 @@ export function sendChatMessage(
   forceKnowledgeQuery?: boolean,
   thinking?: boolean,
   webSearch?: boolean,
+  temperature?: number,
   signal?: AbortSignal,
 ) {
   return apiRequest<SendChatMessageResponse>(options, `/chat/sessions/${sessionId}/messages`, {
@@ -190,6 +191,7 @@ export function sendChatMessage(
       force_knowledge_query: Boolean(forceKnowledgeQuery),
       thinking: Boolean(thinking),
       web_search: Boolean(webSearch),
+      temperature: temperature ?? null,
     }),
   });
 }
@@ -226,6 +228,7 @@ export async function sendChatMessageStream(
   forceKnowledgeQuery: boolean | undefined,
   thinking: boolean | undefined,
   webSearch: boolean | undefined,
+  temperature: number | undefined,
   signal: AbortSignal | undefined,
   onDelta: (text: string) => void,
 ): Promise<ChatStreamDelta> {
@@ -249,6 +252,7 @@ export async function sendChatMessageStream(
       force_knowledge_query: Boolean(forceKnowledgeQuery),
       thinking: Boolean(thinking),
       web_search: Boolean(webSearch),
+      temperature: temperature ?? null,
       stream: true,
     }),
   });
@@ -447,4 +451,40 @@ export function searchChatSessions(
   const params = new URLSearchParams({ q: query });
   if (workspaceId) params.set("workspace_id", String(workspaceId));
   return apiRequest<ChatSearchResultResponse[]>(options, `/chat/search?${params.toString()}`);
+}
+
+export function exportChatSession(options: ApiClientOptions, sessionId: number, format: "markdown" | "json") {
+  const url = `${options.baseUrl}/chat/sessions/${sessionId}/export?format=${format}`;
+  return fetch(url, {
+    headers: {
+      ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+    },
+  }).then(async (res) => {
+    if (!res.ok) {
+      if (res.status === 401) options.onUnauthorized?.();
+      let detail = "";
+      try {
+        const body = await res.json();
+        detail = body.detail ?? "";
+      } catch {
+        // 非 JSON 响应体，忽略
+      }
+      const message =
+        detail || (res.status === 403 ? "无权限导出此会话" : `导出失败 (${res.status})`);
+      throw new ApiError(message, res.status);
+    }
+    const blob = await res.blob();
+    // 优先解析 RFC 5987 filename*=UTF-8''...，否则回退到 filename="..."
+    const disposition = res.headers.get("content-disposition") ?? "";
+    const rfc5987Match = disposition.match(/filename\*=UTF-8''([^;]+)/);
+    const fallbackMatch = disposition.match(/filename="?([^";]+)"?/);
+    const filename = rfc5987Match
+      ? decodeURIComponent(rfc5987Match[1])
+      : (fallbackMatch?.[1] ?? `会话.${format}`);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
 }

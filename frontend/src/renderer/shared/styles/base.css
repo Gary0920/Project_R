@@ -1,0 +1,161 @@
+/* ============================================================
+   base.css — 变量、Reset、基础交互控件
+   从 global.css 拆分，保持原始 CSS 执行顺序。
+   ============================================================ */
+
+:root {
+  --background: 0 0% 100%;
+  --foreground: 0 0% 3.9%;
+  --muted: 0 0% 96.1%;
+  --muted-foreground: 0 0% 45.1%;
+  --border: 0 0% 89.8%;
+  --primary: 0 0% 9%;
+  --primary-foreground: 0 0% 98%;
+  --secondary: 0 0% 96.1%;
+  --secondary-foreground: 0 0% 9%;
+  --accent: 0 0% 96.1%;
+  --content-area: 0 0% 100%;
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 3.9%;
+  --dashed-border: 0 0% 9% / 0.35;
+  --dashed-border-hover: 0 0% 9% / 0.50;
+  --code-bg: 210 13% 12%;
+  --destructive: 0 84.2% 60.2%;
+  --success: 142 64% 32%;
+  --warning: 35 92% 38%;
+  --control-active-bg: 156 36% 93%;
+  --control-active-bg-hover: 156 30% 96%;
+  --control-active-border: 156 24% 80%;
+  --control-active-foreground: 156 45% 24%;
+  --control-active-shadow: 0 4px 14px rgb(20 83 45 / 0.10);
+
+  --shell-radius: 12px;
+  --card-radius: 12px;
+  --control-radius: 9px;
+  --panel-gap: 8px;
+  --workbench-topbar-height: 42px;
+  --layer-popover: 90;
+  --layer-toast: 95;
+  --layer-context-menu-backdrop: 96;
+  --layer-context-menu: 97;
+  --layer-modal: 100;
+  --layer-critical-modal: 110;
+  --shell-pad: 8px;
+  --app-topbar-height: 36px;
+  --app-section-header-height: 48px;
+
+  color: hsl(var(--foreground));
+  font-family:
+    "Microsoft YaHei UI",
+    "Segoe UI",
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+:root[data-theme="dark"] {
+  --background: 220 12% 10%;
+  --foreground: 0 0% 96%;
+  --muted: 220 10% 16%;
+  --muted-foreground: 220 8% 68%;
+  --border: 220 9% 24%;
+  --primary: 0 0% 96%;
+  --primary-foreground: 220 12% 10%;
+  --secondary: 220 10% 18%;
+  --secondary-foreground: 0 0% 96%;
+  --accent: 220 10% 18%;
+  --content-area: 220 12% 11%;
+  --card: 220 12% 13%;
+  --card-foreground: 0 0% 96%;
+  --dashed-border: 0 0% 96% / 0.35;
+  --dashed-border-hover: 0 0% 96% / 0.50;
+  --code-bg: 220 14% 7%;
+  --success: 142 62% 55%;
+  --warning: 38 92% 58%;
+  --control-active-bg: 156 30% 20%;
+  --control-active-bg-hover: 156 30% 24%;
+  --control-active-border: 156 24% 32%;
+  --control-active-foreground: 142 62% 72%;
+  --control-active-shadow: 0 4px 14px rgb(0 0 0 / 0.24);
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  min-width: 800px;
+  min-height: 600px;
+  color: hsl(var(--foreground));
+  background:
+    linear-gradient(135deg, hsl(0 0% 98%) 0%, hsl(0 0% 95%) 100%);
+}
+
+:root[data-theme="dark"] body {
+  background:
+    linear-gradient(135deg, hsl(220 12% 9%) 0%, hsl(220 12% 13%) 100%);
+}
+
+button, input, textarea { font: inherit; color: inherit; }
+a { color: inherit; text-decoration: none; }
+
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s, border-color 0.15s, color 0.15s, transform 0.12s, box-shadow 0.15s;
+  white-space: nowrap;
+}
+
+button:hover {
+  opacity: 0.85;
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid hsl(var(--control-active-border));
+  outline-offset: 2px;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.ghost-button {
+  background: transparent;
+  color: hsl(var(--foreground));
+  border-color: hsl(var(--border));
+}
+
+.ghost-button:hover {
+  background: hsl(var(--muted));
+  opacity: 1;
+}
+
+.titlebar-no-drag,
+button,
+input,
+textarea,
+a {
+  -webkit-app-region: no-drag;
+}

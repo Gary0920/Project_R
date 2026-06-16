@@ -14,6 +14,7 @@ import {
   listChatMessages,
   listChatSessions,
   restoreDeletedChatMessages,
+  exportChatSession,
   searchChatSessions,
   submitGBrainThinkReview,
   submitMessageFeedback,
@@ -155,6 +156,7 @@ export function AppPage() {
   const [activeTabId, setActiveTabId] = useAtom(activeTabIdAtom);
   const [thinkingEnabled, setThinkingEnabled] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(readWebSearchPreference);
+  const [temperature, setTemperature] = useState<number | undefined>(undefined);
   const [activeWorkspaceId, setActiveWorkspaceId] = useAtom(activeWorkspaceIdAtom);
   const [workspaces] = useAtom(workspacesAtom);
   const [showScratchPad, setShowScratchPad] = useState(false);
@@ -301,6 +303,8 @@ export function AppPage() {
     activeSessionIsSending,
     cancelSessionSend,
     setNotificationPanelOpen,
+    onOpenSearch: () => setShowSearch(true),
+    onNewSession: () => void handleCreateSession(),
   });
   const activeWorkspace = workspaces.find((item) => item.id === activeWorkspaceId);
   const promptOptions = useMemo<PromptOption[]>(() => [
@@ -429,6 +433,7 @@ export function AppPage() {
     setSkillPanelVisible,
     setSlashCommand,
     setTabs,
+    temperature,
     thinkingEnabled,
     typeAssistantReply,
     updateStreamPlaceholder,
@@ -1249,6 +1254,31 @@ export function AppPage() {
     }
     items.push(
       { type: "separator" },
+      {
+        type: "item",
+        label: "导出 Markdown",
+        action: () => {
+          setActionNotice("正在导出...");
+          exportChatSession(apiOptions, session.id, "markdown")
+            .then(() => setActionNotice(""))
+            .catch((err: unknown) => {
+              setActionNotice(err instanceof ApiError ? err.message : "导出失败");
+            });
+        },
+      },
+      {
+        type: "item",
+        label: "导出 JSON",
+        action: () => {
+          setActionNotice("正在导出...");
+          exportChatSession(apiOptions, session.id, "json")
+            .then(() => setActionNotice(""))
+            .catch((err: unknown) => {
+              setActionNotice(err instanceof ApiError ? err.message : "导出失败");
+            });
+        },
+      },
+      { type: "separator" },
       { type: "item", label: "删除", destructive: true, action: () => setDeleteConfirmSessionId(session.id) },
     );
     setContextMenu({ x: event.clientX, y: event.clientY, items });
@@ -1366,7 +1396,21 @@ export function AppPage() {
     window.requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
+  // 当前会话已消耗 tokens（从最后一条非 typing assistant 消息取）
+  const activeSessionTokenTotal = (() => {
+    if (!activeSessionId) return 0;
+    const msgs = messagesBySession[activeSessionId];
+    if (!msgs || msgs.length === 0) return 0;
+    const nonTyping = msgs.filter((m) => !m.isTyping);
+    for (let i = nonTyping.length - 1; i >= 0; i--) {
+      const token = nonTyping[i].token_total ?? nonTyping[i].token_output;
+      if (token != null) return token;
+    }
+    return 0;
+  })();
+
   const conversationPaneController = {
+    activeSessionTokenTotal,
     activeSessionId,
     activeSplitPane,
     activeWorkspace,
@@ -1461,6 +1505,8 @@ export function AppPage() {
     slashCandidates,
     syncSlashCommand,
     textareaRef,
+    temperature,
+    setTemperature,
     thinkingEnabled,
     toggleWebSearch,
     webSearchEnabled,

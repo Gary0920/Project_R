@@ -1,3 +1,4 @@
+import { useCallback, useEffect } from "react";
 import type { ClipboardEvent, DragEvent, KeyboardEvent, RefObject } from "react";
 
 import type { SkillResponse } from "../../../shared/api/types";
@@ -81,12 +82,26 @@ export function ChatComposer({ controller }: ChatComposerProps) {
     syncSlashCommand,
     textareaRef,
     toggleWebSearch,
+    temperature,
+    setTemperature,
     thinkingEnabled,
     utilityPanel,
     webSearchEnabled,
     setThinkingEnabled,
     modelSelectRef,
+    activeSessionTokenTotal,
   } = controller;
+
+  // C6: 输入框随内容自动调整高度
+  const resizeTextarea = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const maxH = 240; // 与 CSS .composer textarea max-height 一致
+    el.style.height = `${Math.min(el.scrollHeight, maxH)}px`;
+  }, [textareaRef]);
+  useEffect(() => { resizeTextarea(); }, [draft, resizeTextarea, isActivePane]);
+
     if (!isActivePane) {
       return <div className="composer-inactive-hint">点击此侧后继续输入</div>;
     }
@@ -279,6 +294,9 @@ export function ChatComposer({ controller }: ChatComposerProps) {
             rows={1}
             value={draft}
           />
+          {activeSessionTokenTotal != null && activeSessionTokenTotal > 0 ? (
+            <div className="composer-token-hint">{activeSessionTokenTotal} tokens</div>
+          ) : null}
           <div className="composer-toolbar">
             <div className="composer-left-tools">
               <input
@@ -383,6 +401,19 @@ export function ChatComposer({ controller }: ChatComposerProps) {
                     <GlobeIcon />
                     <span className="composer-button-label">联网搜索</span>
                   </button>
+                </div>
+                <div className="composer-temp-slider">
+                  <input
+                    aria-label="创意度"
+                    className="composer-temp-input"
+                    max="2"
+                    min="0"
+                    onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                    step="0.1"
+                    title={`创意度: ${temperature ?? 0.7}`}
+                    type="range"
+                    value={temperature ?? 0.7}
+                  />
                 </div>
               </div>
             </div>

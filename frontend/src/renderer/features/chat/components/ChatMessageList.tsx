@@ -1182,10 +1182,67 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
     );
   }
 
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const isSearching = showSearch && searchQuery.trim().length > 0;
+  const query = searchQuery.trim().toLowerCase();
+  const filteredMessages = isSearching
+    ? messages.filter((msg) => (msg.content ?? "").toLowerCase().includes(query))
+    : messages;
+
+  function handleToggleSearch() {
+    setShowSearch((prev) => !prev);
+    if (!showSearch) setSearchQuery("");
+  }
+
+  // Ctrl+F / Cmd+F 打开本地会话搜索（仅活跃面板响应）
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (!isActivePane) return;
+      if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+        const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+        if (tag === "input" || tag === "textarea") return; // 输入框中不拦截
+        e.preventDefault();
+        handleToggleSearch();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isActivePane]);
+
   return (
     <div className="message-scroll" ref={isActivePane ? scrollRef : undefined}>
+      {showSearch ? (
+        <div className="session-search-bar">
+          <input
+            autoFocus
+            className="session-search-input"
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Escape") { setShowSearch(false); setSearchQuery(""); } }}
+            placeholder="搜索当前会话…"
+            type="text"
+            value={searchQuery}
+          />
+          <span className="session-search-count">
+            {filteredMessages.length}/{messages.length}
+          </span>
+          <button className="session-search-close" onClick={() => { setShowSearch(false); setSearchQuery(""); }} type="button">✕</button>
+        </div>
+      ) : messages.length > 10 ? (
+        <div className="session-search-bar" style={{ justifyContent: "flex-end", background: "transparent", border: "none", padding: "2px 12px" }}>
+          <button
+            className="icon-button"
+            onClick={handleToggleSearch}
+            title="搜索当前会话 (Ctrl+F)"
+            type="button"
+            style={{ fontSize: 13 }}
+          >
+            🔍
+          </button>
+        </div>
+      ) : null}
       {messages.length === 0 ? renderEmptyState(isEmptySplitPane) : null}
-      {messages.map(renderMessageCard)}
+      {filteredMessages.map(renderMessageCard)}
       {paneSessionId && sessionIsSending ? <LoadingPlaceholder /> : null}
     </div>
   );

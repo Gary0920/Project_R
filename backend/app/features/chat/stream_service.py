@@ -81,6 +81,7 @@ def generate_sse_stream(
     sources_json: str,
     context_json: str,
     rag_used: bool,
+    temperature: float | None = None,
     llm_user_content: str = "",
     user_message_id: int | None = None,
     user_attachments_json: str = "[]",
@@ -102,6 +103,7 @@ def generate_sse_stream(
             llm_messages,
             system_prompt=system_prompt,
             thinking=thinking,
+            temperature=temperature,
         )
     except Exception as exc:
         logger.exception("初始化流式请求失败")
