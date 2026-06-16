@@ -157,6 +157,13 @@ export function AppPage() {
   const [thinkingEnabled, setThinkingEnabled] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(readWebSearchPreference);
   const [temperature, setTemperature] = useState<number | undefined>(undefined);
+  const [quotedMessage, setQuotedMessage] = useState<{ sessionId: number; messageId: number; content: string; role: string } | null>(null);
+  // 切换会话时清空引用（防止 A 会话内容被发送到 B 会话）
+  useEffect(() => {
+    if (quotedMessage && quotedMessage.sessionId !== activeSessionId) {
+      setQuotedMessage(null);
+    }
+  }, [activeSessionId, quotedMessage?.sessionId]);
   const [activeWorkspaceId, setActiveWorkspaceId] = useAtom(activeWorkspaceIdAtom);
   const [workspaces] = useAtom(workspacesAtom);
   const [showScratchPad, setShowScratchPad] = useState(false);
@@ -426,6 +433,8 @@ export function AppPage() {
     setMessagesBySession,
     setMode,
     setPendingAttachments,
+    quotedMessage,
+    setQuotedMessage,
     setSelectedBuiltinCommand,
     setSelectedSkill,
     setSessions,
@@ -1412,6 +1421,8 @@ export function AppPage() {
   const conversationPaneController = {
     activeSessionTokenTotal,
     activeSessionId,
+    quotedMessage,
+    setQuotedMessage,
     activeSplitPane,
     activeWorkspace,
     apiOptions,

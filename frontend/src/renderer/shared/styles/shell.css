@@ -324,6 +324,17 @@
   height: 11px;
 }
 
+.session-preview {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.35;
+  margin-top: 2px;
+}
+
 .session-time {
   color: hsl(var(--muted-foreground));
   font-size: 15px;

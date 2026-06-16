@@ -90,6 +90,8 @@ export function ChatComposer({ controller }: ChatComposerProps) {
     setThinkingEnabled,
     modelSelectRef,
     activeSessionTokenTotal,
+    quotedMessage,
+    setQuotedMessage,
   } = controller;
 
   // C6: 输入框随内容自动调整高度
@@ -276,6 +278,15 @@ export function ChatComposer({ controller }: ChatComposerProps) {
               ) : (
                 <div className="skill-candidate-empty">没有匹配的指令或 Skill</div>
               )}
+            </div>
+          ) : null}
+          {quotedMessage ? (
+            <div className="composer-quote-bar">
+              <span className="composer-quote-text">
+                <span className="composer-quote-role">{quotedMessage.role === "user" ? "用户" : "助手"}</span>
+                {quotedMessage.content.replace(/\n/g, " ").slice(0, 120)}
+              </span>
+              <button className="composer-quote-close" onClick={() => setQuotedMessage(null)} type="button">✕</button>
             </div>
           ) : null}
           <textarea

@@ -1,0 +1,269 @@
+/* ============================================================
+   Message Actions
+   ============================================================ */
+
+.message-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 2px;
+  padding: 4px 0;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.message-row-user .message-actions {
+  justify-content: flex-end;
+}
+
+.message-row:hover .message-actions,
+.message-actions.has-copy-success {
+  opacity: 1;
+}
+
+.message-action-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  border: none;
+  background: none;
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease, transform 0.14s ease, opacity 0.14s ease;
+}
+
+.message-action-btn:hover {
+  background: hsl(var(--accent));
+  color: hsl(var(--foreground));
+  transform: translateY(-1px);
+}
+
+.message-action-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+  transform: none;
+}
+
+.message-action-btn.is-copied {
+  background: hsl(156 30% 94%);
+  color: hsl(156 45% 30%);
+}
+
+.message-action-btn.is-rated {
+  color: hsl(var(--primary));
+}
+
+.message-action-btn.is-copied::after {
+  content: "复制成功";
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 6px);
+  transform: translateX(-50%) translateY(0);
+  z-index: 12;
+  white-space: nowrap;
+  border: 1px solid hsl(var(--border));
+  border-radius: 7px;
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 650;
+  pointer-events: none;
+}
+
+.message-action-btn.is-copied::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 2px);
+  z-index: 13;
+  width: 8px;
+  height: 8px;
+  border-left: 1px solid hsl(var(--border));
+  border-top: 1px solid hsl(var(--border));
+  background: hsl(var(--foreground));
+  transform: translateX(-50%) rotate(45deg);
+  pointer-events: none;
+}
+
+.message-action-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1em;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.message-action-star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+}
+
+:root[data-theme="dark"] .message-action-btn.is-copied {
+  background: rgba(20, 83, 45, 0.26);
+  color: #86efac;
+}
+
+.message-version-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 3px 5px;
+  border-radius: 999px;
+  border: 1px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+  background: color-mix(in srgb, hsl(var(--muted)) 50%, transparent);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.message-row-user .message-version-bar {
+  align-self: flex-end;
+}
+
+.message-version-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.message-version-btn:hover:not(:disabled) {
+  background: hsl(var(--accent));
+  color: hsl(var(--foreground));
+}
+
+.message-version-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.message-edit-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(640px, 100%);
+  padding: 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  background: hsl(var(--card));
+}
+
+.message-row-user .message-edit-box {
+  align-self: flex-end;
+}
+
+.message-edit-box textarea {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: hsl(var(--foreground));
+  background: hsl(var(--background));
+  font: inherit;
+  line-height: 1.55;
+}
+
+.message-edit-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.message-edit-actions span {
+  margin-right: auto;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+}
+
+.message-feedback-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+}
+
+.message-feedback-status small {
+  color: hsl(var(--primary));
+  font-weight: 650;
+}
+
+.message-operation-card {
+  width: min(440px, calc(100vw - 32px));
+}
+
+.message-operation-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 14px 0 0;
+  color: hsl(var(--foreground));
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.message-operation-field select,
+.message-operation-field textarea {
+  width: 100%;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  padding: 9px 10px;
+  color: hsl(var(--foreground));
+  background: hsl(var(--background));
+  font: inherit;
+}
+
+.message-operation-field textarea {
+  min-height: 92px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.message-rating-row {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.message-rating-btn {
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--background));
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.message-rating-btn:hover,
+.message-rating-btn.is-active {
+  border-color: hsl(var(--primary));
+  color: hsl(var(--primary));
+  background: color-mix(in srgb, hsl(var(--primary)) 10%, transparent);
+}
+

@@ -172,7 +172,33 @@ def list_sessions(
     )
     if workspace_id:
         q = q.filter(ChatSession.workspace_id == workspace_id)
-    return q.order_by(ChatSession.is_pinned.desc(), ChatSession.updated_at.desc()).all()
+    sessions = q.order_by(ChatSession.is_pinned.desc(), ChatSession.updated_at.desc()).all()
+
+    if sessions:
+        # 单次查询：子查询取每个 session 最新 active 消息
+        # 按 created_at DESC, id DESC 排序取最后一条消息，避免版本化消息选错
+        all_msgs = (
+            db.query(ChatMessage.session_id, ChatMessage.content)
+            .filter(
+                ChatMessage.session_id.in_([s.id for s in sessions]),
+                ChatMessage.is_excluded == False,
+                ChatMessage.active_version == True,
+            )
+            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+            .all()
+        )
+        seen: set[int] = set()
+        preview_map: dict[int, str] = {}
+        for sid, content in all_msgs:
+            if sid in seen:
+                continue
+            seen.add(sid)
+            if content:
+                preview_map[sid] = content.replace("\n", " ").strip()[:80]
+        for s in sessions:
+            s.last_message_preview = preview_map.get(s.id, "")  # type: ignore
+
+    return sessions
 
 
 @router.get("/sessions/archived", response_model=list[SessionResponse])

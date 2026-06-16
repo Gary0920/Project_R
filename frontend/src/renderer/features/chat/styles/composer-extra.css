@@ -1,0 +1,95 @@
+/* ============================================================
+   Composer Enhancements
+   ============================================================ */
+
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 4px 8px;
+}
+
+.attachment-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+  color: hsl(var(--foreground));
+  background: hsl(var(--muted));
+  border-radius: 6px;
+  max-width: 200px;
+}
+
+.attachment-pill-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-pill-remove {
+  font-size: 14px;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.attachment-pill-remove:hover {
+  color: hsl(var(--destructive));
+}
+
+.composer-temp-slider {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  padding-left: 8px;
+  border-left: 1px solid hsl(var(--border));
+}
+.composer-temp-input {
+  width: 64px;
+  height: 16px;
+  accent-color: hsl(var(--primary));
+  cursor: pointer;
+}
+
+.composer-mode-toggles {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.composer-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  min-width: 0;
+  padding: 0 11px;
+  font-size: 12px;
+  font-weight: 600;
+  color: hsl(var(--muted-foreground));
+  border-radius: 8px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease, box-shadow 0.14s ease, transform 0.14s ease;
+}
+
+.composer-mode-toggle:hover {
+  color: hsl(var(--foreground));
+  background: hsl(var(--muted));
+}
+
+.composer-mode-toggle.is-active {
+  color: hsl(var(--control-active-foreground));
+  border-color: hsl(var(--control-active-border));
+  background: hsl(var(--control-active-bg));
+  box-shadow: var(--control-active-shadow);
+}
+
+.composer-mode-toggle.is-active:hover {
+  color: hsl(var(--control-active-foreground));
+  background: hsl(var(--control-active-bg-hover));
+}
+

@@ -1155,6 +1155,15 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
             {message.role === "assistant" ? (
               <button className="message-action-btn" onClick={() => handleSwitchToAgent(message.id)} title="切换到 Agent" type="button"><AgentIcon /></button>
             ) : null}
+            <button
+              className="message-action-btn"
+              disabled={message.isOptimistic}
+              onClick={() => controller.setQuotedMessage({ messageId: message.id, sessionId: paneSessionId!, content: message.content ?? "", role: message.role })}
+              title="引用"
+              type="button"
+            >
+              <span style={{ fontSize: 11 }}>❝</span>
+            </button>
             {message.role === "assistant" ? (
               <button
                 className={`message-action-btn ${message.feedback_rating ? "is-rated" : ""}`}

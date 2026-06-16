@@ -1,0 +1,458 @@
+/* ============================================================
+   Composer — Proma 卡片式输入
+   ============================================================ */
+.composer-wrap {
+  flex-shrink: 0;
+  padding: 12px 20px 16px;
+}
+
+.composer-inactive-hint {
+  flex-shrink: 0;
+  margin: 12px 20px 16px;
+  padding: 12px 14px;
+  border: 1px dashed hsl(var(--border));
+  border-radius: 10px;
+  background: hsl(var(--muted) / 0.36);
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+  text-align: center;
+}
+
+.composer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  container-name: composer;
+  container-type: inline-size;
+  gap: 6px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  background: hsl(var(--card));
+  padding: 12px 14px 10px;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.hidden-file-input {
+  display: none;
+}
+
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.composer-attachment-chip {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: center;
+  max-width: min(320px, 100%);
+  min-height: 52px;
+  gap: 2px 8px;
+  border: 1px solid hsl(var(--control-active-border));
+  border-radius: 10px;
+  background: hsl(var(--control-active-bg-hover));
+  color: hsl(var(--foreground));
+  padding: 7px 30px 7px 7px;
+  font-size: 12px;
+  text-align: left;
+  transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.composer-attachment-chip:hover {
+  border-color: hsl(var(--control-active-border));
+  background: hsl(var(--control-active-bg));
+  box-shadow: var(--control-active-shadow);
+}
+
+.composer-attachment-chip.is-local_private {
+  border-color: hsl(var(--warning) / 0.42);
+  background: hsl(var(--warning) / 0.08);
+}
+
+.composer-attachment-chip.is-local_private:not(.is-authorized) {
+  border-color: hsl(var(--warning) / 0.56);
+  background: hsl(var(--warning) / 0.12);
+}
+
+.composer-attachment-chip.is-image {
+  padding-left: 5px;
+}
+
+.composer-attachment-thumb,
+.composer-attachment-kind {
+  grid-row: 1 / span 2;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 7px;
+}
+
+.composer-attachment-thumb {
+  object-fit: cover;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--muted));
+}
+
+.composer-attachment-kind {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: hsl(var(--control-active-bg));
+  color: hsl(var(--control-active-foreground));
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.composer-attachment-name {
+  min-width: 0;
+  color: hsl(var(--foreground));
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-attachment-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  min-width: 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  line-height: 1.25;
+  overflow: hidden;
+}
+
+.composer-attachment-meta span {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: 5px;
+  background: hsl(var(--background) / 0.58);
+  padding: 1px 5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-attachment-chip em {
+  grid-column: 2;
+  flex-basis: 100%;
+  min-width: 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.35;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-attachment-badge {
+  position: absolute;
+  left: 7px;
+  top: 5px;
+  z-index: 1;
+  border-radius: 999px;
+  background: hsl(var(--background) / 0.88);
+  color: hsl(var(--muted-foreground));
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 5px;
+  pointer-events: none;
+}
+
+.composer-attachment-remove {
+  position: absolute;
+  right: 5px;
+  top: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  cursor: pointer;
+  padding: 0;
+}
+
+.composer-attachment-remove:hover {
+  border-color: hsl(var(--destructive));
+  color: hsl(var(--destructive));
+}
+
+.composer-attachment-chip .iconoir-mask {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.composer-uploading {
+  padding: 0 4px 4px;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+}
+
+.composer-attachment-consent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 4px 8px;
+  padding: 10px 12px;
+  border: 1px solid hsl(var(--warning) / 0.36);
+  border-radius: 8px;
+  background: hsl(var(--warning) / 0.08);
+}
+
+.composer-attachment-consent.is-pending {
+  border-color: hsl(var(--warning) / 0.56);
+  background: hsl(var(--warning) / 0.12);
+}
+
+.composer-attachment-consent-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.composer-attachment-consent-copy strong {
+  color: hsl(var(--foreground));
+  font-size: 13px;
+}
+
+.composer-attachment-consent-copy span {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.composer-attachment-consent button {
+  flex: 0 0 auto;
+  height: 30px;
+  border: 1px solid hsl(var(--warning) / 0.72);
+  border-radius: 7px;
+  background: hsl(var(--warning));
+  color: #fff;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.composer-attachment-consent button:disabled {
+  border-color: hsl(var(--control-active-border));
+  background: hsl(var(--control-active-bg));
+  color: hsl(var(--control-active-foreground));
+  cursor: default;
+}
+
+.composer-context-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 4px 2px;
+}
+
+.composer-context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 360px;
+  height: 30px;
+  border: 1px solid hsl(var(--control-active-border));
+  border-radius: 999px;
+  background: hsl(var(--control-active-bg));
+  color: hsl(var(--control-active-foreground));
+  padding: 0 10px 0 7px;
+  cursor: pointer;
+}
+
+.composer-context-chip-prompt,
+.composer-context-chip-skill,
+.composer-context-chip-command {
+  border-color: hsl(var(--control-active-border));
+  background: hsl(var(--control-active-bg));
+  color: hsl(var(--control-active-foreground));
+}
+
+.composer-context-chip-icon {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  background: hsl(var(--control-active-foreground));
+  color: hsl(var(--background));
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.composer-context-chip-prompt .composer-context-chip-icon,
+.composer-context-chip-skill .composer-context-chip-icon,
+.composer-context-chip-command .composer-context-chip-icon {
+  background: hsl(var(--control-active-foreground));
+}
+
+.composer-context-chip-icon .iconoir-mask {
+  width: 13px;
+  height: 13px;
+}
+
+.composer-context-chip strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.composer-context-chip small {
+  flex: 0 0 auto;
+  color: hsl(var(--control-active-foreground));
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.composer-context-chip-prompt small,
+.composer-context-chip-skill small,
+.composer-context-chip-command small {
+  color: hsl(var(--control-active-foreground));
+}
+
+.composer:focus-within {
+  border-color: hsl(var(--foreground) / 0.4);
+  box-shadow: 0 0 0 3px hsl(var(--foreground) / 0.06);
+}
+
+.composer textarea {
+  width: 100%;
+  min-height: 88px;
+  max-height: 240px;
+  border: none;
+  background: transparent;
+  color: hsl(var(--foreground));
+  padding: 4px 4px;
+  font-size: 15px;
+  line-height: 1.55;
+  outline: none;
+  resize: none;
+  overflow-y: auto;
+  resize: none;
+}
+
+.composer textarea::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.composer-quote-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  margin: 0 0 4px;
+  border-left: 3px solid hsl(var(--primary));
+  background: hsl(var(--muted) / 0.35);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.composer-quote-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: hsl(var(--muted-foreground));
+}
+.composer-quote-role {
+  font-weight: 600;
+  margin-right: 4px;
+  color: hsl(var(--foreground));
+}
+.composer-quote-close {
+  border: none;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  line-height: 1;
+}
+.composer-quote-close:hover {
+  color: hsl(var(--foreground));
+}
+
+.composer-token-hint {
+  display: flex;
+  justify-content: flex-end;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+  opacity: 0.7;
+  user-select: none;
+}
+
+.composer-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  min-width: 0;
+  border-top: 1px solid hsl(var(--border) / 0.72);
+  padding-top: 8px;
+}
+
+.composer-hint {
+  color: hsl(var(--muted-foreground));
+  font-size: 15px;
+}
+
+.composer-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.12s, transform 0.12s ease;
+}
+
+.composer-send:disabled {
+  opacity: 0.32;
+  cursor: not-allowed;
+}
+
+.composer-send:not(:disabled):hover {
+  opacity: 0.88;
+  transform: translateY(-1px);
+}
+
+.composer-send.is-stopping {
+  background: #dc2626;
+  color: #fff;
+}
+
+.composer-send.is-stopping .iconoir-mask {
+  width: 13px;
+  height: 13px;
+}
+

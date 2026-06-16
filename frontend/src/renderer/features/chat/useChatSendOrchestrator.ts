@@ -75,10 +75,12 @@ type UseChatSendOrchestratorOptions = {
   setSelectedBuiltinCommand: (command: BuiltinSlashCommand | null) => void;
   setSelectedSkill: (skill: SkillResponse | null) => void;
   setSessions: Dispatch<SetStateAction<ChatSessionResponse[]>>;
+  setQuotedMessage: (msg: { sessionId: number; messageId: number; content: string; role: string } | null) => void;
   setSessionSending: (sessionId: number, value: boolean) => void;
   setSkillPanelVisible: (visible: boolean) => void;
   setSlashCommand: (match: SlashCommandMatch | null) => void;
   setTabs: Dispatch<SetStateAction<Tab[]>>;
+  quotedMessage: { sessionId: number; messageId: number; content: string; role: string } | null;
   sessions: ChatSessionResponse[];
   thinkingEnabled: boolean;
   temperature: number | undefined;
@@ -90,7 +92,13 @@ type UseChatSendOrchestratorOptions = {
 
 export function useChatSendOrchestrator(options: UseChatSendOrchestratorOptions) {
   const handleSend = async () => {
-    const content = options.draft.trim();
+    let content = options.draft.trim();
+    // C8: 如有引用消息，校验同一会话后加入引用文本
+    if (options.quotedMessage && options.quotedMessage.sessionId === options.activeSessionId && content) {
+      const quoteText = options.quotedMessage.content.replace(/\n/g, " ").slice(0, 200);
+      const roleLabel = options.quotedMessage.role === "user" ? "用户" : "助手";
+      content = `[引用 ${roleLabel}]: ${quoteText}\n\n---\n${content}`;
+    }
     if ((!content && !options.pendingAttachments.length) || options.activeSessionIsSending) return;
     const forceKnowledgeQuery = options.selectedBuiltinCommand?.name === "query";
     const startedFromWorkspaceHome = !options.activeSessionId;
@@ -137,6 +145,7 @@ export function useChatSendOrchestrator(options: UseChatSendOrchestratorOptions)
 
       const attachmentIds = sentAttachments.map((attachment) => String(attachment.id));
       options.setDraft("");
+      if (options.quotedMessage) options.setQuotedMessage(null);
       options.clearCurrentDraft();
       options.setSelectedSkill(null);
       options.setSelectedBuiltinCommand(null);

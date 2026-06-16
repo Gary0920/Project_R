@@ -28,6 +28,7 @@ class SessionResponse(BaseModel):
     is_pinned: bool = False
     created_at: datetime
     updated_at: datetime
+    last_message_preview: str = ""
 
     @field_serializer("created_at", "updated_at")
     def serialize_datetime(self, value: datetime) -> str:

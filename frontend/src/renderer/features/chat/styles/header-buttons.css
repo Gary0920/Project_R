@@ -1,0 +1,35 @@
+/* ============================================================
+   Chat Header Buttons (top-right)
+   ============================================================ */
+
+.chat-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.prompt-menu {
+  position: absolute;
+  top: 44px;
+  right: 0;
+  min-width: 200px;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  z-index: var(--layer-popover);
+}
+
+.prompt-menu-item {
+  padding: 8px 12px;
+  font-size: 14px;
+  color: hsl(var(--foreground));
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.prompt-menu-item:hover {
+  background: hsl(var(--accent));
+}
+

@@ -62,6 +62,7 @@ export type ChatSessionResponse = {
   is_pinned: boolean;
   created_at: string;
   updated_at: string;
+  last_message_preview?: string;
 };
 
 export type ChatSearchResultResponse = ChatSessionResponse & {

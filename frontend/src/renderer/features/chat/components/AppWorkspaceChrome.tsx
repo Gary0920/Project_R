@@ -796,6 +796,9 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
                     </span>
                   )}
                   <span className="session-time">{formatSidebarTime(session.updated_at)}</span>
+                  {(session as any).last_message_preview ? (
+                    <div className="session-preview">{((session as any).last_message_preview ?? "").slice(0, 80)}</div>
+                  ) : null}
                   <button
                     className="session-more"
                     onClick={(event) => {
