@@ -610,6 +610,108 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         self.assertEqual((root / response.path).read_bytes(), original)
         self.assertEqual(self.db.query(AuditLog).filter(AuditLog.action == "workspace_file_upload").count(), 1)
 
+    def test_save_generated_file_to_workspace_copies_to_unfiled(self):
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 C3"),
+            self.user,
+            self.db,
+        )
+        generated_path = Path(self.temp_root.name) / "generated" / "file-1.md"
+        generated_path.parent.mkdir(parents=True, exist_ok=True)
+        generated_path.write_text("# 草稿", encoding="utf-8")
+        generated = GeneratedFile(
+            id="generated-1",
+            user_id=self.user.id,
+            session_id=None,
+            filename="会议纪要.md",
+            path=str(generated_path),
+            mime_type="text/markdown; charset=utf-8",
+        )
+        self.db.add(generated)
+        self.db.commit()
+
+        response = workspaces_api.save_generated_file_to_workspace(
+            workspace.id,
+            workspaces_api.SaveGeneratedFileToWorkspaceRequest(generated_file_id=generated.id),
+            self.user,
+            self.db,
+        )
+
+        self.assertTrue(response.ok)
+        self.assertEqual(response.path, "99-未归档文件/会议纪要.md")
+        root = self.workspace_root(workspace)
+        self.assertEqual((root / response.path).read_text(encoding="utf-8"), "# 草稿")
+        self.assertEqual(self.db.query(AuditLog).filter(AuditLog.action == "workspace_generated_file_save").count(), 1)
+
+    def test_save_generated_file_rejects_other_users_generated_file(self):
+        workspace = workspaces_api.create_workspace(
+            workspaces_api.CreateWorkspaceRequest(name="项目 C4"),
+            self.user,
+            self.db,
+        )
+        generated_path = Path(self.temp_root.name) / "generated" / "file-2.txt"
+        generated_path.parent.mkdir(parents=True, exist_ok=True)
+        generated_path.write_text("other", encoding="utf-8")
+        self.db.add(
+            GeneratedFile(
+                id="generated-2",
+                user_id=self.other.id,
+                session_id=None,
+                filename="other.txt",
+                path=str(generated_path),
+                mime_type="text/plain; charset=utf-8",
+            )
+        )
+        self.db.commit()
+
+        with self.assertRaises(HTTPException) as exc:
+            workspaces_api.save_generated_file_to_workspace(
+                workspace.id,
+                workspaces_api.SaveGeneratedFileToWorkspaceRequest(generated_file_id="generated-2"),
+                self.user,
+                self.db,
+            )
+
+        self.assertEqual(exc.exception.status_code, 404)
+
+    def test_save_generated_file_rejects_user_workspace(self):
+        user_workspace = Workspace(
+            name="个人工作台",
+            slug="personal",
+            created_by=self.user.id,
+            storage_path="",
+            brand="BFI",
+            workspace_kind="user",
+        )
+        self.db.add(user_workspace)
+        self.db.commit()
+        self.db.refresh(user_workspace)
+        self.db.add(WorkspaceMember(workspace_id=user_workspace.id, user_id=self.user.id, role="admin"))
+        generated_path = Path(self.temp_root.name) / "generated" / "file-3.txt"
+        generated_path.parent.mkdir(parents=True, exist_ok=True)
+        generated_path.write_text("personal", encoding="utf-8")
+        self.db.add(
+            GeneratedFile(
+                id="generated-3",
+                user_id=self.user.id,
+                session_id=None,
+                filename="personal.txt",
+                path=str(generated_path),
+                mime_type="text/plain; charset=utf-8",
+            )
+        )
+        self.db.commit()
+
+        with self.assertRaises(HTTPException) as exc:
+            workspaces_api.save_generated_file_to_workspace(
+                user_workspace.id,
+                workspaces_api.SaveGeneratedFileToWorkspaceRequest(generated_file_id="generated-3"),
+                self.user,
+                self.db,
+            )
+
+        self.assertEqual(exc.exception.status_code, 400)
+
     def test_member_can_only_delete_own_uploaded_file(self):
         workspace = workspaces_api.create_workspace(
             workspaces_api.CreateWorkspaceRequest(name="项目 D"),

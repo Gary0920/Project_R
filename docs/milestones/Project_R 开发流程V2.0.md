@@ -17,6 +17,8 @@
 | 2026-06-10 | 创建 V2.0（基座精修） | Chat 稳定性 / `/query` 闭环 / 检索 / 基础 Agent 框架四主线 |
 | 2026-06-15 | 叠加产品化路线 | 基于代码审计，新增 Chat/Agent/GBrain 三板块产品化清单、Sprint 路线图与逐项验收 |
 | 2026-06-15 | 架构优先重排 | 引入"接缝优先 + 反堆叠护栏"，按技术依赖重排执行顺序，新增任务完成定义（DoD）；详见 §3.6 与 §7 |
+| 2026-06-16 | Sprint 5 MVP 闭环 | Agent 文件产出新增 xlsx/pptx 格式，复用显式命令、renderer 注册表与工作区保存链路 |
+| 2026-06-16 | Sprint 5.1 优化闭环 | 建立 Markdown 结构化解析接缝，拆分 renderer，新增文本类 PDF 渲染；不做 xlsx/pptx 转 PDF |
 
 本次修订对照了 Codex 生成的计划框架（`steady-yawning-phoenix.md`）并逐项核对真实代码，修正了其中的依赖误判（`playwright` 实际不在依赖、`openpyxl` 已存在）、状态误判（多项"未实现"实为"部分实现"），以及一个被忽略的关键约束：`intent.py` 已冻结显式路由，使旧 docx 生成分支成为不可达死代码。
 
@@ -72,13 +74,16 @@
 | `python-docx` | 已在 `requirements.txt` | docx 生成（已可用） |
 | `openpyxl` | **已在** `requirements.txt`（当前仅用于预处理读取） | A1 复用其写 xlsx，无需新增依赖 |
 | `python-pptx` | **不在**依赖 | A2 需新增 |
-| `playwright` | **不在**依赖（Codex 误标"已有"） | A3 PDF 因此降级为后续项，见 3.4 |
-| `pypdf` / `PyMuPDF` | 已在依赖 | 仅用于读取/预处理 PDF，非生成 |
+| `playwright` | **不在**依赖（Codex 误标"已有"） | 不引入浏览器型 PDF 导出；文本类 PDF 走轻量 Python 渲染 |
+| `pypdf` / `PyMuPDF` | 已在依赖 | 读取、预处理与测试反读/渲染检查 |
+| `reportlab` | 已新增 | 文本类 Markdown/txt → PDF 渲染 |
 
-### 3.4 PDF 生成本轮降级
+### 3.4 PDF 生成范围收窄
 
-- 由于 `playwright` 不在依赖且会引入重型 Node/浏览器依赖，与"可迁移到 Mac mini"红线冲突，**A3 PDF 生成本轮不做**。
-- 替代：用户可对生成的 docx/xlsx/pptx 用本地 Office 另存为 PDF；PDF 原生生成留待后续单独评估（docx→pdf headless 转换方案）。
+- 不引入 `playwright` 或浏览器型导出链路。
+- PDF 仅支持文本类 Markdown/txt 内容渲染，复用文档解析接缝，保留标题、列表、表格等语义。
+- 不做 `xlsx -> pdf`、`pptx -> pdf`，也不承诺 Office 文件跨平台转换一致性。
+- 用户需要 Excel/PPT 的 PDF 版时，仍通过本地 Office/LibreOffice 另存为 PDF。
 
 ### 3.5 SSE 必须保持 provider 无关
 
@@ -182,16 +187,16 @@
 
 | # | 功能 | 真实状态 | 优先级 |
 |---|---|---|---|
-| A1 | Excel(xlsx) 生成 | 未实现（仅 docx 渲染器，`openpyxl` 已具备） | P0 |
-| A2 | PPT(pptx) 生成 | 未实现（`python-pptx` 需新增；frontend-slides 产 HTML 非 pptx） | P0 |
-| A5 | 产出保存到工作区 `99-未归档文件` | 部分实现（后端 API 已存在，前端 `saveAttachmentToWorkspace` 定义未调用） | P0 |
-| 触发 | 文档生成显式入口（命令/Skill） | 未实现（docx 分支因 intent 冻结不可达） | P0 |
+| A1 | Excel(xlsx) 生成 | 已实现（`openpyxl` 渲染并可反读验证） | P0 |
+| A2 | PPT(pptx) 生成 | 已实现（新增 `python-pptx`，可反读验证） | P0 |
+| A5 | 产出保存到工作区 `99-未归档文件` | 已实现（项目/客户工作区确认保存，个人工作台仅下载） | P0 |
+| 触发 | 文档生成显式入口（命令/Skill） | 已实现命令入口（`/doc` `/md` `/txt` `/xlsx` `/pptx`；不解冻 intent） | P0 |
 | B1 | `.eml` 文件生成 | 未实现 | P1 |
 | B2 | `mailto:` 启动邮件客户端 | 未实现 | P1 |
 | B3 | 自动复制草稿到剪贴板 | 部分实现（有手动复制，无自动） | P1 |
 | T2 | `POST /chat/transform` 文本变换端点 | 未实现 | P1 |
 | T1 | 改写/翻译/总结一键按钮 | 未实现 | P2 |
-| A3 | PDF 生成 | 未实现 | 后续（见 3.4） |
+| A3 | PDF 生成 | 文本类 Markdown/txt → PDF 已实现；xlsx/pptx 转 PDF 不做 | P1 |
 | A4 | tag-printing Skill | 不存在于代码库（Codex 误标在 `_release/`） | 后续/待确认需求 |
 
 ### 5.2 P0 实现要点与验收
@@ -301,6 +306,11 @@ Sprint 4  文档产出接缝（架构地基，P0）【Codex接管】
 Sprint 5  Agent 文件格式与落地（P0）
 ├── A1 Excel 生成 / A2 PPT 生成（注册进 renderer，+ python-pptx 依赖）
 └── A5 产出保存到工作区（接 saveAttachmentToWorkspace，区分工作区）【Codex审核】
+
+Sprint 5.1  Agent 文件渲染质量优化（P0/P1）
+├── Markdown 结构化解析接缝：标题/列表/表格/引用/代码语义统一解析
+├── renderer 拆分：docx/md/txt/xlsx/pptx/pdf 各自独立实现并复用解析结果
+└── 文本类 PDF：仅 Markdown/txt 渲染，不做 xlsx/pptx 转 PDF
 
 Sprint 6  Agent 邮件与文本变换（P1/P2）
 ├── B1 .eml（作为一个 exporter 接入产出接缝）/ B2 mailto / B3 剪贴板

@@ -232,6 +232,17 @@ export function saveAttachmentToWorkspace(
   });
 }
 
+export function saveGeneratedFileToWorkspace(
+  options: ApiClientOptions,
+  workspaceId: number,
+  data: { generated_file_id: string; conflict_strategy?: string },
+) {
+  return apiRequest<WorkspaceFileMutationResponse>(options, `/workspaces/${workspaceId}/generated-files/save`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
 export function createWorkspaceFolder(
   options: ApiClientOptions,
   workspaceId: number,

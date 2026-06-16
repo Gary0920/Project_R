@@ -9,10 +9,12 @@ import type {
   GeneratedFileResponse,
   SessionAttachmentResponse,
   SkillRunResponse,
+  WorkspaceResponse,
 } from "../../../shared/api/types";
 import type { ChatMessage } from "../state";
 import { APP_NAME } from "../../../shared/config/app";
 import { AgentIcon, CopyIcon, EditIcon, RefreshIcon, TrashIcon, XmarkIcon } from "../../../shared/icons/LineIcons";
+import { GeneratedFileCard } from "./GeneratedFileCard";
 
 type SourcePreview = {
   index: number;
@@ -60,6 +62,8 @@ export type ChatMessageListController = Record<string, any> & {
   serverUrl: string;
   sessionIsSending: boolean;
   token: string | null;
+  activeWorkspace?: WorkspaceResponse | null;
+  onSaveGeneratedFileToWorkspace?: (file: GeneratedFileResponse) => Promise<{ path: string }>;
 };
 
 export type ChatMessageListProps = {
@@ -125,34 +129,6 @@ export async function downloadGeneratedFile(baseUrl: string, token: string | nul
   anchor.click();
   document.body.removeChild(anchor);
   URL.revokeObjectURL(url);
-}
-
-function generatedFileKindLabel(file: GeneratedFileResponse) {
-  const mime = (file.mime_type || "").toLowerCase();
-  const name = (file.filename || "").toLowerCase();
-  if (mime.includes("word") || name.endsWith(".docx")) return "已生成 Word 文档";
-  if (mime.includes("spreadsheet") || name.endsWith(".xlsx")) return "已生成 Excel 文件";
-  if (mime.includes("presentation") || name.endsWith(".pptx")) return "已生成演示文稿";
-  if (mime.includes("pdf") || name.endsWith(".pdf")) return "已生成 PDF 文件";
-  return "已生成文件";
-}
-
-function renderGeneratedFileCard(file: GeneratedFileResponse, onDownload: (file: GeneratedFileResponse) => void) {
-  return (
-    <div className="message-file-card">
-      <div>
-        <strong>{file.filename}</strong>
-        <span>{generatedFileKindLabel(file)}</span>
-      </div>
-      <button
-        className="message-file-download"
-        onClick={() => onDownload(file)}
-        type="button"
-      >
-        下载
-      </button>
-    </div>
-  );
 }
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -547,6 +523,8 @@ function renderSkillRunCard(
   options: {
     showGeneratedFile?: boolean;
     onDownloadGeneratedFile?: (file: GeneratedFileResponse) => void;
+    onSaveGeneratedFileToWorkspace?: (file: GeneratedFileResponse) => Promise<{ path: string }>;
+    workspace?: WorkspaceResponse | null;
   } = {},
 ) {
   const missingFields = skillRun.missing_inputs
@@ -582,7 +560,12 @@ function renderSkillRunCard(
         <MessageCodeBlock code={missingInstruction} language="下一步操作" />
       ) : null}
       {options.showGeneratedFile !== false && skillRun.generated_file && options.onDownloadGeneratedFile ? (
-        renderGeneratedFileCard(skillRun.generated_file, options.onDownloadGeneratedFile)
+        <GeneratedFileCard
+          file={skillRun.generated_file}
+          onDownload={options.onDownloadGeneratedFile}
+          onSaveToWorkspace={options.onSaveGeneratedFileToWorkspace}
+          workspace={options.workspace}
+        />
       ) : skillRun.generated_file ? (
         <div className="message-skill-output">{skillRun.generated_file.filename}</div>
       ) : null}
@@ -832,6 +815,7 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
     mode,
     openFeedbackDialog,
     openRegenerateDialog,
+    onSaveGeneratedFileToWorkspace,
     paneSessionId,
     renderAvatar,
     requestDeleteMessageContext,
@@ -1089,15 +1073,19 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
               : undefined,
           }) : null}
           {message.generated_file ? (
-            renderGeneratedFileCard(
-              message.generated_file,
-              (file) => void downloadGeneratedFile(serverUrl, token, file),
-            )
+            <GeneratedFileCard
+              file={message.generated_file}
+              onDownload={(file) => void downloadGeneratedFile(serverUrl, token, file)}
+              onSaveToWorkspace={onSaveGeneratedFileToWorkspace}
+              workspace={activeWorkspace}
+            />
           ) : null}
           {message.agent_run ? renderAgentRunCard(message.agent_run) : null}
           {message.skill_run ? renderSkillRunCard(message.skill_run, {
             showGeneratedFile: !message.generated_file,
             onDownloadGeneratedFile: (file) => void downloadGeneratedFile(serverUrl, token, file),
+            onSaveGeneratedFileToWorkspace,
+            workspace: activeWorkspace,
           }) : null}
           {message.agent_suggestion ? (
             <div className="message-agent-suggestion">

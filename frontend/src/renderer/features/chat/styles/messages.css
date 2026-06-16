@@ -702,6 +702,7 @@
 
 .message-file-card {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -712,29 +713,59 @@
   background: hsl(156 28% 96%);
 }
 
-.message-file-card div {
+.message-file-card-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.message-file-card-main > div {
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
 
-.message-file-card strong,
-.message-file-card span {
+.message-file-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border-radius: 7px;
+  background: hsl(156 34% 90%);
+  color: hsl(156 45% 28%);
+}
+
+.message-file-card-main strong,
+.message-file-card-main span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.message-file-card strong {
+.message-file-card-main strong {
   font-size: 13px;
 }
 
-.message-file-card span {
+.message-file-card-main span {
   color: hsl(var(--muted-foreground));
   font-size: 12px;
 }
 
-.message-file-download {
+.message-file-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.message-file-download,
+.message-file-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   border: 1px solid hsl(156 34% 76%);
   border-radius: 7px;
   background: hsl(var(--card));
@@ -743,6 +774,26 @@
   font-size: 12px;
   font-weight: 650;
   cursor: pointer;
+}
+
+.message-file-save {
+  background: hsl(156 45% 28%);
+  color: #fff;
+}
+
+.message-file-save:disabled {
+  cursor: default;
+  opacity: 0.78;
+}
+
+.message-file-status {
+  flex: 1 0 100%;
+  color: hsl(156 45% 28%);
+  font-size: 12px;
+}
+
+.message-file-status.is-error {
+  color: hsl(0 70% 42%);
 }
 
 .message-agent-suggestion {
@@ -1555,4 +1606,3 @@
   font-size: 11px;
   font-weight: 650;
 }
-

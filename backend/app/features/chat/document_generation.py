@@ -1,24 +1,34 @@
 from __future__ import annotations
 
-import re
-import uuid
 from pathlib import Path
 from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
 from app.features.agents.events import add_agent_event, create_agent_run, finish_agent_run
-from app.features.documents.renderer import render_docx
-from app.features.notifications.service import notify_file_generated
-from models.generated_file import GeneratedFile
+from app.features.documents.generation import create_generated_file, safe_document_title
+from app.features.documents.formats import normalize_output_format
 
 
-DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-
-
-def safe_document_title(text: str) -> str:
-    title = re.sub(r"\s+", " ", text).strip()[:40] or "Project_R 生成文档"
-    return re.sub(r"[\\/:*?\"<>|]", "_", title)
+def create_generated_output_file(
+    db: Session,
+    user_id: int,
+    session_id: int,
+    user_prompt: str,
+    content: str,
+    *,
+    output_format: str = "docx",
+    generated_files_root: Path,
+) -> dict:
+    return create_generated_file(
+        db,
+        user_id,
+        session_id,
+        user_prompt,
+        content,
+        output_format=output_format,
+        generated_files_root=generated_files_root,
+    )
 
 
 def create_generated_docx(
@@ -30,27 +40,15 @@ def create_generated_docx(
     *,
     generated_files_root: Path,
 ) -> dict:
-    file_id = str(uuid.uuid4())
-    title = safe_document_title(user_prompt)
-    filename = f"{title}.docx"
-    output_path = generated_files_root / str(user_id) / f"{file_id}.docx"
-    render_docx(title, content, output_path)
-    generated = GeneratedFile(
-        id=file_id,
-        user_id=user_id,
-        session_id=session_id,
-        filename=filename,
-        path=str(output_path),
-        mime_type=DOCX_MIME,
+    return create_generated_output_file(
+        db,
+        user_id,
+        session_id,
+        user_prompt,
+        content,
+        output_format="docx",
+        generated_files_root=generated_files_root,
     )
-    db.add(generated)
-    notify_file_generated(db, user_id=user_id, file_id=file_id, filename=filename, session_id=session_id)
-    return {
-        "id": file_id,
-        "filename": filename,
-        "mime_type": DOCX_MIME,
-        "download_url": f"/documents/{file_id}/download",
-    }
 
 
 def write_document_generation_agent_run(
@@ -64,6 +62,19 @@ def write_document_generation_agent_run(
     safe_event_detail: Callable[[object], str],
 ):
     title = f"生成文件：{generated_file.get('filename') or safe_document_title(user_prompt)}"
+    mime_type = str(generated_file.get("mime_type") or "")
+    output_format = "docx"
+    if "markdown" in mime_type or str(generated_file.get("filename") or "").lower().endswith(".md"):
+        output_format = "markdown"
+    elif "text/plain" in mime_type or str(generated_file.get("filename") or "").lower().endswith(".txt"):
+        output_format = "txt"
+    elif "spreadsheet" in mime_type or str(generated_file.get("filename") or "").lower().endswith(".xlsx"):
+        output_format = "xlsx"
+    elif "presentation" in mime_type or str(generated_file.get("filename") or "").lower().endswith(".pptx"):
+        output_format = "pptx"
+    elif "application/pdf" in mime_type or str(generated_file.get("filename") or "").lower().endswith(".pdf"):
+        output_format = "pdf"
+    format_name = normalize_output_format(output_format).display_name
     run = create_agent_run(
         db,
         user_id=user_id,
@@ -87,10 +98,10 @@ def write_document_generation_agent_run(
         db,
         run,
         event_type="tool_call",
-        title="渲染 Word 文档",
+        title=f"渲染{format_name}",
         detail=str(generated_file.get("filename") or ""),
         status="completed",
-        payload={"tool": "document_generation.render_docx", "file_id": generated_file.get("id")},
+        payload={"tool": f"document_generation.render_{output_format}", "file_id": generated_file.get("id")},
     )
     add_agent_event(
         db,

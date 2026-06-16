@@ -29,6 +29,7 @@ from app.features.notifications.service import (
     notify_workspace_bulk_delete_risk,
     notify_workspace_joined,
 )
+from app.features.documents.workspace_save import save_generated_file_to_workspace as _save_generated_file_to_workspace
 from app.features.workspaces.audit import (
     audit_detail as _audit_detail,
     mark_workspace_rag_pending as _mark_workspace_rag_pending,
@@ -60,6 +61,7 @@ from app.features.workspaces.schemas import (
     RenameWorkspacePathRequest,
     RestoreWorkspaceFileRequest,
     SaveAttachmentToWorkspaceRequest,
+    SaveGeneratedFileToWorkspaceRequest,
     UpdateWorkspaceMemberRoleRequest,
     UpdateWorkspaceRequest,
     UploadWorkspaceFileRequest,
@@ -704,6 +706,29 @@ def save_attachment_to_workspace(
     )
     db.commit()
     return WorkspaceFileMutationResponse(ok=True, path=rel_path, file_id=meta.id, rag_status=meta.rag_status, agent_run=serialize_agent_run(db, agent_run))
+
+
+@router.post("/{workspace_id}/generated-files/save", response_model=WorkspaceFileMutationResponse)
+def save_generated_file_to_workspace(
+    workspace_id: int,
+    req: SaveGeneratedFileToWorkspaceRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    _ensure_member(db, user.id, workspace_id)
+    result = _save_generated_file_to_workspace(
+        db,
+        workspace=workspace,
+        user=user,
+        generated_file_id=req.generated_file_id,
+        conflict_strategy=req.conflict_strategy,
+        storage_config=_storage_config(),
+    )
+    db.commit()
+    return WorkspaceFileMutationResponse(**result)
 
 
 @router.delete("/{workspace_id}/folders", response_model=WorkspaceFileMutationResponse)

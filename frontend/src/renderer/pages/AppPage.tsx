@@ -41,6 +41,7 @@ import { serverUrlAtom } from "../shared/state/server";
 import { activeModeAtom } from "../shared/state/ui";
 import { activeTabIdAtom, tabsAtom } from "../features/chat/tabs-state";
 import { activeWorkspaceIdAtom, workspacesAtom } from "../features/workspace/state";
+import { saveGeneratedFileToWorkspace } from "../features/workspace/api";
 import {
   formatNotificationTime,
   notificationCategoryLabel,
@@ -150,6 +151,7 @@ export function AppPage() {
   const [isLoading, setIsLoading] = useAtom(chatLoadingAtom);
   const [error, setError] = useAtom(chatErrorAtom);
   const [actionNotice, setActionNotice] = useState("");
+  const [workspaceFilePanelRefreshKey, setWorkspaceFilePanelRefreshKey] = useState(0);
   const [draft, setDraft, clearCurrentDraft] = useChatDraft(activeSessionId);
   const [mode, setMode] = useAtom(activeModeAtom);
   const [tabs, setTabs] = useAtom(tabsAtom);
@@ -1405,6 +1407,20 @@ export function AppPage() {
     window.requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
+  async function handleSaveGeneratedFileToWorkspace(file: GeneratedFileResponse) {
+    if (!activeWorkspaceId || !activeWorkspace || activeWorkspace.workspace_kind === "user") {
+      throw new Error("当前工作区不支持保存生成文件");
+    }
+    const result = await saveGeneratedFileToWorkspace(apiOptions, activeWorkspaceId, {
+      generated_file_id: file.id,
+      conflict_strategy: "keep_both",
+    });
+    setWorkspaceFilePanelRefreshKey((value) => value + 1);
+    setUtilityPanel("workspace");
+    setActionNotice(`已保存到 ${result.path}`);
+    return { path: result.path };
+  }
+
   // 当前会话已消耗 tokens（从最后一条非 typing assistant 消息取）
   const activeSessionTokenTotal = (() => {
     if (!activeSessionId) return 0;
@@ -1452,6 +1468,7 @@ export function AppPage() {
     handleSelectAttachmentFiles,
     handleSubmitEditedMessage,
     handleSubmitGBrainThinkReview,
+    onSaveGeneratedFileToWorkspace: handleSaveGeneratedFileToWorkspace,
     handleSwitchToAgent,
     handleToggleSideBySide,
     messageActionBusyId,
@@ -1660,6 +1677,7 @@ export function AppPage() {
         updateStep,
         userPrompts,
         utilityPanel,
+        workspaceFilePanelRefreshKey,
         workspacePanelMaxWidth,
         workspacePanelRef,
         workspacePanelResizing,

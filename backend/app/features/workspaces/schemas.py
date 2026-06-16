@@ -176,6 +176,11 @@ class SaveAttachmentToWorkspaceRequest(BaseModel):
     conflict_strategy: str = "keep_both"
 
 
+class SaveGeneratedFileToWorkspaceRequest(BaseModel):
+    generated_file_id: str
+    conflict_strategy: str = "keep_both"
+
+
 class WorkspaceFileMutationResponse(BaseModel):
     ok: bool
     path: str

@@ -34,8 +34,7 @@ from app.features.chat.context_trace import (
     skill_context_extra,
 )
 from app.features.chat.document_generation import (
-    create_generated_docx as _create_generated_docx_base,
-    safe_document_title as _safe_document_title,
+    create_generated_output_file as _create_generated_output_file_base,
     write_document_generation_agent_run as _write_document_generation_agent_run_base,
 )
 from app.features.chat.gbrain_agent_run import write_gbrain_think_agent_run as _write_gbrain_think_agent_run_base
@@ -112,6 +111,18 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 HISTORY_LIMIT = 20
 logger = logging.getLogger(__name__)
 KNOWLEDGE_COMMAND_PREFIX = "/query"
+FILE_COMMAND_FORMATS = {
+    "/doc": "docx",
+    "/word": "docx",
+    "/md": "markdown",
+    "/markdown": "markdown",
+    "/txt": "txt",
+    "/xlsx": "xlsx",
+    "/excel": "xlsx",
+    "/ppt": "pptx",
+    "/pptx": "pptx",
+    "/pdf": "pdf",
+}
 BASE_DIR = Path(__file__).resolve().parent.parent
 SESSION_ATTACHMENTS_ROOT = BASE_DIR / "session_attachments"
 GLOBAL_BASE_PROMPT_PATH = BASE_DIR / "prompt_presets" / "global-base-prompt.md"
@@ -862,13 +873,14 @@ def send_message(
     _bind_attachments_to_message(db, selected_attachments, user_message)
 
     forced_knowledge, knowledge_query = _parse_knowledge_command(content)
+    document_format, document_prompt = _parse_file_generation_command(content)
     if req.force_knowledge_query:
         forced_knowledge = True
         knowledge_query = content
-    llm_user_content = content or _attachment_only_prompt(selected_attachments)
+    llm_user_content = document_prompt or content or _attachment_only_prompt(selected_attachments)
     query_content = knowledge_query or llm_user_content
     intent = classify_intent(query_content)
-    effective_intent = IntentType.RAG_QUERY if forced_knowledge else intent.intent
+    effective_intent = IntentType.DOCUMENT_GENERATION if document_format else IntentType.RAG_QUERY if forced_knowledge else intent.intent
     reduce_knowledge_context = _should_reduce_knowledge_context(req.selected_prompt_id, forced_knowledge)
     if reduce_knowledge_context and effective_intent == IntentType.RAG_QUERY:
         effective_intent = IntentType.CHAT
@@ -898,6 +910,8 @@ def send_message(
         )
 
     llm_messages = _build_llm_messages(db, user.id, session_id)
+    if document_format and document_prompt and llm_messages:
+        llm_messages[-1] = {**llm_messages[-1], "content": document_prompt}
     if req.selected_skill and effective_intent != IntentType.DOCUMENT_GENERATION:
         chat_text_response = _run_chat_text_skill_by_name(
             db,
@@ -1123,7 +1137,14 @@ def send_message(
     usage = llm_response.usage
     generated_file = None
     if effective_intent == IntentType.DOCUMENT_GENERATION:
-        generated_file = _create_generated_docx(db, user.id, session_id, content, llm_response.text)
+        generated_file = _create_generated_file(
+            db,
+            user.id,
+            session_id,
+            document_prompt or content,
+            llm_response.text,
+            output_format=document_format or "docx",
+        )
     context_trace = build_context_trace(
         session=session,
         req=req,
@@ -1338,23 +1359,37 @@ def _message_to_response_dict(db: Session, message: ChatMessage) -> dict:
     return _message_to_response_dict_core(db, message, feedback_root=MESSAGE_FEEDBACK_ROOT)
 
 
+def _parse_file_generation_command(content: str) -> tuple[str | None, str]:
+    normalized = content.strip()
+    lowered = normalized.lower()
+    for command, output_format in FILE_COMMAND_FORMATS.items():
+        if lowered == command:
+            raise HTTPException(status_code=400, detail="请在文件生成命令后输入要生成的内容要求")
+        if lowered.startswith(f"{command} "):
+            return output_format, normalized[len(command):].strip()
+    return None, ""
 
 
 
 
-def _create_generated_docx(
+
+
+def _create_generated_file(
     db: Session,
     user_id: int,
     session_id: int,
     user_prompt: str,
     content: str,
+    *,
+    output_format: str,
 ) -> dict:
-    return _create_generated_docx_base(
+    return _create_generated_output_file_base(
         db,
         user_id,
         session_id,
         user_prompt,
         content,
+        output_format=output_format,
         generated_files_root=GENERATED_FILES_ROOT,
     )
 

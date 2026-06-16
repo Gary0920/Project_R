@@ -174,8 +174,10 @@ export function useChatSendOrchestrator(options: UseChatSendOrchestratorOptions)
       }
 
       const autoAudioTranscription = audioVideoAttachments.length > 0 && isAudioTranscriptionRequest(content);
+      const forceFileGeneration = ["doc", "md", "txt"].includes(options.selectedBuiltinCommand?.name ?? "");
       const needsLegacyPath =
         forceKnowledgeQuery ||
+        forceFileGeneration ||
         options.selectedSkill?.name ||
         options.selectedBuiltinCommand?.name === "query" ||
         autoAudioTranscription;

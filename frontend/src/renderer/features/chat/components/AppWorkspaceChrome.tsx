@@ -162,6 +162,7 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     updateStep,
     userPrompts,
     utilityPanel,
+    workspaceFilePanelRefreshKey,
     workspacePanelMaxWidth,
     workspacePanelRef,
     workspacePanelResizing,
@@ -385,6 +386,7 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
           </header>
           <WorkspaceFilePanel
             apiOptions={apiOptions}
+            key={`${activeWorkspaceId ?? "none"}-${workspaceFilePanelRefreshKey ?? 0}`}
             onPreviewOpen={handleWorkspaceFilePreviewOpen}
             onPreviewClose={handleWorkspaceFilePreviewClose}
             workspaceId={activeWorkspaceId}

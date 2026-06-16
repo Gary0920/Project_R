@@ -1195,6 +1195,76 @@ class ChatPhase6Tests(unittest.TestCase):
         self.assertEqual(response["intent"], "chat")
         self.assertIsNone(generated)
 
+    def test_markdown_command_explicitly_generates_file(self):
+        response = chat_api.send_message(
+            self.session.id,
+            chat_api.SendMessageRequest(content="/md 写一份会议纪要"),
+            self.user,
+            self.db,
+        )
+
+        generated = response["generated_file"]
+        self.assertEqual(response["intent"], "document_generation")
+        self.assertIsNotNone(generated)
+        self.assertTrue(generated["filename"].endswith(".md"))
+        self.assertEqual(generated["mime_type"], "text/markdown; charset=utf-8")
+        self.assertEqual(response["reply"], "mock reply: 写一份会议纪要")
+        self.assertTrue((Path(self.generated_root.name) / str(self.user.id) / f"{generated['id']}.md").exists())
+
+    def test_excel_command_explicitly_generates_file(self):
+        response = chat_api.send_message(
+            self.session.id,
+            chat_api.SendMessageRequest(content="/xlsx 整理项目报价表"),
+            self.user,
+            self.db,
+        )
+
+        generated = response["generated_file"]
+        self.assertEqual(response["intent"], "document_generation")
+        self.assertIsNotNone(generated)
+        self.assertTrue(generated["filename"].endswith(".xlsx"))
+        self.assertEqual(
+            generated["mime_type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.assertEqual(response["reply"], "mock reply: 整理项目报价表")
+        self.assertTrue((Path(self.generated_root.name) / str(self.user.id) / f"{generated['id']}.xlsx").exists())
+
+    def test_powerpoint_command_explicitly_generates_file(self):
+        response = chat_api.send_message(
+            self.session.id,
+            chat_api.SendMessageRequest(content="/pptx 生成项目汇报大纲"),
+            self.user,
+            self.db,
+        )
+
+        generated = response["generated_file"]
+        self.assertEqual(response["intent"], "document_generation")
+        self.assertIsNotNone(generated)
+        self.assertTrue(generated["filename"].endswith(".pptx"))
+        self.assertEqual(
+            generated["mime_type"],
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        )
+        self.assertEqual(response["reply"], "mock reply: 生成项目汇报大纲")
+        self.assertTrue((Path(self.generated_root.name) / str(self.user.id) / f"{generated['id']}.pptx").exists())
+
+    def test_pdf_command_explicitly_generates_text_file(self):
+        response = chat_api.send_message(
+            self.session.id,
+            chat_api.SendMessageRequest(content="/pdf 写一份会议纪要"),
+            self.user,
+            self.db,
+        )
+
+        generated = response["generated_file"]
+        self.assertEqual(response["intent"], "document_generation")
+        self.assertIsNotNone(generated)
+        self.assertTrue(generated["filename"].endswith(".pdf"))
+        self.assertEqual(generated["mime_type"], "application/pdf")
+        self.assertEqual(response["reply"], "mock reply: 写一份会议纪要")
+        self.assertTrue((Path(self.generated_root.name) / str(self.user.id) / f"{generated['id']}.pdf").exists())
+
     def test_convert_previous_notice_to_word_stays_chat_without_explicit_route(self):
         self.db.add(
             ChatMessage(
