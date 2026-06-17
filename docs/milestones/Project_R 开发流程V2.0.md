@@ -20,6 +20,7 @@
 | 2026-06-16 | Sprint 5 MVP 闭环 | Agent 文件产出新增 xlsx/pptx 格式，复用显式命令、renderer 注册表与工作区保存链路 |
 | 2026-06-16 | Sprint 5.1 优化闭环 | 建立 Markdown 结构化解析接缝，拆分 renderer，新增文本类 PDF 渲染；不做 xlsx/pptx 转 PDF |
 | 2026-06-16 | Sprint 5.2 设计落地 | 新增 `project_r.document.render` dispatcher tool，Skill 可从已收集输入生成 `GeneratedFile` |
+| 2026-06-16 | Sprint 6.1 产品级优化 | 抽离邮件草稿/文本变换小模块，补邮件草稿编辑器、文本变换结果卡，并接入公司项目邮件规则 |
 
 本次修订对照了 Codex 生成的计划框架（`steady-yawning-phoenix.md`）并逐项核对真实代码，修正了其中的依赖误判（`playwright` 实际不在依赖、`openpyxl` 已存在）、状态误判（多项"未实现"实为"部分实现"），以及一个被忽略的关键约束：`intent.py` 已冻结显式路由，使旧 docx 生成分支成为不可达死代码。
 
@@ -48,7 +49,7 @@
 
 1. **Chat 可日常替代**：流式输出顺滑、草稿不丢、对话可带走（导出），输入与快捷操作符合主流 AI 产品直觉。
 2. **Agent 产出可用**：生成结果不只是聊天文本，能落成可下载的标准文件（至少 docx/xlsx/pptx），并能在项目/客户工作区按规则保存。
-3. **GBrain 可被普通用户使用**：不需记命令也能浏览/搜索公司知识库，看得到来源与入库状态；管理员能直观看质量与做审核。
+3. **GBrain 可被普通用户可信使用**：不需记命令也能显式发起知识库查询；查询前看得懂本次来源范围，查询后看得懂本轮引用来源、定位和限制。知识库元数据、source 列表、入库状态和质量报告只面向有权限的管理员。
 4. **技术闸门**：Chat / query / search / agent 四类主路径都有后端测试与前端关键路径测试；不污染真实 `app.db` 与真实 workspace data；`bun run typecheck`、相关 `pytest`、关键 Playwright 通过。
 
 ---
@@ -100,7 +101,7 @@
 |---|---|---|---|
 | 流式传输接缝 | Chat | `LLMClient.stream()` 协议 → 后端 `StreamingResponse` → 前端统一 stream reader；建立时把发送/打字机逻辑从 `AppPage.tsx` 抽成 `features/chat/` 内的 hook/service | C1，及后续所有生成体验 |
 | 文档产出接缝 | Agent | renderer 注册表（`format → renderer` 映射）+ 显式触发入口 + 统一"生成→（项目/客户区）保存"流程 | A1/A2/A5/B1，新增格式只注册不改调用点 |
-| 知识库前端模块接缝 | GBrain | 新建独立 `features/knowledge/` 模块承载浏览/搜索，**不塞进** chat 或 `SettingsModal` | G1/G2/G3/G4 |
+| 知识库前端模块接缝 | GBrain | 新建独立 `features/knowledge/` 模块承载来源范围提示、引用来源预览标准化和管理员知识元数据入口，**不塞进** chat 或 `SettingsModal` | G1/G2/G3/G4 |
 
 **原则二：反堆叠护栏（Anti-God-File）。** 下列文件已严重超出 `AGENTS.md` 体量红线（>800 不堆、>1500 必拆）。本轮**禁止继续增大**它们；相关功能必须先抽离再实现：
 
@@ -231,33 +232,37 @@
 
 ## 6. 板块三：GBrain 产品化
 
-目标：普通用户不记命令也能用知识库；管理员能直观维护。执行顺序最后（放大前两板块的稳定性收益）。
+目标：普通用户不记命令也能显式使用知识库查询，并清楚知道本次查询范围、引用来源和引用限制；管理员能直观看知识库元数据、source 状态、入库状态、质量与审核。执行顺序最后（放大前两板块的稳定性收益）。
 
 ### 6.1 清单总览
 
 | # | 功能 | 真实状态 | 优先级 |
 |---|---|---|---|
-| G1 | 知识库浏览 UI（公司知识目录/分类） | 未实现（仅 `/query` 命令；项目图谱另算） | P0 |
-| G2 | 知识库搜索独立入口 | 未实现（依赖 `/query` 对话式） | P0 |
-| G3 | 搜索结果过滤（source/类型/时间） | 未实现（用户侧 UI） | P1 |
-| G4 | Source 状态用户可见 | 部分实现（文件级 `rag_status` 成员可见） | P1 |
-| G5 | 质量报告可视化 | 部分实现（管理员文字摘要+JSON 导出，无图表） | P1 |
-| G6 | 知识审核增强（diff + 批量） | 部分实现（单条通过/驳回，无 diff/批量） | P1 |
-| G7 | GBrain 状态仪表板 | 部分实现（指标卡片+文字趋势，无趋势图） | P2 |
+| G1 | 来源范围提示与查询入口 | 已实现前端产品级竖切片（`/query` 输入态显示本次查询/排除范围；未新增普通用户知识库浏览器） | P0 |
+| G2 | 引用来源预览标准化 | 已实现前端产品级竖切片（消息来源列表 + 右侧本轮引用片段预览；不暴露全量 source/目录/chunk/入库状态） | P0 |
+| G3 | 搜索/查询结果过滤与来源类型提示 | 已实现 Sprint 8.1 代码级闭环：Evidence UX 只筛选本轮回答 sources，不做全量知识库过滤器；产品级筛选验收待三类知识数据补齐 | P1 |
+| G4 | Source 状态管理员可见 | 已实现 Sprint 8.2 来源证据可读性修正：普通用户侧优先看 evidence excerpt，无片段时明确降级；管理员深度 source 治理后置 | P1 |
+| G5 | 质量报告可视化 | Sprint 9.0 已实现管理侧质量报告 MVP（最新摘要、失败 case、warning/preflight、JSON 下载；趋势按真实数据不足降级） | P1 |
+| G6 | 知识审核增强（diff + 批量） | Sprint 9.1 / G6.0 前端审核工作台 MVP 已通过（结构抽离、原内容 vs 本地草稿、当前页安全批量）；完整 batch endpoint/备注/历史后置，未标记完整 G6 完成 | P1 |
+| G7 | GBrain 状态仪表板 | Sprint 9.2 / G7.0 状态仪表板 MVP 已代码级闭环（Overall Health、Key Signals、Warnings、Maintenance Entry Points）；完整管理后台重构后置 | P2 |
 
 ### 6.2 P0 实现要点与验收
 
-**G1 知识库浏览 UI / G2 搜索独立入口**
-- 改动范围：新增前端 feature（`frontend/src/renderer/features/knowledge/...`）——独立面板：公司知识目录浏览 + 搜索框（区别于 Chat 的 `/query`）。后端复用现有 GBrain 查询/source 接口（`backend/api/rag.py`、`app/features/knowledge/`），必要时补只读列表端点（薄路由）。
-- source scope 严格遵守 GBrain 边界：个人工作台只 `company-wiki`；项目区 `company-wiki + 当前项目`；客户区只客户情报。
-- 验收：后端 `pytest`（三类 source scope 列表/搜索）；`bun run typecheck`；Playwright：浏览→搜索→点击→来源预览/发起 `/query`；普通 Chat 不被升级为知识库检索。
+**G1 来源范围提示 / G2 引用来源预览标准化**
+- 改动范围：新增前端 feature（`frontend/src/renderer/features/knowledge/...`），但普通用户侧不做“知识库浏览器”，不展示全量 source、文件目录、chunk、入库状态、质量报告或知识库元数据。普通用户只获得显式查询入口、来源范围提示和本轮引用来源预览。
+- 来源范围提示必须达到产品级：在 `/query` 或等价知识库查询入口附近，明确显示“本次将查询哪些范围”和“不会查询哪些范围”。个人工作台只 `company-wiki`；项目区 `company-wiki + 当前项目 source`；客户区只客户情报，不叠加公司知识或项目 source。
+- 引用来源预览必须达到产品级：只展示本次回答实际引用到的片段、标题、必要路径、定位信息（页码/行号/时间戳/文件类型等可用字段）、source scope 和 gap/conflict/warning 摘要；不得提供普通用户枚举全量知识库、浏览原始知识库文件全文或查看全部入库状态的入口。
+- 管理员元数据入口另行放入 `features/knowledge/` 或 `features/admin/knowledge/` 子模块：系统管理员可看公司全局知识元数据与所有 source 状态；项目管理员只看当前项目 source 状态；客户工作区管理员只看当前客户 source 状态；普通用户无入口。
+- 后端如需补接口，只补 Project_R 薄的只读 API，复用 `app/features/knowledge/` 和现有 GBrain adapter；不得修改 GBrain 原生代码、`reference/gbrain-master` 或直接依赖 GBrain 内部表结构。
+- 当前实现记录：已新增 `frontend/src/renderer/features/knowledge/` 承载普通用户侧来源范围提示、引用来源标准化和来源预览组件；已抽出 `frontend/src/renderer/features/chat/messageContent.tsx` 作为消息 Markdown 渲染接缝，避免来源预览反向依赖大消息组件；已新增 `frontend/src/renderer/features/admin/knowledge/` 承载管理员知识概览入口，复用现有 `/admin/knowledge/status`、质量报告和 GBrain 操作数据。后端新增只读元数据端点按后续治理需要再补。
+- 验收：后端 `pytest` 覆盖三类 source scope 和元数据权限；`bun run typecheck`；关键 UI 验证：普通用户只能看到来源范围和本轮引用片段，不能看到 source 列表/知识库目录/入库状态；管理员可进入只读元数据状态入口；普通 Chat 不被升级为自动知识库检索。
 
 ### 6.3 P1/P2 实现要点
 
 | # | 改动范围 | 验收 |
 |---|---|---|
-| G3 | 搜索面板加 source/类型/时间过滤控件（后端排序权重已有，补用户可选过滤） | 后端 `pytest` + Playwright 过滤/空结果 |
-| G4 | 把文件级 `rag_status` 可见性扩展为更清晰的 source 状态提示（沿用 `WorkspaceFileRow` 徽章） | `bun run typecheck` + 手工 |
+| G3 | 查询结果加来源类型/范围/时间等解释控件；不提供普通用户全量 source 枚举 | 后端 `pytest` + Playwright 过滤/空结果 |
+| G4 | 把文件级 `rag_status` 和 source 状态扩展为管理员可见的治理信息；普通用户只看本轮引用来源状态 | `bun run typecheck` + 手工 |
 | G5 | `AdminSettingsPanel.tsx` 质量报告区加图表组件（通过率趋势、失败分布），数据取自 `GET /quality/reports` | `bun run typecheck` + 手工 |
 | G6 | 审核 tab 加 side-by-side diff（原答案 vs 修正）与批量通过/驳回（后端补 batch 端点） | 后端 `pytest` + 手工 |
 | G7 | GBrain 概览区把文字趋势升级为趋势图（健康分/jobs/contradictions） | `bun run typecheck` + 手工 |
@@ -324,20 +329,28 @@ Sprint 6  Agent 邮件与文本变换（P1/P2）
 ├── T2 transform 端点已保持薄路由，逻辑在 `app/features/chat/transform_service.py`
 └── T1 消息操作区一键改写/翻译/总结/扩写，结果回填输入框等待用户确认
 
+Sprint 6.1  邮件草稿与文本变换产品级闭环
+├── 后端新增 `app/features/documents/email_draft.py`，统一解析 `Subject/To/Cc/Bcc/Body`，`.eml` renderer 与 `/email` 命令复用同一结构
+├── 前端新增 `features/chat/emailDraft.ts`、`textTransform.ts`、`EmailDraftEditor`、`TextTransformResultCard`，修正 Sprint 6 MVP 中把逻辑堆进 `AppPage.tsx` / `ChatMessageList.tsx` 的问题
+├── 邮件草稿卡主入口改为查看/编辑草稿，支持编辑后复制正文或打开默认邮件客户端；下载 `.eml` 保留为原始文件兜底
+├── 文本变换结果先进入结果卡，由用户选择复制或替换输入框，不再静默覆盖草稿
+└── 文本变换和客户回复起草纳入公司沟通要求：结构化、可执行、保留责任边界；项目邮件主题必须以完整项目名称开头，缺项目名不得编造
+
 板块三 · GBrain
-Sprint 7  知识库前端模块接缝（架构地基，P0）【Codex接管】
-├── S7.1 新建 features/knowledge/ 模块骨架（不塞进 chat / SettingsModal）【Codex接管】
-├── S7.2 后端按需补只读列表端点（薄路由，复用现有 GBrain 接口）【Codex接管】
-└── S7.3 G1 浏览 + G2 搜索竖切片（严格 source scope）【Codex接管】
+Sprint 7  GBrain 来源透明与管理员知识入口接缝（架构地基，P0）【Codex接管】
+├── S7.1 新建 features/knowledge/ 与 features/admin/knowledge/ 模块骨架：普通用户来源范围提示、引用来源预览、管理员知识概览入口已落地
+├── S7.2 后端按需补 Project_R 只读权限端点：本轮复用现有 admin knowledge/status、质量报告和 GBrain 操作 API，未新增后端端点
+└── S7.3 G1 来源范围提示 + G2 引用来源预览标准化竖切片：已完成前端闭环（严格 source scope；普通用户不浏览知识库元数据）
 
-Sprint 8  GBrain 用户侧增强（P1）
-├── G3 结果过滤
-└── G4 Source 状态用户可见
+Sprint 8  GBrain 用户侧增强（P1）【8.2 evidence 可读性代码闭环】
+├── G3 Evidence UX：本轮回答来源类型筛选（全部/公司/项目/客户/外部/需核对），不请求全量 source
+├── G4 本轮引用状态解释：定位完整/有限、来源范围、gap/conflict/warning、核对限制说明
+└── Sprint 8.2：best-effort evidence enrichment；来源面板优先展示可读 evidence excerpt，技术定位默认折叠
 
-Sprint 9  GBrain 管理侧（P1/P2）
-├── G5 质量报告可视化（落 features/admin/ 子组件，不进 SettingsModal）
-├── G6 审核增强（diff + 批量）【Codex审核】
-└── G7 状态仪表板
+Sprint 9  GBrain 管理侧（P1/P2）【G5/G6.0/G7.0 MVP 代码级闭环】
+├── G5 质量报告 MVP（已落 features/admin/knowledge 子组件；最新摘要、失败 case、warning/preflight、JSON 下载；真实趋势不足降级）
+├── G6 审核增强（G6.0 前端审核工作台 MVP 已通过；完整 batch endpoint/备注/历史仍后置，未标记完整 G6 完成）
+└── G7 状态仪表板（G7.0 状态仪表板 MVP 已代码级闭环：管理员总览，不做完整维护页重构）
 ```
 
 ### 7.3 每个 Sprint 的完成闸门
@@ -390,7 +403,7 @@ Sprint 9  GBrain 管理侧（P1/P2）
 ### 11.1 用户体验
 - 普通员工可流式聊天、草稿不丢、导出对话、用快捷键操作。
 - Agent 产出能落成 docx/xlsx/pptx 并按规则保存到项目/客户工作区。
-- 用户能浏览/搜索公司知识库并看到来源与入库状态。
+- 用户能显式查询知识库，并清楚看到本次来源范围、引用片段、定位信息和限制；知识库元数据、source 状态、入库状态和质量报告只面向有权限的管理员。
 - 始终能区分"普通 Chat / 查知识库 / 执行 Agent"三种状态。
 
 ### 11.2 技术

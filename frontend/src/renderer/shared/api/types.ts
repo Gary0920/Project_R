@@ -296,6 +296,15 @@ export type ChatSourceResponse = {
   score: number;
   source_file?: string | null;
   derived_file?: string | null;
+  display_title?: string | null;
+  evidence_excerpt?: string | null;
+  original_source_file?: string | null;
+  locator_label?: string | null;
+  metadata_only?: boolean | null;
+  page_slug?: string | null;
+  row_num?: number | string | null;
+  source_id?: string | null;
+  source_slug?: string | null;
   source_line?: number | null;
   source_page?: number | null;
   source_locator?: string | null;

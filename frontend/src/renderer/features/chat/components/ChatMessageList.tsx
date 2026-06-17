@@ -1,26 +1,25 @@
-import { useEffect, useState, type RefObject, type ReactNode } from "react";
+import { useEffect, useState, type RefObject } from "react";
 
 import { fetchSessionAttachmentBlob } from "../api";
 import type { ApiClientOptions } from "../../../shared/api/client";
 import type {
   AgentRunResponse,
   ChatContextTraceResponse,
-  ChatSourceResponse,
   GeneratedFileResponse,
   SessionAttachmentResponse,
-  SkillRunResponse,
   WorkspaceResponse,
 } from "../../../shared/api/types";
 import type { ChatMessage } from "../state";
 import { APP_NAME } from "../../../shared/config/app";
-import { AgentIcon, CopyIcon, EditIcon, RefreshIcon, TrashIcon, XmarkIcon } from "../../../shared/icons/LineIcons";
-import { GeneratedFileCard } from "./GeneratedFileCard";
-
-type SourcePreview = {
-  index: number;
-  source: ChatSourceResponse;
-  sessionId?: number | null;
-};
+import { AgentIcon, XmarkIcon } from "../../../shared/icons/LineIcons";
+import { missingInputInstruction } from "../messageInstructions";
+import { renderMessageContent } from "../messageContent";
+import type { SourcePreview } from "../messageContent";
+import { MessageActions } from "./MessageActions";
+import { MessageGeneratedFile } from "./MessageGeneratedFile";
+import { MessageSkillRunCard } from "./MessageSkillRunCard";
+import type { TextTransformAction } from "../textTransform";
+import { MessageSourceList } from "../../knowledge/components/MessageSourceList";
 
 type AttachmentKind = "image" | "pdf" | "text" | "file";
 
@@ -66,73 +65,13 @@ export type ChatMessageListController = Record<string, any> & {
   onCopyGeneratedEmailBody?: (file: GeneratedFileResponse) => Promise<void>;
   onOpenGeneratedEmailClient?: (file: GeneratedFileResponse) => void;
   onSaveGeneratedFileToWorkspace?: (file: GeneratedFileResponse) => Promise<{ path: string }>;
-  onTransformMessage?: (message: ChatMessage, action: "rewrite" | "translate" | "summarize" | "expand") => void;
+  onEditGeneratedEmailDraft?: (file: GeneratedFileResponse) => void;
+  onTransformMessage?: (message: ChatMessage, action: TextTransformAction) => void;
 };
 
 export type ChatMessageListProps = {
   controller: ChatMessageListController;
 };
-
-function markdownToPlainText(value: string) {
-  return value
-    .replace(/```[a-zA-Z0-9_-]*\n([\s\S]*?)```/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/^\s*>\s?/gm, "")
-    .replace(/^\s*[-*+]\s+/gm, "")
-    .replace(/^\s*\d+\.\s+/gm, "")
-    .replace(/[*_~]{1,3}/g, "")
-    .trim();
-}
-
-export async function copyText(value: string, cleanMarkdown = false) {
-  const text = cleanMarkdown ? markdownToPlainText(value) : value;
-  if (!text) return;
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return;
-    }
-  } catch {
-    // Fall back to the legacy copy path below. Some embedded browsers deny Clipboard API.
-  }
-
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.setAttribute("readonly", "true");
-  textarea.style.position = "fixed";
-  textarea.style.top = "-9999px";
-  textarea.style.left = "-9999px";
-  textarea.style.opacity = "0";
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-  const ok = document.execCommand("copy");
-  document.body.removeChild(textarea);
-  if (!ok) {
-    throw new Error("Clipboard copy failed");
-  }
-}
-
-export async function downloadGeneratedFile(baseUrl: string, token: string | null, file: GeneratedFileResponse) {
-  const response = await fetch(`${baseUrl}${file.download_url}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  if (!response.ok) {
-    throw new Error("文件下载失败");
-  }
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = file.filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-  URL.revokeObjectURL(url);
-}
 
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -307,294 +246,6 @@ function MessageAttachmentFile({
       </span>
     </button>
   );
-}
-
-function renderSourceRefTag(
-  label: string,
-  index: number,
-  key: string,
-  sources?: ChatSourceResponse[],
-  onSelectSource?: (preview: SourcePreview) => void,
-) {
-  const source = sources?.[index - 1];
-  const title = source
-    ? `${source.source_title || source.file}\n${source.section_path || source.file}\n${source.content.slice(0, 120)}`
-    : `来源 ${index}`;
-  return (
-    <button
-      className="message-source-ref"
-      disabled={!source}
-      key={key}
-      onClick={() => source ? onSelectSource?.({ index, source }) : undefined}
-      title={title}
-      type="button"
-    >
-      {label.includes("Doc") ? label : `[${index}]`}
-    </button>
-  );
-}
-
-function renderInlineMarkdown(
-  text: string,
-  keyPrefix: string,
-  sources?: ChatSourceResponse[],
-  onSelectSource?: (preview: SourcePreview) => void,
-): ReactNode[] {
-  const nodes: ReactNode[] = [];
-  const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\[\[[^\]]+\]\]|[（(]\s*来源\s*\d+\s*[）)]|来源\s*\d+)/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      nodes.push(text.slice(lastIndex, match.index));
-    }
-    const token = match[0];
-    if (token.startsWith("**")) {
-      nodes.push(<strong key={`${keyPrefix}-strong-${match.index}`}>{token.slice(2, -2)}</strong>);
-    } else if (token.startsWith("`")) {
-      nodes.push(<code className="message-inline-code" key={`${keyPrefix}-code-${match.index}`}>{token.slice(1, -1)}</code>);
-    } else if (/来源\s*\d+/.test(token)) {
-      const sourceIndex = Number(token.match(/\d+/)?.[0] ?? "0");
-      nodes.push(renderSourceRefTag(`[${sourceIndex}]`, sourceIndex, `${keyPrefix}-source-${match.index}`, sources, onSelectSource));
-    } else {
-      nodes.push(<span className="message-wikilink" key={`${keyPrefix}-wiki-${match.index}`}>{token}</span>);
-    }
-    lastIndex = match.index + token.length;
-  }
-  if (lastIndex < text.length) {
-    nodes.push(text.slice(lastIndex));
-  }
-  return nodes;
-}
-
-function isMarkdownTable(lines: string[]) {
-  return lines.length >= 2 && lines[0].includes("|") && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(lines[1]);
-}
-
-function renderMarkdownTable(
-  lines: string[],
-  key: string,
-  sources?: ChatSourceResponse[],
-  onSelectSource?: (preview: SourcePreview) => void,
-) {
-  const parseRow = (line: string) => line.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map((cell) => cell.trim());
-  const headers = parseRow(lines[0]);
-  const rows = lines.slice(2).filter((line) => line.includes("|")).map(parseRow);
-  return (
-    <div className="message-table-wrap" key={key}>
-      <table className="message-table">
-        <thead>
-          <tr>{headers.map((header, index) => <th key={`${key}-h-${index}`}>{renderInlineMarkdown(header, `${key}-h-${index}`, sources, onSelectSource)}</th>)}</tr>
-        </thead>
-        <tbody>
-          {rows.map((row, rowIndex) => (
-            <tr key={`${key}-r-${rowIndex}`}>
-              {row.map((cell, cellIndex) => <td key={`${key}-r-${rowIndex}-${cellIndex}`}>{renderInlineMarkdown(cell, `${key}-r-${rowIndex}-${cellIndex}`, sources, onSelectSource)}</td>)}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function renderMarkdownText(
-  text: string,
-  keyPrefix: string,
-  sources?: ChatSourceResponse[],
-  onSelectSource?: (preview: SourcePreview) => void,
-) {
-  const blocks = text.split(/\n{2,}/g).filter((block) => block.trim().length > 0);
-  return blocks.map((block, blockIndex) => {
-    const key = `${keyPrefix}-block-${blockIndex}`;
-    const lines = block.split("\n").filter((line) => line.trim().length > 0);
-    const firstLine = lines[0]?.trim() ?? "";
-
-    if (isMarkdownTable(lines)) {
-      return renderMarkdownTable(lines, key, sources, onSelectSource);
-    }
-    if (lines.every((line) => /^\s*-{3,}\s*$/.test(line))) {
-      return <hr className="message-divider" key={key} />;
-    }
-    if (/^#{1,4}\s+/.test(firstLine)) {
-      const level = Math.min(4, firstLine.match(/^#+/)?.[0].length ?? 3);
-      const headingContent = renderInlineMarkdown(firstLine.replace(/^#{1,4}\s+/, ""), key, sources, onSelectSource);
-      if (level === 1) return <h1 className="message-heading" key={key}>{headingContent}</h1>;
-      if (level === 2) return <h2 className="message-heading" key={key}>{headingContent}</h2>;
-      if (level === 3) return <h3 className="message-heading" key={key}>{headingContent}</h3>;
-      return <h4 className="message-heading" key={key}>{headingContent}</h4>;
-    }
-    if (lines.every((line) => /^\s*[-*]\s+/.test(line))) {
-      return (
-        <ul className="message-list" key={key}>
-          {lines.map((line, index) => <li key={`${key}-${index}`}>{renderInlineMarkdown(line.replace(/^\s*[-*]\s+/, ""), `${key}-${index}`, sources, onSelectSource)}</li>)}
-        </ul>
-      );
-    }
-    if (lines.every((line) => /^\s*\d+\.\s+/.test(line))) {
-      return (
-        <ol className="message-list" key={key}>
-          {lines.map((line, index) => <li key={`${key}-${index}`}>{renderInlineMarkdown(line.replace(/^\s*\d+\.\s+/, ""), `${key}-${index}`, sources, onSelectSource)}</li>)}
-        </ol>
-      );
-    }
-    if (lines.every((line) => /^\s*>\s?/.test(line))) {
-      return <blockquote className="message-quote" key={key}>{lines.map((line, index) => <p key={`${key}-${index}`}>{renderInlineMarkdown(line.replace(/^\s*>\s?/, ""), `${key}-${index}`, sources, onSelectSource)}</p>)}</blockquote>;
-    }
-    return (
-      <p className="message-paragraph" key={key}>
-        {lines.map((line, index) => (
-          <span key={`${key}-${index}`}>
-            {renderInlineMarkdown(line, `${key}-${index}`, sources, onSelectSource)}
-            {index < lines.length - 1 ? <br /> : null}
-          </span>
-        ))}
-      </p>
-    );
-  });
-}
-
-export function renderMessageContent(
-  content: string,
-  sources?: ChatSourceResponse[],
-  onSelectSource?: (preview: SourcePreview) => void,
-) {
-  const nodes: ReactNode[] = [];
-  const pattern = /```([A-Za-z0-9_-]+)?\n?([\s\S]*?)```/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  let index = 0;
-  while ((match = pattern.exec(content)) !== null) {
-    const before = content.slice(lastIndex, match.index);
-    if (before.trim()) {
-      nodes.push(...renderMarkdownText(before, `text-${index}`, sources, onSelectSource));
-    }
-    const language = match[1]?.trim();
-    const code = match[2].trim();
-    nodes.push(
-      <MessageCodeBlock code={code} key={`code-${index}`} language={language} />,
-    );
-    lastIndex = pattern.lastIndex;
-    index += 1;
-  }
-  const rest = content.slice(lastIndex);
-  if (rest.trim()) {
-    nodes.push(...renderMarkdownText(rest, `text-${index}`, sources, onSelectSource));
-  }
-  return nodes;
-}
-
-function MessageCodeBlock({ code, language }: { code: string; language?: string }) {
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
-
-  useEffect(() => {
-    if (copyState === "idle") return;
-    const timer = window.setTimeout(() => setCopyState("idle"), 1600);
-    return () => window.clearTimeout(timer);
-  }, [copyState]);
-
-  async function handleCopyCode() {
-    try {
-      await copyText(code);
-      setCopyState("copied");
-    } catch {
-      setCopyState("failed");
-    }
-  }
-
-  return (
-    <div className="message-code-block">
-      <div className="message-code-toolbar">
-        <span>{language || "可复制内容"}</span>
-        <button
-          className={`message-code-copy ${copyState !== "idle" ? `is-${copyState}` : ""}`}
-          onClick={() => void handleCopyCode()}
-          title={copyState === "copied" ? "已复制" : copyState === "failed" ? "复制失败" : "复制"}
-          type="button"
-        >
-          {copyState === "copied" ? <span className="message-action-check">✓</span> : <CopyIcon />}
-          {copyState === "copied" ? "已复制" : copyState === "failed" ? "复制失败" : "复制"}
-        </button>
-      </div>
-      <pre className="message-code"><code>{code}</code></pre>
-    </div>
-  );
-}
-
-function renderSkillRunCard(
-  skillRun: SkillRunResponse,
-  options: {
-    showGeneratedFile?: boolean;
-    onDownloadGeneratedFile?: (file: GeneratedFileResponse) => void;
-    onCopyGeneratedEmailBody?: (file: GeneratedFileResponse) => Promise<void>;
-    onOpenGeneratedEmailClient?: (file: GeneratedFileResponse) => void;
-    onSaveGeneratedFileToWorkspace?: (file: GeneratedFileResponse) => Promise<{ path: string }>;
-    workspace?: WorkspaceResponse | null;
-  } = {},
-) {
-  const missingFields = skillRun.missing_inputs
-    .map((item) => String(item.label ?? item.name ?? "待补充字段"))
-    .filter(Boolean);
-  const missingInstruction = missingFields.length
-    ? missingInputInstruction(skillRun.skill_name, skillRun.missing_inputs)
-    : "";
-  const dispatchSteps = Array.isArray(skillRun.dispatch?.steps) ? skillRun.dispatch.steps as Array<Record<string, unknown>> : [];
-  return (
-    <div className="message-skill-card">
-      <div className="message-skill-header">
-        <strong>{skillRun.skill?.display_name ?? skillRun.skill_name}</strong>
-        <span>{skillRun.status === "completed" ? "已完成" : skillRun.status === "ready" ? "待执行" : skillRun.status === "failed" ? "失败" : "收集中"}</span>
-      </div>
-      {dispatchSteps.length ? (
-        <div className="message-skill-dispatch">
-          {dispatchSteps.map((step, index) => (
-            <span key={`${String(step.id ?? index)}-${String(step.tool ?? "")}`}>
-              {String(step.label ?? step.tool ?? "执行步骤")}
-            </span>
-          ))}
-        </div>
-      ) : null}
-      {missingFields.length ? (
-        <div className="message-skill-fields">
-          {missingFields.map((field) => (
-            <span key={field}>{field}</span>
-          ))}
-        </div>
-      ) : null}
-      {missingInstruction ? (
-        <MessageCodeBlock code={missingInstruction} language="下一步操作" />
-      ) : null}
-      {options.showGeneratedFile !== false && skillRun.generated_file && options.onDownloadGeneratedFile ? (
-        <GeneratedFileCard
-          file={skillRun.generated_file}
-          onDownload={options.onDownloadGeneratedFile}
-          onCopyEmailBody={options.onCopyGeneratedEmailBody}
-          onOpenEmailClient={options.onOpenGeneratedEmailClient}
-          onSaveToWorkspace={options.onSaveGeneratedFileToWorkspace}
-          workspace={options.workspace}
-        />
-      ) : skillRun.generated_file ? (
-        <div className="message-skill-output">{skillRun.generated_file.filename}</div>
-      ) : null}
-    </div>
-  );
-}
-
-function missingInputInstruction(skillName: string | null | undefined, missingInputs: Array<Record<string, unknown>>) {
-  const normalizedSkill = String(skillName ?? "").trim();
-  const names = new Set(missingInputs.map((item) => String(item.name ?? "").trim()));
-  const labels = new Set(missingInputs.map((item) => String(item.label ?? "").trim()));
-  if (normalizedSkill === "audio-transcription" || names.has("audio_source") || labels.has("音频或视频文件")) {
-    return "请先在当前会话上传或从项目文件中引用一个音频/视频文件，然后重新发送“将这段录音转录成文字”。支持 MP3、WAV、M4A、OGG、FLAC、MP4、MOV 等格式。";
-  }
-  if (normalizedSkill === "term-correction" || normalizedSkill === "术语纠错" || names.has("term_corrections")) {
-    return "请提供术语纠正规则，每行一条，例如：LAM Wiki -> LLM Wiki。";
-  }
-  const fields = missingInputs
-    .map((item) => String(item.label ?? item.name ?? "待补充字段").trim())
-    .filter(Boolean)
-    .join("、");
-  return fields ? `请补充：${fields}。` : "";
 }
 
 function agentRunStatusLabel(status: string) {
@@ -823,6 +474,7 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
     openFeedbackDialog,
     openRegenerateDialog,
     onCopyGeneratedEmailBody,
+    onEditGeneratedEmailDraft,
     onOpenGeneratedEmailClient,
     onSaveGeneratedFileToWorkspace,
     onTransformMessage,
@@ -1046,7 +698,7 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
                     <InlineLoadingPlaceholder />
                   ) : (
                     renderMessageContent(message.content, message.sources ?? [], (preview) => {
-                      setSourcePreview({ ...preview, sessionId: message.session_id });
+                      setSourcePreview({ ...preview, contextTrace: message.context_trace, sessionId: message.session_id });
                       setUtilityPanel("source");
                     })
                   )}
@@ -1056,26 +708,15 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
             </>
           )}
           {renderMessageVersionBar(message)}
-          {message.sources?.length ? (
-            <div className="message-sources is-compact">
-              <span className="message-sources-title">引用来源：</span>
-              {message.sources.map((source, index) => (
-                <button
-                  className="message-source-item"
-                  key={`${source.file}-${index}`}
-                  onClick={() => {
-                    setSourcePreview({ index: index + 1, source, sessionId: message.session_id });
-                    setUtilityPanel("source");
-                  }}
-                  type="button"
-                >
-                  <span className="message-source-index">[{index + 1}]</span>
-                  <span className="message-source-path">{source.section_path || source.source_title || source.file}</span>
-                  <span className="message-source-file">{source.file}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
+          <MessageSourceList
+            contextTrace={message.context_trace}
+            sessionId={message.session_id}
+            sources={message.sources}
+            onSelectSource={(preview) => {
+              setSourcePreview(preview);
+              setUtilityPanel("source");
+            }}
+          />
           {message.role === "assistant" ? renderContextTraceCard(message.context_trace, {
             gbrainThinkReviewBusy: messageActionBusyId === message.id,
             onSubmitGBrainThinkReview: message.context_trace?.gbrain_think
@@ -1083,24 +724,31 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
               : undefined,
           }) : null}
           {message.generated_file ? (
-            <GeneratedFileCard
+            <MessageGeneratedFile
+              activeWorkspace={activeWorkspace}
               file={message.generated_file}
-              onDownload={(file) => void downloadGeneratedFile(serverUrl, token, file)}
               onCopyEmailBody={onCopyGeneratedEmailBody}
+              onEditEmailDraft={onEditGeneratedEmailDraft}
               onOpenEmailClient={onOpenGeneratedEmailClient}
               onSaveToWorkspace={onSaveGeneratedFileToWorkspace}
-              workspace={activeWorkspace}
+              serverUrl={serverUrl}
+              token={token}
             />
           ) : null}
           {message.agent_run ? renderAgentRunCard(message.agent_run) : null}
-          {message.skill_run ? renderSkillRunCard(message.skill_run, {
-            showGeneratedFile: !message.generated_file,
-            onDownloadGeneratedFile: (file) => void downloadGeneratedFile(serverUrl, token, file),
-            onCopyGeneratedEmailBody,
-            onOpenGeneratedEmailClient,
-            onSaveGeneratedFileToWorkspace,
-            workspace: activeWorkspace,
-          }) : null}
+          {message.skill_run ? (
+            <MessageSkillRunCard
+              showGeneratedFile={!message.generated_file}
+              skillRun={message.skill_run}
+              onCopyGeneratedEmailBody={onCopyGeneratedEmailBody}
+              onEditGeneratedEmailDraft={onEditGeneratedEmailDraft}
+              onOpenGeneratedEmailClient={onOpenGeneratedEmailClient}
+              onSaveGeneratedFileToWorkspace={onSaveGeneratedFileToWorkspace}
+              serverUrl={serverUrl}
+              token={token}
+              workspace={activeWorkspace}
+            />
+          ) : null}
           {message.agent_suggestion ? (
             <div className="message-agent-suggestion">
               <div className="message-agent-suggestion-copy">
@@ -1123,78 +771,19 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
               {message.feedback_comment ? <small>含意见</small> : null}
             </div>
           ) : null}
-          <div className={`message-actions ${copiedMessageId === message.id ? "has-copy-success" : ""}`}>
-            <button
-              className={`message-action-btn ${copiedMessageId === message.id ? "is-copied" : ""}`}
-              onClick={() => void handleCopyMessage(message)}
-              title={copiedMessageId === message.id ? "已复制" : "复制"}
-              type="button"
-            >
-              {copiedMessageId === message.id ? <span className="message-action-check">✓</span> : <CopyIcon />}
-            </button>
-            {message.role === "assistant" ? (
-              <button
-                className="message-action-btn"
-                disabled={message.isOptimistic || isBusy}
-                onClick={() => openRegenerateDialog(message)}
-                title="重新生成"
-                type="button"
-              >
-                <RefreshIcon />
-              </button>
-            ) : null}
-            {onTransformMessage ? (
-              <>
-                <button className="message-action-btn is-text-action" disabled={message.isOptimistic || isBusy} onClick={() => onTransformMessage(message, "rewrite")} title="改写到输入框" type="button">改</button>
-                <button className="message-action-btn is-text-action" disabled={message.isOptimistic || isBusy} onClick={() => onTransformMessage(message, "translate")} title="翻译到输入框" type="button">译</button>
-                <button className="message-action-btn is-text-action" disabled={message.isOptimistic || isBusy} onClick={() => onTransformMessage(message, "summarize")} title="总结到输入框" type="button">摘</button>
-                <button className="message-action-btn is-text-action" disabled={message.isOptimistic || isBusy} onClick={() => onTransformMessage(message, "expand")} title="扩写到输入框" type="button">扩</button>
-              </>
-            ) : null}
-            {message.role === "user" ? (
-              <button
-                className="message-action-btn"
-                disabled={message.isOptimistic || isBusy}
-                onClick={() => startEditingMessage(message)}
-                title="编辑并开启新分支"
-                type="button"
-              >
-                <EditIcon />
-              </button>
-            ) : null}
-            {message.role === "assistant" ? (
-              <button className="message-action-btn" onClick={() => handleSwitchToAgent(message.id)} title="切换到 Agent" type="button"><AgentIcon /></button>
-            ) : null}
-            <button
-              className="message-action-btn"
-              disabled={message.isOptimistic}
-              onClick={() => controller.setQuotedMessage({ messageId: message.id, sessionId: paneSessionId!, content: message.content ?? "", role: message.role })}
-              title="引用"
-              type="button"
-            >
-              <span style={{ fontSize: 11 }}>❝</span>
-            </button>
-            {message.role === "assistant" ? (
-              <button
-                className={`message-action-btn ${message.feedback_rating ? "is-rated" : ""}`}
-                disabled={message.isOptimistic || isBusy}
-                onClick={() => openFeedbackDialog(message)}
-                title="评分与意见"
-                type="button"
-              >
-                <span className="message-action-star">★</span>
-              </button>
-            ) : null}
-            <button
-              className="message-action-btn"
-              disabled={message.isOptimistic || isBusy}
-              onClick={() => requestDeleteMessageContext(message)}
-              title="删除当前问答"
-              type="button"
-            >
-              <TrashIcon />
-            </button>
-          </div>
+          <MessageActions
+            copied={copiedMessageId === message.id}
+            isBusy={isBusy}
+            message={message}
+            onCopy={(target) => void handleCopyMessage(target)}
+            onDelete={requestDeleteMessageContext}
+            onFeedback={openFeedbackDialog}
+            onQuote={(target) => controller.setQuotedMessage({ messageId: target.id, sessionId: paneSessionId!, content: target.content ?? "", role: target.role })}
+            onRegenerate={openRegenerateDialog}
+            onStartEdit={startEditingMessage}
+            onSwitchToAgent={handleSwitchToAgent}
+            onTransform={onTransformMessage}
+          />
           {message.status === "failed" ? <p className="message-error">AI 服务暂时不可用</p> : null}
         </div>
       </article>

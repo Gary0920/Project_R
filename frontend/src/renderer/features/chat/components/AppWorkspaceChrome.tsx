@@ -11,7 +11,8 @@ import { TabBar } from "./TabBar";
 import { WorkspaceFilePanel } from "../../workspace/components/WorkspaceFilePanel";
 import { WorkspaceSelector } from "../../workspace/components/WorkspaceSelector";
 import { WindowControls } from "../../../shared/components/WindowControls";
-import { renderMessageContent } from "./ChatMessageList";
+import { renderMessageContent } from "../messageContent";
+import { SourcePreviewPanel } from "../../knowledge/components/SourcePreviewPanel";
 import {
   AgentIcon,
   BellIcon,
@@ -262,19 +263,7 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
             ×
           </button>
         </header>
-        {preview ? (
-          <div className="source-preview-body">
-            <span className="source-preview-index">[{preview.index}]</span>
-            <h3>{preview.source.source_title || preview.source.file}</h3>
-            <p className="source-preview-path">{preview.source.section_path || preview.source.file}</p>
-            <p className="source-preview-file">{preview.source.file}</p>
-            <div className="source-preview-markdown">
-              {renderMessageContent(preview.source.content)}
-            </div>
-          </div>
-        ) : (
-          <div className="prompt-empty">点击 AI 回复中的来源标签后，会在这里预览片段。</div>
-        )}
+        <SourcePreviewPanel preview={preview} />
       </aside>
     );
   }

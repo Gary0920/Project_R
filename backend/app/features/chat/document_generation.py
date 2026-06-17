@@ -20,9 +20,6 @@ def create_generated_output_file(
     output_format: str = "docx",
     generated_files_root: Path,
 ) -> dict:
-    metadata = None
-    if output_format == "eml":
-        metadata = {"email_draft": {"subject": safe_document_title(user_prompt), "body": content}}
     return create_generated_file(
         db,
         user_id,
@@ -31,7 +28,6 @@ def create_generated_output_file(
         content,
         output_format=output_format,
         generated_files_root=generated_files_root,
-        metadata=metadata,
     )
 
 

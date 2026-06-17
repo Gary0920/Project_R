@@ -1076,18 +1076,14 @@ export function SettingsModal({ isOpen, onClose, initialSection, initialAdminTab
     }
   }
 
-  async function handleReviewKnowledge(item: KnowledgeReviewResponse, status: "approved" | "rejected") {
-    let content: string | undefined;
-    if (status === "approved") {
-      const edited = window.prompt("确认或修改后写入正式知识库", item.content);
-      if (edited === null) return;
-      content = edited;
-    }
+  async function handleReviewKnowledge(item: KnowledgeReviewResponse, status: "approved" | "rejected", content?: string) {
     try {
-      await reviewKnowledge(apiOptions, item.id, status, content);
+      await reviewKnowledge(apiOptions, item.id, status, status === "approved" ? content : undefined);
       await loadAdminData();
+      return true;
     } catch (error) {
       setAdminMessage(error instanceof ApiError ? error.message : "知识审核失败。");
+      return false;
     }
   }
 
@@ -1658,16 +1654,6 @@ export function SettingsModal({ isOpen, onClose, initialSection, initialAdminTab
     });
   }
 
-  function filterReviews(reviews: KnowledgeReviewResponse[], search: string): KnowledgeReviewResponse[] {
-    if (!search.trim()) return reviews;
-    const s = search.toLowerCase();
-    return reviews.filter((r) => (r.source ?? "").toLowerCase().includes(s) || r.content.toLowerCase().includes(s));
-  }
-
-  function canSubmitReviewCitationFixer(item: KnowledgeReviewResponse) {
-    return item.source.startsWith("gbrain_answer_correction:") || item.source.startsWith("gbrain_think_review:");
-  }
-
   function filterTemplates(templates: AdminTemplateStatusResponse["items"], search: string): AdminTemplateStatusResponse["items"] {
     if (!search.trim()) return templates;
     const s = search.toLowerCase();
@@ -2055,7 +2041,6 @@ export function SettingsModal({ isOpen, onClose, initialSection, initialAdminTab
                   citationFixerDraft,
                   currentUser,
                   filterAuditLogs,
-                  filterReviews,
                   filterTemplates,
                   filterUsers,
                   formatDate,
@@ -2153,7 +2138,6 @@ export function SettingsModal({ isOpen, onClose, initialSection, initialAdminTab
                   asRecord,
                   recordNumber,
                   recordText,
-                  canSubmitReviewCitationFixer,
                   toolResultArray,
                   toolStatus,
                 }}

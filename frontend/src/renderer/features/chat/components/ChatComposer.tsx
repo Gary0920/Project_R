@@ -14,6 +14,10 @@ import {
   StopIcon,
   XmarkIcon,
 } from "../../../shared/icons/LineIcons";
+import { TextTransformResultCard } from "./TextTransformResultCard";
+import type { TextTransformResult } from "../textTransform";
+import { KnowledgeScopeIndicator } from "../../knowledge/components/KnowledgeScopeIndicator";
+import { isKnowledgeQueryDraft } from "../../knowledge/knowledgeScope";
 
 type SplitPaneKey = "left" | "right";
 
@@ -24,6 +28,7 @@ type ChatComposerController = Record<string, any> & {
   isActivePane: boolean;
   paneSessionId: number | null;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
+  textTransformResult?: TextTransformResult | null;
 };
 
 export type ChatComposerProps = {
@@ -32,6 +37,7 @@ export type ChatComposerProps = {
 
 export function ChatComposer({ controller }: ChatComposerProps) {
   const {
+    activeWorkspace,
     attachmentSourceLabel,
     authorizeLocalPrivateAttachments,
     clearPromptSelection,
@@ -81,6 +87,7 @@ export function ChatComposer({ controller }: ChatComposerProps) {
     slashCandidates,
     syncSlashCommand,
     textareaRef,
+    textTransformResult,
     toggleWebSearch,
     temperature,
     setTemperature,
@@ -288,6 +295,18 @@ export function ChatComposer({ controller }: ChatComposerProps) {
               </span>
               <button className="composer-quote-close" onClick={() => setQuotedMessage(null)} type="button">✕</button>
             </div>
+          ) : null}
+          <KnowledgeScopeIndicator
+            active={isKnowledgeQueryDraft(draft, selectedBuiltinCommand)}
+            workspace={activeWorkspace}
+          />
+          {textTransformResult ? (
+            <TextTransformResultCard
+              result={textTransformResult}
+              onApply={controller.onApplyTextTransformResult}
+              onClear={controller.onClearTextTransformResult}
+              onCopy={controller.onCopyTextTransformResult}
+            />
           ) : null}
           <textarea
             onChange={(event) => {

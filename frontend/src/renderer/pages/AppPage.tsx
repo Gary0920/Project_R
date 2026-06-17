@@ -18,7 +18,6 @@ import {
   searchChatSessions,
   submitGBrainThinkReview,
   submitMessageFeedback,
-  transformChatText,
   updateChatSession,
 } from "../features/chat/api";
 import { useChatDraft } from "../features/chat/useChatDraft";
@@ -69,9 +68,13 @@ import { SettingsModal } from "../features/settings/components/SettingsModal";
 import { TabBar } from "../features/chat/components/TabBar";
 import { WorkspaceSelector } from "../features/workspace/components/WorkspaceSelector";
 import { WorkspaceFilePanel } from "../features/workspace/components/WorkspaceFilePanel";
-import { copyText, downloadGeneratedFile } from "../features/chat/components/ChatMessageList";
+import { copyText } from "../features/chat/clipboard";
+import { downloadGeneratedFile } from "../features/chat/generatedFiles";
+import { EmailDraftEditor } from "../features/chat/components/EmailDraftEditor";
 import { AppWorkspaceChrome } from "../features/chat/components/AppWorkspaceChrome";
 import { ChatConversationPane } from "../features/chat/components/ChatConversationPane";
+import { useGeneratedEmailDraftActions } from "../features/chat/useGeneratedEmailDraftActions";
+import { useTextTransformActions } from "../features/chat/useTextTransformActions";
 import {
   attachmentSourceLabel,
   formatAttachmentSize,
@@ -199,6 +202,7 @@ export function AppPage() {
   const [feedbackRating, setFeedbackRating] = useState(0);
   const [feedbackComment, setFeedbackComment] = useState("");
   const [messageActionBusyId, setMessageActionBusyId] = useState<number | null>(null);
+  const [emailDraftEditorFile, setEmailDraftEditorFile] = useState<GeneratedFileResponse | null>(null);
   const [moveSessionId, setMoveSessionId] = useState<number | null>(null);
   const [skills, setSkills] = useState<SkillResponse[]>([]);
   const [skillPanelVisible, setSkillPanelVisible] = useState(false);
@@ -348,6 +352,32 @@ export function AppPage() {
       .sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || a.label.localeCompare(b.label, "zh-CN"));
   }, [llmProviders]);
   const selectedModelOption = modelOptions.find((option) => option.key === selectedModelKey) ?? modelOptions.find((option) => option.isDefault) ?? modelOptions[0] ?? null;
+  const {
+    handleCopyEditableEmailDraft,
+    handleCopyGeneratedEmailBody,
+    handleDownloadEditableEmailDraft,
+    handleOpenEditableEmailDraft,
+    handleOpenGeneratedEmailClient,
+  } = useGeneratedEmailDraftActions(copyText);
+  const {
+    clearTextTransformResult,
+    handleApplyTextTransformResult,
+    handleCopyTextTransformResult,
+    handleTransformMessage,
+    textTransformResult,
+  } = useTextTransformActions({
+    apiOptions,
+    clearAuth,
+    copyText,
+    selectedModelOption,
+    setActionNotice,
+    setDraft,
+    setError,
+    setMessageActionBusyId,
+    temperature,
+    textareaRef,
+    thinkingEnabled,
+  });
   const {
     handleRegenerateMessage,
     openRegenerateDialog,
@@ -1408,67 +1438,6 @@ export function AppPage() {
     window.requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
-  function emailAddressParam(value: string | string[] | undefined) {
-    if (Array.isArray(value)) return value.filter(Boolean).join(",");
-    return value ?? "";
-  }
-
-  async function handleCopyGeneratedEmailBody(file: GeneratedFileResponse) {
-    const body = file.email_draft?.body ?? "";
-    if (!body.trim()) {
-      throw new Error("邮件正文为空");
-    }
-    await copyText(body, false);
-  }
-
-  function handleOpenGeneratedEmailClient(file: GeneratedFileResponse) {
-    const draft = file.email_draft;
-    if (!draft) {
-      setError("当前邮件草稿缺少可打开的收件人与正文信息。");
-      return;
-    }
-    const params = new URLSearchParams();
-    if (draft.subject) params.set("subject", draft.subject);
-    if (draft.body) params.set("body", draft.body);
-    const cc = emailAddressParam(draft.cc);
-    const bcc = emailAddressParam(draft.bcc);
-    if (cc) params.set("cc", cc);
-    if (bcc) params.set("bcc", bcc);
-    const to = encodeURIComponent(emailAddressParam(draft.to));
-    window.location.href = `mailto:${to}${params.toString() ? `?${params.toString()}` : ""}`;
-  }
-
-  async function handleTransformMessage(message: ChatMessage, action: "rewrite" | "translate" | "summarize" | "expand") {
-    const text = message.content.trim();
-    if (!text) return;
-    setMessageActionBusyId(message.id);
-    setError("");
-    try {
-      const result = await transformChatText(apiOptions, {
-        text,
-        action,
-        modelProfile: selectedModelOption?.profile ?? null,
-        provider: selectedModelOption?.provider ?? null,
-        targetLanguage: action === "translate" ? "中文" : null,
-        tone: action === "rewrite" || action === "expand" ? "professional" : null,
-        thinking: thinkingEnabled,
-        temperature,
-      });
-      setDraft(result.text);
-      textareaRef.current?.focus();
-      setActionNotice("已生成文本变换结果，可在输入框中继续编辑。");
-    } catch (transformError: unknown) {
-      if (transformError instanceof ApiError && transformError.status === 401) {
-        clearAuth();
-        window.location.hash = "#/login";
-        return;
-      }
-      setError("文本变换失败，请稍后重试。");
-    } finally {
-      setMessageActionBusyId(null);
-    }
-  }
-
   async function handleSaveGeneratedFileToWorkspace(file: GeneratedFileResponse) {
     if (!activeWorkspaceId || !activeWorkspace || activeWorkspace.workspace_kind === "user") {
       throw new Error("当前工作区不支持保存生成文件");
@@ -1531,9 +1500,13 @@ export function AppPage() {
     handleSubmitEditedMessage,
     handleSubmitGBrainThinkReview,
     onCopyGeneratedEmailBody: handleCopyGeneratedEmailBody,
+    onEditGeneratedEmailDraft: setEmailDraftEditorFile,
     onOpenGeneratedEmailClient: handleOpenGeneratedEmailClient,
     onSaveGeneratedFileToWorkspace: handleSaveGeneratedFileToWorkspace,
     onTransformMessage: handleTransformMessage,
+    onApplyTextTransformResult: handleApplyTextTransformResult,
+    onClearTextTransformResult: clearTextTransformResult,
+    onCopyTextTransformResult: handleCopyTextTransformResult,
     handleSwitchToAgent,
     handleToggleSideBySide,
     messageActionBusyId,
@@ -1560,6 +1533,7 @@ export function AppPage() {
     startEditingMessage,
     titleInputRef,
     token,
+    textTransformResult,
     utilityPanel,
     attachmentSourceLabel,
     authorizeLocalPrivateAttachments,
@@ -1609,8 +1583,9 @@ export function AppPage() {
     return <ChatConversationPane controller={{ ...conversationPaneController, pane }} />;
   }
   return (
-    <AppWorkspaceChrome
-      controller={{
+    <>
+      <AppWorkspaceChrome
+        controller={{
         UPDATE_DOWNLOAD_DRY_RUN,
         actionNotice,
         activeSessionId,
@@ -1748,7 +1723,17 @@ export function AppPage() {
         workspacePanelResizing,
         workspacePanelWidth,
         workspaces,
-      }}
-    />
+        }}
+      />
+      {emailDraftEditorFile ? (
+        <EmailDraftEditor
+          file={emailDraftEditorFile}
+          onClose={() => setEmailDraftEditorFile(null)}
+          onCopy={handleCopyEditableEmailDraft}
+          onDownload={handleDownloadEditableEmailDraft}
+          onOpenEmailClient={handleOpenEditableEmailDraft}
+        />
+      ) : null}
+    </>
   );
 }

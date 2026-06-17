@@ -19,6 +19,7 @@ from app.features.knowledge.gbrain import (
     project_source_paths_for_workspace,
     resolve_gbrain_source_paths,
 )
+from app.features.knowledge.evidence import enrich_sources_with_evidence
 from app.features.knowledge.gbrain.ingest import _split_frontmatter, approve_pending_review_markdown
 from models.workspace import Workspace, WorkspaceFile
 
@@ -247,6 +248,10 @@ class KnowledgeSources:
 
         answer = result.get("answer") if isinstance(result.get("answer"), str) else ""
         sources = self._normalize_think_sources(result, source_id)
+        try:
+            enrich_sources_with_evidence(sources, settings=settings, workspace=workspace)
+        except Exception as exc:
+            logger.warning("GBrain evidence enrichment failed: %s", exc)
 
         # Phase 2: Project query intent classification + ranking adjustment
         intent_result: dict[str, Any] | None = None
@@ -592,25 +597,28 @@ class KnowledgeSources:
             for index, citation in enumerate(citations, start=1):
                 if not isinstance(citation, dict):
                     continue
-                slug = self._first_text(citation, "page_slug", "slug", "page", "source")
+                citation_source_id = self._citation_source_id(citation, source_id)
+                slug = self._first_text(citation, "page_slug", "slug", "page")
+                if not slug and self._first_text(citation, "source") != citation_source_id:
+                    slug = self._first_text(citation, "source")
                 if not slug:
                     continue
                 row_num = citation.get("row_num")
                 section_path = f"{slug}#row-{row_num}" if row_num is not None else slug
                 sources.append(
                     {
-                        "file": f"gbrain:{source_id}/{slug}",
-                        "source_title": slug,
+                        "file": f"gbrain:{citation_source_id}/{slug}",
+                        "source_id": citation_source_id,
+                        "source_title": "引用来源",
                         "section_path": section_path,
                         "type": "gbrain_think_citation",
-                        "authority_level": source_id,
+                        "authority_level": citation_source_id,
                         "tags": "gbrain,think,citation",
-                        "content": (
-                            f"GBrain think citation {index}\n\n"
-                            f"- source: {source_id}\n"
-                            f"- page: {slug}\n"
-                            f"- row: {row_num if row_num is not None else 'page'}"
-                        ),
+                        "content": "",
+                        "metadata_only": True,
+                        "page_slug": slug,
+                        "row_num": row_num if row_num is not None else None,
+                        "source_slug": slug,
                         "score": max(0.0, 1.0 - (index * 0.01)),
                     }
                 )
@@ -635,6 +643,15 @@ class KnowledgeSources:
                     }
                 )
         return sources
+
+    def _citation_source_id(self, citation: dict, default_source_id: str) -> str:
+        source_id = self._first_text(citation, "source_id", "sourceId", "source_scope")
+        if source_id:
+            return source_id
+        source_value = self._first_text(citation, "source")
+        if source_value in {"company-wiki", "company", "project", "customer", "crm", "customer-crm"}:
+            return source_value
+        return default_source_id
 
     def _enrich_project_source_locations(self, workspace: Workspace, sources: list[dict]) -> list[dict]:
         return self._enrich_workspace_source_locations(workspace, sources, project_source_paths_for_workspace(workspace)["derived"])

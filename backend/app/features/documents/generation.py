@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.features.documents.formats import normalize_output_format
 from app.features.documents.renderer import render_document
-from app.features.documents.renderers.eml import email_draft_payload
+from app.features.documents.email_draft import email_draft_payload
 from app.features.notifications.service import notify_file_generated
 from models.generated_file import GeneratedFile
 
@@ -32,7 +32,7 @@ def generated_file_payload(
         "mime_type": mime_type,
         "download_url": f"/documents/{file_id}/download",
     }
-    email_payload = email_draft_payload(metadata)
+    email_payload = email_draft_payload(metadata, title=filename, content="")
     if email_payload:
         payload["email_draft"] = email_payload
     return payload
@@ -54,6 +54,9 @@ def create_generated_file(
     title = safe_document_title(user_prompt)
     filename = f"{title}{format_spec.extension}"
     output_path = generated_files_root / str(user_id) / f"{file_id}{format_spec.extension}"
+    if format_spec.key == "eml":
+        email_payload = email_draft_payload(metadata, title=title, content=content)
+        metadata = {"email_draft": email_payload} if email_payload else metadata
     render_document(format_spec.key, title, content, output_path, metadata=metadata)
     generated = GeneratedFile(
         id=file_id,

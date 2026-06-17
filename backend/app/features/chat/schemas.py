@@ -112,6 +112,15 @@ class ChatSourceResponse(BaseModel):
     score: float
     source_file: str | None = None
     derived_file: str | None = None
+    display_title: str | None = None
+    evidence_excerpt: str | None = None
+    original_source_file: str | None = None
+    locator_label: str | None = None
+    metadata_only: bool | None = None
+    page_slug: str | None = None
+    row_num: int | str | None = None
+    source_id: str | None = None
+    source_slug: str | None = None
     source_line: int | None = None
     source_page: int | None = None
     source_locator: str | None = None

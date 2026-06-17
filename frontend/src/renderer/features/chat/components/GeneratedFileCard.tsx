@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import type { GeneratedFileResponse, WorkspaceResponse } from "../../../shared/api/types";
 import { CheckIcon, CopyIcon, NoteIcon, WorkspaceIcon } from "../../../shared/icons/LineIcons";
+import { emailDraftSummary, isEmailDraftFile } from "../emailDraft";
 
 type SaveResult = {
   path: string;
@@ -12,6 +13,7 @@ export type GeneratedFileCardProps = {
   workspace?: WorkspaceResponse | null;
   onDownload: (file: GeneratedFileResponse) => void;
   onCopyEmailBody?: (file: GeneratedFileResponse) => Promise<void>;
+  onEditEmailDraft?: (file: GeneratedFileResponse) => void;
   onOpenEmailClient?: (file: GeneratedFileResponse) => void;
   onSaveToWorkspace?: (file: GeneratedFileResponse) => Promise<SaveResult>;
 };
@@ -39,6 +41,7 @@ export function GeneratedFileCard({
   workspace,
   onDownload,
   onCopyEmailBody,
+  onEditEmailDraft,
   onOpenEmailClient,
   onSaveToWorkspace,
 }: GeneratedFileCardProps) {
@@ -47,7 +50,8 @@ export function GeneratedFileCard({
   const [savedPath, setSavedPath] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const canSaveToWorkspace = Boolean(workspace && workspace.workspace_kind !== "user" && onSaveToWorkspace);
-  const isEmailDraft = Boolean(file.email_draft || (file.filename || "").toLowerCase().endsWith(".eml"));
+  const isEmailDraft = isEmailDraftFile(file);
+  const summary = isEmailDraft ? emailDraftSummary(file) : null;
 
   async function handleSave() {
     if (!onSaveToWorkspace || !workspace || saveStatus === "saving") return;
@@ -81,10 +85,20 @@ export function GeneratedFileCard({
         <span className="message-file-icon"><NoteIcon /></span>
         <div>
           <strong>{file.filename}</strong>
-          <span>{isEmailDraft && file.email_draft?.subject ? `邮件草稿：${file.email_draft.subject}` : generatedFileKindLabel(file)}</span>
+          <span>{summary?.subject ? `邮件草稿：${summary.subject}` : generatedFileKindLabel(file)}</span>
+          {summary?.bodyPreview ? <small>{summary.bodyPreview}</small> : null}
         </div>
       </div>
       <div className="message-file-actions">
+        {isEmailDraft && onEditEmailDraft ? (
+          <button
+            className="message-file-save"
+            onClick={() => onEditEmailDraft(file)}
+            type="button"
+          >
+            查看/编辑草稿
+          </button>
+        ) : null}
         {isEmailDraft && onCopyEmailBody ? (
           <button
             className={`message-file-download ${copyStatus !== "idle" ? `is-${copyStatus}` : ""}`}

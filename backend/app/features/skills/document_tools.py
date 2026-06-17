@@ -97,10 +97,13 @@ def _resolve_metadata(
 ) -> dict[str, Any] | None:
     if output_format != "eml":
         return None
-    draft: dict[str, Any] = {
-        "subject": _resolve_optional_value(step, inputs, "subject_field") or title,
-        "body": _resolve_optional_value(step, inputs, "body_field") or content,
-    }
+    draft: dict[str, Any] = {}
+    subject = _resolve_optional_value(step, inputs, "subject_field")
+    body = _resolve_optional_value(step, inputs, "body_field")
+    if subject:
+        draft["subject"] = subject
+    if body:
+        draft["body"] = body
     for key in ("from", "to", "cc", "bcc"):
         value = _resolve_optional_value(step, inputs, f"{key}_field")
         if value:
@@ -108,7 +111,7 @@ def _resolve_metadata(
     inline = step.get("email_draft")
     if isinstance(inline, dict):
         draft.update({key: _format_or_value(value, inputs) for key, value in inline.items() if value})
-    return {"email_draft": draft}
+    return {"email_draft": draft} if draft else None
 
 
 def _resolve_optional_value(step: dict[str, Any], inputs: dict[str, Any], field_key: str) -> str:

@@ -16,6 +16,9 @@ import type {
   KnowledgeStatusResponse,
 } from "../../../shared/api/types";
 import { ChevronDownIcon, EditIcon, MoreIcon, SearchIcon, ShieldIcon } from "../../../shared/icons/LineIcons";
+import { AdminKnowledgeOverview } from "../knowledge/AdminKnowledgeOverview";
+import { KnowledgeReviewPanel } from "../knowledge/reviews/KnowledgeReviewPanel";
+import { GBrainStatusDashboard } from "../knowledge/status/GBrainStatusDashboard";
 
 type AdminTab = "overview" | "users" | "reviews" | "gbrain" | "templates" | "updates" | "audit";
 type AdminUserRole = "admin" | "employee";
@@ -45,7 +48,6 @@ export type AdminSettingsPanelController = {
   citationFixerDraft: AnyRecord;
   currentUser: CurrentUserResponse | null;
   filterAuditLogs: (logs: AuditLogResponse[], search: string, actionType: string) => AuditLogResponse[];
-  filterReviews: (reviews: KnowledgeReviewResponse[], search: string) => KnowledgeReviewResponse[];
   filterTemplates: (templates: AdminTemplateStatusResponse["items"], search: string) => AdminTemplateStatusResponse["items"];
   filterUsers: (users: AdminUserResponse[], search: string) => AdminUserResponse[];
   formatDate: (value: string | number) => string;
@@ -73,7 +75,7 @@ export type AdminSettingsPanelController = {
   handleRestartGBrain: () => Promise<void>;
   handleRestartGBrainDreamCycleWorker: () => Promise<void>;
   handleRetryGBrainJob: (jobId: number) => Promise<void>;
-  handleReviewKnowledge: (item: KnowledgeReviewResponse, status: "approved" | "rejected") => Promise<void>;
+  handleReviewKnowledge: (item: KnowledgeReviewResponse, status: "approved" | "rejected", content?: string) => Promise<boolean>;
   handleRollbackGBrainCitationFixerJob: (jobId: number) => Promise<void>;
   handleRunGBrainContradictionProbe: () => Promise<void>;
   handleRunGBrainDreamCycle: () => Promise<void>;
@@ -143,7 +145,6 @@ export type AdminSettingsPanelController = {
   asRecord: (value: unknown) => Record<string, unknown> | null;
   recordNumber: (record: Record<string, unknown> | null | undefined, key: string) => number | null;
   recordText: (record: Record<string, unknown> | null | undefined, key: string) => string;
-  canSubmitReviewCitationFixer: (item: KnowledgeReviewResponse) => boolean;
   toolResultArray: (response?: GBrainToolResponse | null, nestedKey?: string) => Array<Record<string, unknown>>;
   toolStatus: (response?: GBrainToolResponse | null) => string;
 };
@@ -246,7 +247,7 @@ function AdminComboInput({
 export function AdminSettingsPanel({ controller }: AdminSettingsPanelProps) {
   const {
     adminGroupOptions, adminLoading, adminMessage, adminTab, adminUserSearchOptions, adminUsers, auditActionType, auditFilter, auditLogs, auditPage, auditSearch,
-    citationFixerDraft, currentUser, filterAuditLogs, filterReviews, filterTemplates, filterUsers,
+    citationFixerDraft, currentUser, filterAuditLogs, filterTemplates, filterUsers,
     formatDate, formatFileSize, formatOptionalDate, gbrainContradictionDraft, gbrainDreamDraft, gbrainEntityMerge, gbrainEntityMergePreview, gbrainGraph, gbrainGraphDraft,
     gbrainMaintenance, handleApplyGBrainEntityMergeCandidate, handleCancelGBrainJob, handleCreateUser, handleExportKnowledgeQualityReport, handleGBrainMaintenanceCheck, handleLoadGBrainEntityMergeCandidates,
     handleLoadGBrainGraph, handlePollGBrainCitationFixerJobs, handlePollGBrainDreamCycleJobs, handlePreviewGBrainEntityMergeCandidate, handleRefreshGBrainMaintenance,
@@ -258,7 +259,7 @@ export function AdminSettingsPanel({ controller }: AdminSettingsPanelProps) {
     setAuditFilter, setAuditPage, setAuditSearch, setCitationFixerDraft, setGBrainContradictionDraft, setGBrainDreamDraft, setGBrainGraphDraft, setNewUser,
     setOpenUserMenuId, setReviewPage, setReviewSearch, setShowCreateUser, setTemplateSearch, setUpdateDraft, setUpdateFile, setUserGroupDrafts, setUserPage,
     setUserSearch, setUserSort, shortValue, showCreateUser, sortUsers, statusLabel, templateSearch, templates, uniqueAuditActions, updateDraft, updateFile, updateFileInputRef,
-    updateReleases, userGroupDrafts, userPage, userSearch, userSort, yesNo, asRecord, recordNumber, recordText, canSubmitReviewCitationFixer, toolResultArray, toolStatus,
+    updateReleases, userGroupDrafts, userPage, userSearch, userSort, yesNo, asRecord, recordNumber, recordText, toolResultArray, toolStatus,
   } = controller;
   return (
     <>
@@ -324,155 +325,18 @@ export function AdminSettingsPanel({ controller }: AdminSettingsPanelProps) {
                       </div>
                     </div>
 
-                    <div className="settings-section">
-                      <div className="settings-section-header">
-                        <h3>GBrain 知识库</h3>
-                        <p>company-wiki source 与本机 embedding 状态</p>
-                      </div>
-                      <div className="admin-metric-grid" style={{ marginBottom: 12 }}>
-                        <div>
-                          <strong>{statusLabel(knowledgeStatus?.service?.status)}</strong>
-                          <span>HTTP 服务</span>
-                        </div>
-                        <div>
-                          <strong>{statusLabel(knowledgeStatus?.source?.status)}</strong>
-                          <span>source 注册</span>
-                        </div>
-                        <div>
-                          <strong>{yesNo(knowledgeStatus?.semantic_search_ready)}</strong>
-                          <span>语义检索</span>
-                        </div>
-                        <div>
-                          <strong>{knowledgeStatus?.page_count ?? knowledgeStatus?.indexed_files ?? "-"}</strong>
-                          <span>页面</span>
-                        </div>
-                        <div>
-                          <strong>{knowledgeStatus?.chunk_count ?? knowledgeStatus?.indexed_chunks ?? "-"}</strong>
-                          <span>片段</span>
-                        </div>
-                        <div>
-                          <strong>{knowledgeStatus?.embedding?.model ?? knowledgeStatus?.embedding_model ?? "-"}</strong>
-                          <span>嵌入模型</span>
-                        </div>
-                        <div>
-                          <strong>{knowledgeStatus?.ingest?.summary?.compiled ?? "-"}</strong>
-                          <span>最近编译</span>
-                        </div>
-                        <div>
-                          <strong>{knowledgeStatus?.doctor?.health_score ?? "-"}</strong>
-                          <span>doctor 分数</span>
-                        </div>
-                      </div>
-                      {knowledgeStatus?.readiness?.errors?.length ? (
-                        <div className="admin-list" style={{ marginBottom: 12 }}>
-                          {knowledgeStatus.readiness.errors.map((item) => (
-                            <div className="admin-row" key={item}>
-                              <div>
-                                <strong>待处理</strong>
-                                <span>{item}</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                      {knowledgeStatus?.doctor?.warning_or_failed_checks?.length ? (
-                        <div className="admin-list" style={{ marginBottom: 12 }}>
-                          {knowledgeStatus.doctor.warning_or_failed_checks.map((item) => (
-                            <div className="admin-row" key={`${item.name}-${item.message}`}>
-                              <div>
-                                <strong>{item.name ?? "doctor"}</strong>
-                                <span>{statusLabel(item.status)} · {item.message}</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                      {(() => {
-                        const latest = knowledgeStatus?.quality_reports?.latest;
-                        const summary = latest?.summary;
-                        const trend = knowledgeStatus?.quality_reports?.trend ?? [];
-                        return (
-                          <div className="admin-list" style={{ marginBottom: 12 }}>
-                            <div className="admin-row">
-                              <div>
-                                <strong>最近质量报告</strong>
-                                <span>
-                                  {latest
-                                    ? [
-                                        `query ${summary?.query?.passed ?? latest.query?.passed ?? 0}/${summary?.query?.total ?? latest.query?.total ?? 0}`,
-                                        `think ${summary?.think?.passed ?? latest.think?.passed ?? 0}/${summary?.think?.total ?? latest.think?.total ?? 0}`,
-                                        latest.ok ? "通过" : "有失败",
-                                        latest.ran_at ? formatDate(latest.ran_at) : null,
-                                      ].filter(Boolean).join(" · ")
-                                    : "尚未生成质量报告"}
-                                </span>
-                              </div>
-                              {latest?.id ? (
-                                <button className="ghost-button" disabled={adminLoading} onClick={() => void handleExportKnowledgeQualityReport(latest.id)} type="button">
-                                  导出
-                                </button>
-                              ) : null}
-                            </div>
-                            {summary?.failed_cases?.length ? (
-                              <div className="admin-row">
-                                <div>
-                                  <strong>失败用例</strong>
-                                  <span>{summary.failed_cases.slice(0, 6).join("、")}</span>
-                                </div>
-                              </div>
-                            ) : null}
-                            {summary?.preflight_failures?.length ? (
-                              <div className="admin-row">
-                                <div>
-                                  <strong>预检失败</strong>
-                                  <span>{summary.preflight_failures.slice(0, 4).join("；")}</span>
-                                </div>
-                              </div>
-                            ) : null}
-                            {trend.length ? (
-                              <div className="admin-row">
-                                <div>
-                                  <strong>质量趋势</strong>
-                                  <span>
-                                    {trend.slice(0, 5).map((item) => {
-                                      const queryRate =
-                                        typeof item.query_pass_rate === "number" ? `${Math.round(item.query_pass_rate * 100)}%` : "n/a";
-                                      const thinkRate =
-                                        typeof item.think_pass_rate === "number" ? `${Math.round(item.think_pass_rate * 100)}%` : "n/a";
-                                      const failed = (item.query_failed ?? 0) + (item.think_failed ?? 0);
-                                      return `${item.ran_at ? formatDate(item.ran_at) : item.id ?? "report"}：Q ${queryRate} / T ${thinkRate}${failed ? ` / 失败 ${failed}` : ""}`;
-                                    }).join("；")}
-                                  </span>
-                                </div>
-                              </div>
-                            ) : null}
-                          </div>
-                        );
-                      })()}
-                      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
-                        <button className="ghost-button" disabled={adminLoading} onClick={() => void handleRunKnowledgeQualityReport(false)} type="button">
-                          查询质量报告
-                        </button>
-                        <button className="ghost-button" disabled={adminLoading} onClick={() => void handleRunKnowledgeQualityReport(true)} type="button">
-                          Think 质量报告
-                        </button>
-                        <button className="ghost-button" disabled={adminLoading || !knowledgeStatus?.quality_reports?.latest?.id} onClick={() => void handleExportKnowledgeQualityReport()} type="button">
-                          导出报告
-                        </button>
-                        <button className="ghost-button" onClick={() => void handleStartGBrain()} type="button">
-                          启动 GBrain
-                        </button>
-                        <button className="ghost-button" onClick={() => void handleRestartGBrain()} type="button">
-                          重启 GBrain
-                        </button>
-                        <button className="ghost-button" onClick={() => void handleRefreshKnowledge()} type="button">
-                          导入 raw 并同步
-                        </button>
-                        <button className="ghost-button" onClick={() => void handleRefreshKnowledge(true)} type="button">
-                          含 PDF 提炼
-                        </button>
-                      </div>
-                    </div>
+                    <AdminKnowledgeOverview
+                      adminLoading={adminLoading}
+                      formatDate={formatDate}
+                      knowledgeStatus={knowledgeStatus}
+                      statusLabel={statusLabel}
+                      yesNo={yesNo}
+                      onExportQualityReport={handleExportKnowledgeQualityReport}
+                      onRefreshKnowledge={handleRefreshKnowledge}
+                      onRestartGBrain={handleRestartGBrain}
+                      onRunQualityReport={handleRunKnowledgeQualityReport}
+                      onStartGBrain={handleStartGBrain}
+                    />
                   </>
                 ) : null}
 
@@ -637,62 +501,17 @@ export function AdminSettingsPanel({ controller }: AdminSettingsPanelProps) {
                 ) : null}
 
                 {adminTab === "reviews" ? (
-                  <div className="settings-section">
-                    <div className="settings-section-header">
-                      <h3>知识审核</h3>
-                    </div>
-                    <div className="admin-toolbar">
-                      <input
-                        className="admin-search"
-                        placeholder="搜索来源或内容"
-                        value={reviewSearch}
-                        onChange={(event) => { setReviewSearch(event.target.value); setReviewPage(1); }}
-                      />
-                    </div>
-                    {(() => {
-                      const filtered = filterReviews(knowledgeReviews, reviewSearch);
-                      const pageSize = 10;
-                      const paged = paginate(filtered, reviewPage, pageSize);
-                      const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-                      return (
-                        <>
-                          {filtered.length === 0 ? (
-                            <p className="meta">暂无待审核知识。</p>
-                          ) : (
-                            <div className="admin-table">
-                              <div className="admin-table-header" style={{ gridTemplateColumns: "minmax(0, 1fr) minmax(0, 2fr) 140px 220px" }}>
-                                <span>来源</span>
-                                <span>内容</span>
-                                <span>提交时间</span>
-                                <span style={{ textAlign: "right" }}>操作</span>
-                              </div>
-                              {paged.map((item) => (
-                                <div className="admin-table-row" key={item.id} style={{ gridTemplateColumns: "minmax(0, 1fr) minmax(0, 2fr) 140px 220px" }}>
-                                  <div className="admin-table-cell">{item.source || "候选知识"}</div>
-                                  <div className="admin-table-cell" title={item.content}>{item.content}</div>
-                                  <div className="admin-table-cell admin-table-cell-secondary">{formatDate(item.created_at)}</div>
-                                  <div className="admin-table-cell-actions">
-                                    {canSubmitReviewCitationFixer(item) ? (
-                                      <button className="ghost-button" disabled={adminLoading} onClick={() => void handleSubmitReviewCitationFixer(item)} type="button">引用修复</button>
-                                    ) : null}
-                                    <button className="ghost-button" onClick={() => void handleReviewKnowledge(item, "approved")} type="button">通过</button>
-                                    <button className="ghost-button" onClick={() => void handleReviewKnowledge(item, "rejected")} type="button">驳回</button>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                          {totalPages > 1 ? (
-                            <div className="admin-pagination">
-                              <button disabled={reviewPage <= 1} onClick={() => setReviewPage((p) => Math.max(1, p - 1))} type="button">上一页</button>
-                              <span className="page-info">第 {reviewPage} / {totalPages} 页</span>
-                              <button disabled={reviewPage >= totalPages} onClick={() => setReviewPage((p) => Math.min(totalPages, p + 1))} type="button">下一页</button>
-                            </div>
-                          ) : null}
-                        </>
-                      );
-                    })()}
-                  </div>
+                  <KnowledgeReviewPanel
+                    adminLoading={adminLoading}
+                    formatDate={formatDate}
+                    knowledgeReviews={knowledgeReviews}
+                    reviewPage={reviewPage}
+                    reviewSearch={reviewSearch}
+                    setReviewPage={setReviewPage}
+                    setReviewSearch={setReviewSearch}
+                    onReviewKnowledge={handleReviewKnowledge}
+                    onSubmitReviewCitationFixer={handleSubmitReviewCitationFixer}
+                  />
                 ) : null}
 
                 {adminTab === "gbrain" ? (
@@ -703,6 +522,16 @@ export function AdminSettingsPanel({ controller }: AdminSettingsPanelProps) {
                         <p>doctor、maintain check、jobs 与 contradiction 的管理员入口</p>
                       </div>
                     </div>
+                    <GBrainStatusDashboard
+                      adminLoading={adminLoading}
+                      formatDate={formatDate}
+                      knowledgeStatus={knowledgeStatus}
+                      maintenance={gbrainMaintenance}
+                      onGoQuality={() => setAdminTab("overview")}
+                      onMaintenanceCheck={handleGBrainMaintenanceCheck}
+                      onPollCitationFixer={handlePollGBrainCitationFixerJobs}
+                      onRefresh={handleRefreshGBrainMaintenance}
+                    />
                     {(() => {
                       const doctorSummary = asRecord(gbrainMaintenance?.doctor_summary);
                       const agentStatus = asRecord(gbrainMaintenance?.agent);

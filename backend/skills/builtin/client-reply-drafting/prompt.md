@@ -215,6 +215,8 @@ To: [recipient email or recipient name if known]
 
 Cc: [cc recipient if known, otherwise omit]
 
+Body:
+
 Hi [Name],
 
 [Email body]
@@ -229,6 +231,12 @@ Kind regards,
 [Your Name]
 
 Keep the email body clean and directly reusable. Do not include Markdown bullets unless they are genuinely part of the email body.
+
+Company email rule:
+
+- If the email is related to a specific project and the project name is provided, the Subject must start with the complete and accurate project name.
+- If the project name is not provided, do not invent one. Use a clear subject and note the missing project name in the Chinese explanation.
+- The email body should be structured and executable: state the position, clarify facts or assumptions, identify the next action, and preserve responsibility / cost / programme boundaries where relevant.
 
 ---
 
