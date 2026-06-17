@@ -739,6 +739,37 @@ Should-pass: 4/4 = 100%
 
 目标：把当前开发版推进到内部可试用状态。
 
+> 2026-06-17 更新：发布与运维 runbook 暂时后置。当前优先级切到 V2.1 本地开发收口：补关键 Playwright 覆盖、只读验证已有公司/CRM GBrain 数据、推进上帝文件低风险拆分，并保持本地开发版稳定。正式安装测试、正式账号治理、GBrain 服务 runbook 和 company-wiki 管理入口不作为 V2.1 阻塞项。
+
+## 10.A 当前主线 F0：V2.1 本地开发收口
+
+目标：在 V2.0 主线代码级完成的基础上，把本地开发版收口到可稳定内测的工程状态；不重新录入公司知识库或 CRM 知识库，不运行高级 GBrain 写操作，不把 G6 完整知识文件 diff 作为阻塞项。
+
+任务：
+
+- [x] 新增 Playwright 关键路径覆盖：登录、Chat 主入口、`/query` 来源范围提示、引用来源预览、Agent 生成文件保存边界、会话导出入口。
+- [x] 使用已有 `company-wiki` 与 `customer-crm` 做只读 GBrain smoke，验证 source scope、不串库和 evidence 展示降级；2026-06-17 本机只读回归通过：`gbrain_query_regression.py` 9/9，`gbrain_customer_reference_regression.py` 3/3。
+- [ ] 项目 source 只使用 TEST 或明确可控项目做验证，不触碰真实业务项目写操作。
+- [ ] G6 审核增强本轮只验证审核工作台 UI、权限、当前页批量安全边界；完整 batch endpoint、备注、历史和真实知识文件 diff 后置。
+- [x] 第一轮拆分 `frontend/src/renderer/pages/AppPage.tsx`，优先抽出纯派生逻辑和处理器，避免页面继续承载业务细节；2026-06-17 继续抽出 chat message/session/slash/prompt hooks，主文件 1140 行。
+- [x] 第一轮拆分 `frontend/src/renderer/features/chat/components/AppWorkspaceChrome.tsx`，优先抽出会话列表项等低风险子组件。
+- [x] 第二轮拆分 `frontend/src/renderer/features/chat/components/ChatMessageList.tsx`，抽出附件渲染与 Agent Run 卡片，主文件降至约 532 行。
+- [x] 第二轮拆分 `frontend/src/renderer/features/workspace/components/WorkspaceFilePanel.tsx`，抽出 header、context menu、客户情报 overlay、知识图谱 sidecar/map overlay、知识图谱 hook、会议工作流 hook、文件动作 hook，主文件 888 行。
+- [x] 第二轮拆分 `frontend/src/renderer/features/settings/components/SettingsModal.tsx`，抽出管理员 controller hook；`AdminSettingsPanel.tsx` 抽出 GBrain section，主文件分别 804 / 632 行。
+- [x] 第二轮拆分 `frontend/src/renderer/features/chat/components/AppWorkspaceChrome.tsx`，抽出通知弹窗，壳层降至约 901 行。
+- [x] `backend/api/chat.py` 继续保持薄路由，附件路由迁入 `backend/app/features/chat/attachment_routes.py`，消息上下文/版本/编辑路由迁入 `backend/app/features/chat/message_routes.py`，主文件 999 行。
+- [x] `backend/api/chat.py` 的 `send_message` 主链路迁入 `backend/app/features/chat/send_message_service.py`，路由层仅保留依赖注入包装，直接测试入口与 monkeypatch 点保持兼容，主文件 768 行。
+- [x] 跑 `bun run typecheck`、相关 `pytest` 和新增 Playwright；2026-06-17 本地验证：frontend typecheck 通过，Playwright V2.1 3 passed，后端目标 pytest 164 passed。
+
+完成标志：
+
+- V2.1 关键 Playwright 可在本地已启动前后端上运行；缺少真实数据或权限时清晰跳过。
+- 公司/CRM GBrain 只读验证不污染真实 source。
+- 前端上帝文件完成低风险抽离，类型检查通过；后端 chat 路由已完成两类路由下沉，`send_message` 主链路已迁出路由层。
+- 文档口径统一：V2.0 为“主线代码级完成 / 内测 MVP+ 达成”，V2.1 为“本地开发收口中”。
+
+## 10.B 后置主线 F1：发布与运维
+
 任务：
 
 - [ ] 整理正式测试账号和权限，不再使用混乱测试用户。

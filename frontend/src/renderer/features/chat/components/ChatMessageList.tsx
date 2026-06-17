@@ -1,50 +1,23 @@
 import { useEffect, useState, type RefObject } from "react";
 
-import { fetchSessionAttachmentBlob } from "../api";
 import type { ApiClientOptions } from "../../../shared/api/client";
 import type {
-  AgentRunResponse,
   ChatContextTraceResponse,
   GeneratedFileResponse,
-  SessionAttachmentResponse,
   WorkspaceResponse,
 } from "../../../shared/api/types";
 import type { ChatMessage } from "../state";
 import { APP_NAME } from "../../../shared/config/app";
-import { AgentIcon, XmarkIcon } from "../../../shared/icons/LineIcons";
-import { missingInputInstruction } from "../messageInstructions";
+import { AgentIcon } from "../../../shared/icons/LineIcons";
 import { renderMessageContent } from "../messageContent";
 import type { SourcePreview } from "../messageContent";
 import { MessageActions } from "./MessageActions";
+import { MessageAgentRunCard } from "./MessageAgentRunCard";
+import { MessageAttachments } from "./MessageAttachments";
 import { MessageGeneratedFile } from "./MessageGeneratedFile";
 import { MessageSkillRunCard } from "./MessageSkillRunCard";
 import type { TextTransformAction } from "../textTransform";
 import { MessageSourceList } from "../../knowledge/components/MessageSourceList";
-
-type AttachmentKind = "image" | "pdf" | "text" | "file";
-
-function getAttachmentKind(fileName: string, contentType: string): AttachmentKind {
-  const lowerName = fileName.toLowerCase();
-  const lowerType = contentType.toLowerCase();
-  if (lowerType.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(lowerName)) return "image";
-  if (lowerType.includes("pdf") || lowerName.endsWith(".pdf")) return "pdf";
-  if (lowerType.startsWith("text/") || /\.(txt|md|csv|json|log)$/i.test(lowerName)) return "text";
-  return "file";
-}
-
-function formatAttachmentSize(size: number) {
-  if (!Number.isFinite(size) || size <= 0) return "0 B";
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function attachmentSourceLabel(attachment: { source_label?: string; source_scope?: string }) {
-  if (attachment.source_label) return attachment.source_label;
-  if (attachment.source_scope === "workspace") return "工作区文件";
-  if (attachment.source_scope === "local_private") return "本机文件";
-  return "会话附件";
-}
 
 export type ChatMessageListController = Record<string, any> & {
   apiOptions: ApiClientOptions;
@@ -72,281 +45,6 @@ export type ChatMessageListController = Record<string, any> & {
 export type ChatMessageListProps = {
   controller: ChatMessageListController;
 };
-
-function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-  URL.revokeObjectURL(url);
-}
-
-function isImageAttachmentResponse(attachment: SessionAttachmentResponse) {
-  return (attachment.content_type || "").toLowerCase().startsWith("image/");
-}
-
-function attachmentKindLabel(attachment: SessionAttachmentResponse) {
-  const kind = getAttachmentKind(attachment.original_name, attachment.content_type || "");
-  if (kind === "image") return "IMG";
-  if (kind === "pdf") return "PDF";
-  if (kind === "text") return "TXT";
-  return "FILE";
-}
-
-function MessageAttachments({
-  attachments,
-  apiOptions,
-}: {
-  attachments?: SessionAttachmentResponse[];
-  apiOptions: ApiClientOptions;
-}) {
-  const visibleAttachments = attachments ?? [];
-  if (!visibleAttachments.length) return null;
-  return (
-    <div className={`message-attachments ${visibleAttachments.length === 1 ? "is-single" : ""}`}>
-      {visibleAttachments.map((attachment) =>
-        isImageAttachmentResponse(attachment) ? (
-          <MessageAttachmentImage attachment={attachment} apiOptions={apiOptions} key={attachment.id} />
-        ) : (
-          <MessageAttachmentFile attachment={attachment} apiOptions={apiOptions} key={attachment.id} />
-        ),
-      )}
-    </div>
-  );
-}
-
-function MessageAttachmentImage({
-  attachment,
-  apiOptions,
-}: {
-  attachment: SessionAttachmentResponse;
-  apiOptions: ApiClientOptions;
-}) {
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [loadFailed, setLoadFailed] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    let objectUrl: string | null = null;
-    setImageUrl(null);
-    setLoadFailed(false);
-    fetchSessionAttachmentBlob(apiOptions, attachment.session_id, attachment.id, controller.signal)
-      .then((blob) => {
-        objectUrl = URL.createObjectURL(blob);
-        setImageUrl(objectUrl);
-      })
-      .catch((error: unknown) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) setLoadFailed(true);
-      });
-    return () => {
-      controller.abort();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [apiOptions.baseUrl, apiOptions.token, apiOptions.onUnauthorized, attachment.id, attachment.session_id]);
-
-  useEffect(() => {
-    if (!previewOpen) return;
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setPreviewOpen(false);
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [previewOpen]);
-
-  return (
-    <>
-      <button
-        className={`message-attachment-image ${loadFailed ? "is-failed" : ""}`}
-        disabled={!imageUrl}
-        onClick={() => imageUrl ? setPreviewOpen(true) : undefined}
-        title={imageUrl ? `点击预览图片 · ${attachmentSourceLabel(attachment)}` : attachment.original_name}
-        type="button"
-      >
-        {imageUrl ? (
-          <>
-            <img alt={attachment.original_name} src={imageUrl} />
-            <span className="message-attachment-image-source">{attachmentSourceLabel(attachment)}</span>
-          </>
-        ) : (
-          <span>{loadFailed ? "图片加载失败" : "图片加载中"}</span>
-        )}
-      </button>
-      {previewOpen && imageUrl ? (
-        <div className="attachment-lightbox-backdrop" onClick={() => setPreviewOpen(false)} role="presentation">
-          <div className="attachment-lightbox" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
-            <button className="attachment-lightbox-close" onClick={() => setPreviewOpen(false)} title="关闭预览" type="button">
-              <XmarkIcon />
-            </button>
-            <img alt={attachment.original_name} src={imageUrl} />
-            <div className="attachment-lightbox-footer">
-              <span>{attachment.original_name} · {attachmentSourceLabel(attachment)}</span>
-              <button
-                onClick={() => void fetchSessionAttachmentBlob(apiOptions, attachment.session_id, attachment.id)
-                  .then((blob) => downloadBlob(blob, attachment.original_name))
-                  .catch(() => {})}
-                type="button"
-              >
-                下载
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-    </>
-  );
-}
-
-function MessageAttachmentFile({
-  attachment,
-  apiOptions,
-}: {
-  attachment: SessionAttachmentResponse;
-  apiOptions: ApiClientOptions;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const kind = getAttachmentKind(attachment.original_name, attachment.content_type || "");
-  const canPreview = kind === "pdf" || kind === "text";
-  const sourceLabel = attachmentSourceLabel(attachment);
-  async function handleOpenAttachment() {
-    setBusy(true);
-    setFailed(false);
-    try {
-      const blob = await fetchSessionAttachmentBlob(apiOptions, attachment.session_id, attachment.id);
-      if (canPreview) {
-        const url = URL.createObjectURL(blob);
-        window.open(url, "_blank", "noopener,noreferrer");
-        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      } else {
-        downloadBlob(blob, attachment.original_name);
-      }
-    } catch {
-      setFailed(true);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <button
-      className="message-attachment-file"
-      disabled={busy}
-      onClick={() => void handleOpenAttachment()}
-      title={failed ? "附件打开失败" : canPreview ? "打开预览" : "下载附件"}
-      type="button"
-    >
-      <span className={`message-attachment-file-kind is-${kind}`}>{attachmentKindLabel(attachment)}</span>
-      <span className="message-attachment-file-main">
-        <strong>{attachment.original_name}</strong>
-        <small>{failed ? "打开失败" : `${sourceLabel} · ${formatAttachmentSize(attachment.size)} · ${canPreview ? "打开预览" : "下载"}`}</small>
-      </span>
-    </button>
-  );
-}
-
-function agentRunStatusLabel(status: string) {
-  if (status === "completed") return "已完成";
-  if (status === "failed") return "失败";
-  if (status === "waiting") return "等待输入";
-  if (status === "queued") return "排队中";
-  if (status === "cancelled") return "已取消";
-  return "执行中";
-}
-
-function agentEventStatusLabel(status: string) {
-  if (status === "completed") return "完成";
-  if (status === "failed") return "失败";
-  if (status === "waiting") return "等待";
-  if (status === "queued") return "排队";
-  return "进行中";
-}
-
-function renderAgentRunCard(agentRun: AgentRunResponse) {
-  const events = agentRun.events ?? [];
-  const completedEvents = events.filter((event) => event.status === "completed").length;
-  const isPlanning = ["queued", "waiting"].includes(agentRun.status);
-  const activeEvent = events.find((event) => event.status === "running" || event.status === "waiting")
-    ?? events.find((event) => event.status === "queued")
-    ?? events[events.length - 1];
-  const failedEvent = events.find((event) => event.status === "failed");
-  const progressPercent = events.length ? Math.round((completedEvents / events.length) * 100) : (agentRun.status === "completed" ? 100 : 0);
-  const planSummary = events.length
-    ? events.slice(0, 4).map((event) => event.title).join(" / ")
-    : "等待后端返回执行步骤。";
-  return (
-    <div className={`message-agent-run-card is-${agentRun.status}`}>
-      <div className="message-agent-run-header">
-        <span className="message-agent-run-icon"><AgentIcon /></span>
-        <div>
-          <strong>{agentRun.title}</strong>
-          <span>{isPlanning ? "计划模式" : agentRunStatusLabel(agentRun.status)}{events.length ? ` · 步骤 ${completedEvents}/${events.length}` : ""}</span>
-        </div>
-      </div>
-      {events.length ? (
-        <div className="message-agent-progress" aria-label={`执行进度 ${progressPercent}%`}>
-          <span style={{ width: `${progressPercent}%` }} />
-        </div>
-      ) : null}
-      <div className="message-agent-plan-grid">
-        <section>
-          <span>任务理解</span>
-          <p>{agentRun.title || "Agent 正在理解本次任务目标。"}</p>
-        </section>
-        <section>
-          <span>执行计划</span>
-          <p>{planSummary}</p>
-        </section>
-      </div>
-      {activeEvent || failedEvent ? (
-        <div className={`message-agent-current-step ${failedEvent ? "is-failed" : ""}`}>
-          <span>{failedEvent ? "失败位置" : "当前步骤"}</span>
-          <strong>{(failedEvent ?? activeEvent)?.title}</strong>
-          {agentEventDetail(failedEvent ?? activeEvent) ? <p>{agentEventDetail(failedEvent ?? activeEvent)}</p> : null}
-        </div>
-      ) : null}
-      {isPlanning ? (
-        <div className="message-agent-plan-actions">
-          <button disabled type="button">确认执行</button>
-          <button disabled type="button">修改计划</button>
-          <small>当前后端尚未接入计划审批；此处只展示计划形态。</small>
-        </div>
-      ) : null}
-      {events.length ? (
-        <ol className="message-agent-event-list">
-          {events.map((event) => (
-            <li className={`message-agent-event is-${event.status}`} key={event.id}>
-              <span className="message-agent-event-dot" />
-              <div>
-                <div className="message-agent-event-title">
-                  <strong>{event.title}</strong>
-                  <small>{agentEventStatusLabel(event.status)}</small>
-                </div>
-                {agentEventDetail(event) ? <p>{agentEventDetail(event)}</p> : null}
-              </div>
-            </li>
-          ))}
-        </ol>
-      ) : null}
-      {agentRun.error_message ? <p className="message-agent-run-error">{agentRun.error_message}</p> : null}
-    </div>
-  );
-}
-
-function agentEventDetail(event: AgentRunResponse["events"][number] | undefined) {
-  if (!event) return "";
-  const missingInputs = Array.isArray(event.payload?.missing_inputs)
-    ? event.payload.missing_inputs as Array<Record<string, unknown>>
-    : [];
-  if (missingInputs.length) {
-    const instruction = missingInputInstruction(null, missingInputs);
-    if (instruction) return instruction;
-  }
-  return event.detail;
-}
 
 function _isDefaultPromptId(promptId: string | null | undefined) {
   return promptId === "builtin:builtin-project-r";
@@ -735,7 +433,7 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
               token={token}
             />
           ) : null}
-          {message.agent_run ? renderAgentRunCard(message.agent_run) : null}
+          {message.agent_run ? <MessageAgentRunCard agentRun={message.agent_run} /> : null}
           {message.skill_run ? (
             <MessageSkillRunCard
               showGeneratedFile={!message.generated_file}

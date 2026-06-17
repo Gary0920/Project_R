@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -21,7 +21,6 @@ from app.features.chat.access import (
 from app.features.chat.audio_transcription_skill import (
     run_audio_transcription_skill_response as _run_audio_transcription_skill_response,
 )
-from app.features.chat import attachment_api as chat_attachment_api
 from app.features.chat import feedback_api as chat_feedback_api
 from app.features.chat import stream_service as chat_stream
 from app.features.chat.export_service import export_session as _export_session
@@ -64,13 +63,10 @@ from app.features.chat.web_search_context import (
     web_search_context_extra as _web_search_context_extra,
 )
 from app.features.chat.schemas import (
-    ActivateMessageVersionResponse,
-    AttachmentResponse,
     ChatSourceResponse,
     CreateAttachmentRequest,
     CreateSessionRequest,
     EditMessageRequest,
-    EditMessageResponse,
     GBrainThinkReviewRequest,
     GBrainThinkReviewResponse,
     MessageFeedbackRequest,
@@ -78,9 +74,7 @@ from app.features.chat.schemas import (
     MessageListResponse,
     MessageResponse,
     RegenerateMessageRequest,
-    RegenerateMessageResponse,
     RestoreMessagesRequest,
-    RestoreMessagesResponse,
     SearchResultResponse,
     SendMessageRequest,
     SessionDetailResponse,
@@ -89,10 +83,13 @@ from app.features.chat.schemas import (
     TransformTextResponse,
     UpdateSessionRequest,
 )
+from app.features.chat.send_message_service import SendMessagePorts, send_message_use_case
 from app.features.chat.transform_service import transform_chat_text
 from app.features.knowledge.sources import KnowledgeSources
 from app.shared.llm.client import LLMConfigurationError, LLMProviderError, get_llm_client
 from app.features.chat import attachments as session_attachments
+from app.features.chat.attachment_routes import router as attachment_router, create_session_attachment, delete_session_attachment, get_session_attachment_content, list_session_attachments, upload_session_attachment
+from app.features.chat.message_routes import router as message_router, activate_message_version, edit_message, exclude_message_context, regenerate_message, restore_excluded_messages
 from app.features.skills.execution import execute_ready_run, generated_file_payload
 from app.features.skills.runner import SkillRunner, run_to_dict
 from app.features.prompts.system_prompt import (
@@ -148,6 +145,8 @@ ANSWER_CORRECTION_REVIEW_PREFIX = "gbrain_answer_correction:message:"
 GBRAIN_THINK_REVIEW_PREFIX = "gbrain_think_review:message:"
 ANSWER_CORRECTION_RATING_THRESHOLD = 2
 KNOWLEDGE_SOURCES = KnowledgeSources()
+router.include_router(message_router)
+router.include_router(attachment_router)
 
 
 @router.post("/sessions", response_model=SessionResponse)
@@ -269,7 +268,6 @@ def search_sessions(
             )
     return results
 
-
 @router.post("/transform", response_model=TransformTextResponse)
 def transform_text(
     req: TransformTextRequest,
@@ -325,409 +323,6 @@ def delete_session(
     db.delete(session)
     db.commit()
     return {"ok": True}
-
-
-@router.delete("/sessions/{session_id}/messages/{message_id}")
-def exclude_message_context(
-    session_id: int,
-    message_id: int,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    session = _get_user_session(db, user.id, session_id)
-    message = (
-        _message_query(db, user.id, session_id)
-        .filter(ChatMessage.id == message_id)
-        .first()
-    )
-    if not message:
-        raise HTTPException(status_code=404, detail="消息不存在")
-
-    affected_messages = _message_pair_delete_targets(db, user.id, session_id, message)
-    affected_ids = [item.id for item in affected_messages]
-    groups = {item.version_group_id for item in affected_messages if item.version_group_id}
-    if groups:
-        affected_messages.extend(
-            db.query(ChatMessage)
-            .filter(
-                ChatMessage.session_id == session_id,
-                ChatMessage.user_id == user.id,
-                ChatMessage.version_group_id.in_(groups),
-            )
-            .all()
-        )
-    for item in affected_messages:
-        item.is_excluded = True
-        item.active_version = False
-    session.updated_at = datetime.now(timezone.utc)
-    db.add(
-        AuditLog(
-            user_id=user.id,
-            action="exclude_message_context",
-            detail=f"排除会话 {session_id} 中消息 {message_id} 对应问答: {affected_ids}",
-            success=True,
-        )
-    )
-    db.commit()
-    return {"ok": True, "excluded_message_ids": affected_ids}
-
-
-@router.post("/sessions/{session_id}/messages/restore", response_model=RestoreMessagesResponse)
-def restore_excluded_messages(
-    session_id: int,
-    req: RestoreMessagesRequest,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    session = _get_user_session(db, user.id, session_id)
-    requested_ids = {int(message_id) for message_id in req.message_ids if int(message_id) > 0}
-    if not requested_ids:
-        raise HTTPException(status_code=400, detail="缺少可恢复的消息")
-
-    messages = (
-        _message_query(db, user.id, session_id, include_excluded=True, include_inactive=True)
-        .filter(ChatMessage.id.in_(requested_ids))
-        .all()
-    )
-    if not messages:
-        raise HTTPException(status_code=404, detail="可恢复的消息不存在")
-
-    groups = {message.version_group_id for message in messages if message.version_group_id}
-    related_versions: list[ChatMessage] = []
-    if groups:
-        related_versions = (
-            db.query(ChatMessage)
-            .filter(
-                ChatMessage.session_id == session_id,
-                ChatMessage.user_id == user.id,
-                ChatMessage.version_group_id.in_(groups),
-            )
-            .all()
-        )
-
-    for item in [*messages, *related_versions]:
-        item.is_excluded = False
-        if item.id in requested_ids:
-            item.active_version = True
-        elif item.version_group_id in groups:
-            item.active_version = False
-    session.updated_at = datetime.now(timezone.utc)
-    db.add(
-        AuditLog(
-            user_id=user.id,
-            action="restore_message_context",
-            detail=f"恢复会话 {session_id} 消息: {sorted(requested_ids)}",
-            success=True,
-        )
-    )
-    db.commit()
-
-    restored = (
-        _message_query(db, user.id, session_id)
-        .filter(ChatMessage.id.in_(requested_ids))
-        .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
-        .all()
-    )
-    return {
-        "ok": True,
-        "restored_message_ids": [message.id for message in restored],
-        "messages": [_message_to_response_dict(db, message) for message in restored],
-    }
-
-
-@router.post(
-    "/sessions/{session_id}/messages/{message_id}/regenerate",
-    response_model=RegenerateMessageResponse,
-)
-def regenerate_message(
-    session_id: int,
-    message_id: int,
-    req: RegenerateMessageRequest,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    session = _get_user_session(db, user.id, session_id)
-    target = (
-        _message_query(db, user.id, session_id)
-        .filter(ChatMessage.id == message_id, ChatMessage.role == "assistant")
-        .first()
-    )
-    if not target:
-        raise HTTPException(status_code=404, detail="可重生成的回答不存在")
-
-    llm_messages = _build_llm_messages_before(db, user.id, session_id, target.id)
-    if not llm_messages:
-        raise HTTPException(status_code=400, detail="缺少可用于重生成的上文")
-
-    requested_model = req.model_profile or req.provider or target.provider
-    web_search_query = next(
-        (str(message.get("content") or "") for message in reversed(llm_messages) if message.get("role") == "user"),
-        target.content,
-    )
-    web_sources, web_search_context, web_search_trace = _maybe_run_web_search(
-        web_search_query,
-        req.web_search,
-    )
-    response_sources = _serialize_sources(web_sources)
-    system_prompt = req.system_prompt
-    if req.web_search:
-        system_prompt = _compose_system_prompt(
-            req.system_prompt,
-            [],
-            IntentType.CHAT,
-            "",
-            False,
-            web_search_context=web_search_context,
-        )
-    try:
-        llm_response = get_llm_client(requested_model).complete(
-            llm_messages,
-            system_prompt=system_prompt,
-            thinking=req.thinking,
-            temperature=req.temperature,
-        )
-    except LLMConfigurationError as exc:
-        _write_chat_audit(db, user.id, session_id, target.content, False, str(exc))
-        raise HTTPException(status_code=503, detail="AI 服务暂时不可用，请稍后重试") from exc
-    except LLMProviderError as exc:
-        status_code = 503 if exc.retryable else 502
-        detail = f"{exc}"
-        if exc.key_index:
-            detail = f"{detail}（key_index={exc.key_index}）"
-        _write_chat_audit(db, user.id, session_id, target.content, False, detail)
-        raise HTTPException(status_code=status_code, detail="AI 服务暂时不可用，请稍后重试") from exc
-
-    group_id = _ensure_version_group(target)
-    next_index = _next_version_index(db, target)
-    target.active_version = False
-    excluded_ids = _exclude_active_messages_after(db, user.id, session_id, target.id)
-    usage = llm_response.usage
-    assistant_message = ChatMessage(
-        session_id=session_id,
-        user_id=user.id,
-        role="assistant",
-        content=llm_response.text,
-        provider=llm_response.provider,
-        model=llm_response.model,
-        token_input=usage.get("input_tokens", 0),
-        token_output=usage.get("output_tokens", 0),
-        token_total=llm_response.token_cost,
-        status="success",
-        rag_used=bool(response_sources) if req.web_search else target.rag_used,
-        sources_json=json.dumps(response_sources, ensure_ascii=False) if req.web_search else target.sources_json,
-        context_json=json.dumps(
-            build_context_trace(
-                session=session,
-                req=req,
-                attachments=[],
-                sources=response_sources,
-                intent=IntentType.CHAT,
-                provider=llm_response.provider,
-                model=llm_response.model,
-                requested_model=requested_model,
-                extra=_web_search_context_extra(web_search_trace),
-            ),
-            ensure_ascii=False,
-        )
-        if req.web_search
-        else "{}",
-        version_group_id=group_id,
-        version_index=next_index,
-        active_version=True,
-        created_at=target.created_at,
-    )
-    db.add(assistant_message)
-    session.updated_at = datetime.now(timezone.utc)
-    db.add(
-        AuditLog(
-            user_id=user.id,
-            action="regenerate_message",
-            detail=f"重生成会话 {session_id} 回答 {message_id}，版本 {next_index}",
-            token_cost=llm_response.token_cost,
-            success=True,
-        )
-    )
-    db.commit()
-    db.refresh(assistant_message)
-    return {
-        "ok": True,
-        "assistant_message": _message_to_response_dict(db, assistant_message),
-        "excluded_message_ids": excluded_ids,
-        "usage": usage,
-    }
-
-
-@router.put("/sessions/{session_id}/messages/{message_id}/edit", response_model=EditMessageResponse)
-def edit_message(
-    session_id: int,
-    message_id: int,
-    req: EditMessageRequest,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    session = _get_user_session(db, user.id, session_id)
-    content = req.content.strip()
-    if not content:
-        raise HTTPException(status_code=400, detail="消息内容不能为空")
-    target = (
-        _message_query(db, user.id, session_id)
-        .filter(ChatMessage.id == message_id, ChatMessage.role == "user")
-        .first()
-    )
-    if not target:
-        raise HTTPException(status_code=404, detail="可编辑的提问不存在")
-
-    llm_messages = _build_llm_messages_before(
-        db,
-        user.id,
-        session_id,
-        target.id,
-        extra_tail=[{"role": "user", "content": content}],
-    )
-    requested_model = req.model_profile or req.provider
-    web_sources, web_search_context, web_search_trace = _maybe_run_web_search(
-        content,
-        req.web_search,
-    )
-    response_sources = _serialize_sources(web_sources)
-    system_prompt = req.system_prompt
-    if req.web_search:
-        system_prompt = _compose_system_prompt(
-            req.system_prompt,
-            [],
-            IntentType.CHAT,
-            "",
-            False,
-            web_search_context=web_search_context,
-        )
-    try:
-        llm_response = get_llm_client(requested_model).complete(
-            llm_messages,
-            system_prompt=system_prompt,
-            thinking=req.thinking,
-        )
-    except LLMConfigurationError as exc:
-        _write_chat_audit(db, user.id, session_id, content, False, str(exc))
-        raise HTTPException(status_code=503, detail="AI 服务暂时不可用，请稍后重试") from exc
-    except LLMProviderError as exc:
-        status_code = 503 if exc.retryable else 502
-        detail = f"{exc}"
-        if exc.key_index:
-            detail = f"{detail}（key_index={exc.key_index}）"
-        _write_chat_audit(db, user.id, session_id, content, False, detail)
-        raise HTTPException(status_code=status_code, detail="AI 服务暂时不可用，请稍后重试") from exc
-
-    group_id = _ensure_version_group(target)
-    next_index = _next_version_index(db, target)
-    target.active_version = False
-    excluded_ids = _exclude_active_messages_after(db, user.id, session_id, target.id)
-    user_message = ChatMessage(
-        session_id=session_id,
-        user_id=user.id,
-        role="user",
-        content=content,
-        status="success",
-        version_group_id=group_id,
-        version_index=next_index,
-        active_version=True,
-        created_at=target.created_at,
-    )
-    usage = llm_response.usage
-    assistant_message = ChatMessage(
-        session_id=session_id,
-        user_id=user.id,
-        role="assistant",
-        content=llm_response.text,
-        provider=llm_response.provider,
-        model=llm_response.model,
-        token_input=usage.get("input_tokens", 0),
-        token_output=usage.get("output_tokens", 0),
-        token_total=llm_response.token_cost,
-        status="success",
-        rag_used=bool(response_sources),
-        sources_json=json.dumps(response_sources, ensure_ascii=False),
-        context_json=json.dumps(
-            build_context_trace(
-                session=session,
-                req=req,
-                attachments=[],
-                sources=response_sources,
-                intent=IntentType.CHAT,
-                provider=llm_response.provider,
-                model=llm_response.model,
-                requested_model=requested_model,
-                extra=_web_search_context_extra(web_search_trace),
-            ),
-            ensure_ascii=False,
-        )
-        if req.web_search
-        else "{}",
-        version_group_id=str(uuid.uuid4()),
-    )
-    db.add(user_message)
-    db.add(assistant_message)
-    session.updated_at = datetime.now(timezone.utc)
-    db.add(
-        AuditLog(
-            user_id=user.id,
-            action="edit_message_branch",
-            detail=f"编辑会话 {session_id} 提问 {message_id}，新版本 {next_index}，排除后续 {excluded_ids}",
-            token_cost=llm_response.token_cost,
-            success=True,
-        )
-    )
-    db.commit()
-    db.refresh(user_message)
-    db.refresh(assistant_message)
-    return {
-        "ok": True,
-        "user_message": _message_to_response_dict(db, user_message),
-        "assistant_message": _message_to_response_dict(db, assistant_message),
-        "excluded_message_ids": excluded_ids,
-        "usage": usage,
-    }
-
-
-@router.post(
-    "/sessions/{session_id}/messages/{message_id}/versions/{version_id}/activate",
-    response_model=ActivateMessageVersionResponse,
-)
-def activate_message_version(
-    session_id: int,
-    message_id: int,
-    version_id: int,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    session = _get_user_session(db, user.id, session_id)
-    current = (
-        _message_query(db, user.id, session_id, include_inactive=True)
-        .filter(ChatMessage.id == message_id)
-        .first()
-    )
-    selected = (
-        _message_query(db, user.id, session_id, include_inactive=True)
-        .filter(ChatMessage.id == version_id)
-        .first()
-    )
-    if not current or not selected:
-        raise HTTPException(status_code=404, detail="消息版本不存在")
-    if not current.version_group_id or current.version_group_id != selected.version_group_id:
-        raise HTTPException(status_code=400, detail="消息版本不属于同一组")
-
-    _set_active_version(db, selected)
-    session.updated_at = datetime.now(timezone.utc)
-    db.add(
-        AuditLog(
-            user_id=user.id,
-            action="activate_message_version",
-            detail=f"切换会话 {session_id} 消息 {message_id} 到版本 {version_id}",
-            success=True,
-        )
-    )
-    db.commit()
-    db.refresh(selected)
-    return {"ok": True, "message": _message_to_response_dict(db, selected)}
 
 
 @router.post(
@@ -872,6 +467,49 @@ def export_session_route(
     )
 
 
+def _send_message_ports() -> SendMessagePorts:
+    return SendMessagePorts(
+        get_user_session=_get_user_session,
+        load_selected_session_attachments=_load_selected_session_attachments,
+        bind_attachments_to_message=_bind_attachments_to_message,
+        parse_knowledge_command=_parse_knowledge_command,
+        parse_file_generation_command=_parse_file_generation_command,
+        attachment_only_prompt=_attachment_only_prompt,
+        classify_intent=classify_intent,
+        should_reduce_knowledge_context=_should_reduce_knowledge_context,
+        continue_active_skill_run=_continue_active_skill_run,
+        write_skill_assistant_response=_write_skill_assistant_response,
+        build_context_trace=build_context_trace,
+        skill_context_extra=skill_context_extra,
+        build_llm_messages=_build_llm_messages,
+        run_chat_text_skill_by_name=_run_chat_text_skill_by_name,
+        start_skill_run_by_name=_start_skill_run_by_name,
+        start_skill_run_from_chat=_start_skill_run_from_chat,
+        run_gbrain_think_response=_run_gbrain_think_response,
+        is_image_attachment=_is_image_attachment,
+        is_audio_video_attachment=_is_audio_video_attachment,
+        get_llm_client=get_llm_client,
+        write_failed_assistant_message=_write_failed_assistant_message,
+        write_chat_audit=_write_chat_audit,
+        load_vision_image_inputs=_load_vision_image_inputs,
+        attach_vision_images_to_latest_user_message=_attach_vision_images_to_latest_user_message,
+        search_knowledge_sources=_search_knowledge_sources,
+        maybe_run_web_search=_maybe_run_web_search,
+        serialize_sources=_serialize_sources,
+        load_attachment_context_from_attachments=_load_attachment_context_from_attachments,
+        compose_system_prompt=_compose_system_prompt,
+        web_search_context_extra=_web_search_context_extra,
+        generate_sse_stream=chat_stream.generate_sse_stream,
+        session_factory=SessionLocal,
+        attachment_to_response_dict=_attachment_to_response_dict,
+        create_generated_file=_create_generated_file,
+        write_document_generation_agent_run=_write_document_generation_agent_run,
+        serialize_agent_run=serialize_agent_run,
+        llm_configuration_error=LLMConfigurationError,
+        llm_provider_error=LLMProviderError,
+    )
+
+
 @router.post("/sessions/{session_id}/messages")
 def send_message(
     session_id: int,
@@ -879,480 +517,7 @@ def send_message(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    session = _get_user_session(db, user.id, session_id)
-    content = req.content.strip()
-    selected_attachments = _load_selected_session_attachments(db, user.id, session_id, req.files)
-    if not content and not selected_attachments:
-        raise HTTPException(status_code=400, detail="消息内容不能为空")
-    requested_model = req.model_profile or req.provider
-
-    user_message = ChatMessage(
-        session_id=session_id,
-        user_id=user.id,
-        role="user",
-        content=content,
-        status="success",
-        version_group_id=str(uuid.uuid4()),
-    )
-    db.add(user_message)
-    db.commit()
-    db.refresh(user_message)
-    _bind_attachments_to_message(db, selected_attachments, user_message)
-
-    forced_knowledge, knowledge_query = _parse_knowledge_command(content)
-    document_format, document_prompt = _parse_file_generation_command(content)
-    if req.force_knowledge_query:
-        forced_knowledge = True
-        knowledge_query = content
-    llm_user_content = document_prompt or content or _attachment_only_prompt(selected_attachments)
-    query_content = knowledge_query or llm_user_content
-    intent = classify_intent(query_content)
-    effective_intent = IntentType.DOCUMENT_GENERATION if document_format else IntentType.RAG_QUERY if forced_knowledge else intent.intent
-    reduce_knowledge_context = _should_reduce_knowledge_context(req.selected_prompt_id, forced_knowledge)
-    if reduce_knowledge_context and effective_intent == IntentType.RAG_QUERY:
-        effective_intent = IntentType.CHAT
-
-    active_skill_response = None
-    if effective_intent != IntentType.DOCUMENT_GENERATION and not req.selected_skill:
-        active_skill_response = _continue_active_skill_run(db, user.id, session_id, llm_user_content)
-    if active_skill_response:
-        return _write_skill_assistant_response(
-            db,
-            user.id,
-            session,
-            user_message.id,
-            content,
-            active_skill_response,
-            context_trace=build_context_trace(
-                session=session,
-                req=req,
-                attachments=selected_attachments,
-                sources=[],
-                intent=effective_intent,
-                provider="project_r",
-                model="skill_runner",
-                requested_model=requested_model,
-                extra=skill_context_extra(active_skill_response),
-            ),
-        )
-
-    llm_messages = _build_llm_messages(db, user.id, session_id)
-    if document_format and document_prompt and llm_messages:
-        llm_messages[-1] = {**llm_messages[-1], "content": document_prompt}
-    if req.selected_skill and effective_intent != IntentType.DOCUMENT_GENERATION:
-        chat_text_response = _run_chat_text_skill_by_name(
-            db,
-            user,
-            session,
-            user_message.id,
-            content,
-            req,
-            effective_intent,
-            req.selected_skill,
-        )
-        if chat_text_response:
-            return chat_text_response
-        skill_response = _start_skill_run_by_name(db, user.id, session_id, req.selected_skill)
-        if skill_response:
-            return _write_skill_assistant_response(
-                db,
-                user.id,
-                session,
-                user_message.id,
-                content,
-                skill_response,
-                context_trace=build_context_trace(
-                    session=session,
-                    req=req,
-                    attachments=selected_attachments,
-                    sources=[],
-                    intent=effective_intent,
-                    provider="project_r",
-                    model="skill_runner",
-                    requested_model=requested_model,
-                    extra=skill_context_extra(skill_response),
-                ),
-            )
-    if effective_intent == IntentType.SKILL_TRIGGER:
-        matched_skill = SkillRunner.get().match_skill(content)
-        if matched_skill:
-            chat_text_response = _run_chat_text_skill_by_name(
-                db,
-                user,
-                session,
-                user_message.id,
-                content,
-                req,
-                effective_intent,
-                matched_skill["skill"]["name"],
-            )
-            if chat_text_response:
-                return chat_text_response
-        skill_response = _start_skill_run_from_chat(db, user.id, session_id, content)
-        if skill_response:
-            return _write_skill_assistant_response(
-                db,
-                user.id,
-                session,
-                user_message.id,
-                content,
-                skill_response,
-                context_trace=build_context_trace(
-                    session=session,
-                    req=req,
-                    attachments=selected_attachments,
-                    sources=[],
-                    intent=effective_intent,
-                    provider="project_r",
-                    model="skill_runner",
-                    requested_model=requested_model,
-                    extra=skill_context_extra(skill_response),
-                ),
-            )
-
-    if forced_knowledge:
-        return _run_gbrain_think_response(
-            db,
-            user.id,
-            session,
-            user_message.id,
-            content,
-            query_content,
-        )
-
-    selected_image_attachments = [attachment for attachment in selected_attachments if _is_image_attachment(attachment)]
-    selected_audio_video_attachments = [
-        attachment for attachment in selected_attachments if _is_audio_video_attachment(attachment)
-    ]
-    if selected_audio_video_attachments and not req.selected_skill:
-        matched_skill = SkillRunner.get().match_skill(content)
-        if matched_skill and matched_skill["skill"]["name"] == "audio-transcription":
-            chat_text_response = _run_chat_text_skill_by_name(
-                db,
-                user,
-                session,
-                user_message.id,
-                content,
-                req,
-                IntentType.SKILL_TRIGGER,
-                "audio-transcription",
-            )
-            if chat_text_response:
-                return chat_text_response
-
-    try:
-        llm_client = get_llm_client(requested_model)
-    except LLMConfigurationError as exc:
-        _write_failed_assistant_message(db, user.id, session_id, str(exc), requested_model)
-        _write_chat_audit(db, user.id, session_id, llm_user_content, False, str(exc))
-        raise HTTPException(status_code=503, detail="AI 服务暂时不可用，请稍后重试") from exc
-
-    supports_vision = bool(getattr(getattr(llm_client, "settings", None), "supports_vision", False))
-    if selected_image_attachments and not supports_vision:
-        detail = "当前模型不支持图片理解，请切换到支持图像输入的 MiMo 模型后再发送。"
-        _write_failed_assistant_message(db, user.id, session_id, detail, requested_model)
-        _write_chat_audit(db, user.id, session_id, llm_user_content, False, detail)
-        raise HTTPException(status_code=400, detail=detail)
-    if selected_audio_video_attachments:
-        detail = "当前版本暂未接入视频/音频附件理解，请先改用图片或可提取文本的附件。"
-        _write_failed_assistant_message(db, user.id, session_id, detail, requested_model)
-        _write_chat_audit(db, user.id, session_id, llm_user_content, False, detail)
-        raise HTTPException(status_code=400, detail=detail)
-    try:
-        vision_images = _load_vision_image_inputs(selected_image_attachments) if selected_image_attachments else []
-    except HTTPException as exc:
-        detail = str(exc.detail)
-        _write_failed_assistant_message(db, user.id, session_id, detail, requested_model)
-        _write_chat_audit(db, user.id, session_id, llm_user_content, False, detail)
-        raise
-    if vision_images:
-        llm_messages = _attach_vision_images_to_latest_user_message(
-            llm_messages,
-            vision_images,
-            getattr(llm_client.settings, "provider", ""),
-        )
-    knowledge_sources = _search_knowledge_sources(
-        db,
-        query_content,
-        effective_intent,
-        session.workspace_id,
-        reduce_knowledge_context=reduce_knowledge_context,
-    )
-    web_sources, web_search_context, web_search_trace = _maybe_run_web_search(
-        query_content,
-        req.web_search,
-        source_start_index=len(knowledge_sources) + 1,
-    )
-    response_sources = _serialize_sources([*knowledge_sources, *web_sources])
-    attachment_context = _load_attachment_context_from_attachments(selected_attachments, supports_vision=bool(vision_images))
-    system_prompt = _compose_system_prompt(
-        req.system_prompt,
-        knowledge_sources,
-        effective_intent,
-        attachment_context,
-        reduce_knowledge_context,
-        web_search_context=web_search_context,
-    )
-
-    if req.stream:
-        # ============================================================
-        # 流式分支：返回 SSE StreamingResponse
-        # ============================================================
-        ctx_trace = build_context_trace(
-            session=session,
-            req=req,
-            attachments=selected_attachments,
-            sources=response_sources,
-            intent=effective_intent,
-            provider="streaming",
-            model=requested_model,
-            requested_model=requested_model,
-            reduce_knowledge_context=reduce_knowledge_context,
-            extra={
-                **_web_search_context_extra(web_search_trace),
-            },
-        )
-        return StreamingResponse(
-            chat_stream.generate_sse_stream(
-                llm_client=llm_client,
-                llm_messages=llm_messages,
-                system_prompt=system_prompt,
-                thinking=req.thinking,
-                temperature=req.temperature,
-                session_factory=SessionLocal,
-                session_id=session.id,
-                user_id=user.id,
-                requested_model=requested_model,
-                sources_json=json.dumps(response_sources, ensure_ascii=False),
-                context_json=json.dumps(ctx_trace, ensure_ascii=False),
-                rag_used=bool(response_sources),
-                llm_user_content=llm_user_content,
-                user_message_id=user_message.id,
-                user_attachments_json=json.dumps(
-                    [_attachment_to_response_dict(a) for a in selected_attachments],
-                    ensure_ascii=False,
-                ),
-                intent=effective_intent.value,
-            ),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-            },
-        )
-
-    try:
-        llm_response = llm_client.complete(
-            llm_messages,
-            system_prompt=system_prompt,
-            thinking=req.thinking,
-            temperature=req.temperature,
-        )
-    except LLMConfigurationError as exc:
-        _write_failed_assistant_message(db, user.id, session_id, str(exc), requested_model)
-        _write_chat_audit(db, user.id, session_id, llm_user_content, False, str(exc))
-        raise HTTPException(status_code=503, detail="AI 服务暂时不可用，请稍后重试") from exc
-    except LLMProviderError as exc:
-        status_code = 503 if exc.retryable else 502
-        detail = f"{exc}"
-        if exc.key_index:
-            detail = f"{detail}（key_index={exc.key_index}）"
-        _write_failed_assistant_message(db, user.id, session_id, detail, requested_model)
-        _write_chat_audit(db, user.id, session_id, llm_user_content, False, detail)
-        raise HTTPException(status_code=status_code, detail="AI 服务暂时不可用，请稍后重试") from exc
-
-    usage = llm_response.usage
-    generated_file = None
-    if effective_intent == IntentType.DOCUMENT_GENERATION:
-        generated_file = _create_generated_file(
-            db,
-            user.id,
-            session_id,
-            document_prompt or content,
-            llm_response.text,
-            output_format=document_format or "docx",
-        )
-    context_trace = build_context_trace(
-        session=session,
-        req=req,
-        attachments=selected_attachments,
-        sources=response_sources,
-        intent=effective_intent,
-        provider=llm_response.provider,
-        model=llm_response.model,
-        requested_model=requested_model,
-        reduce_knowledge_context=reduce_knowledge_context,
-        extra={
-            "generated_file": generated_file_context(generated_file),
-            **_web_search_context_extra(web_search_trace),
-        },
-    )
-    assistant_message = ChatMessage(
-        session_id=session_id,
-        user_id=user.id,
-        role="assistant",
-        content=llm_response.text,
-        provider=llm_response.provider,
-        model=llm_response.model,
-        token_input=usage.get("input_tokens", 0),
-        token_output=usage.get("output_tokens", 0),
-        token_total=llm_response.token_cost,
-        status="success",
-        rag_used=bool(response_sources),
-        sources_json=json.dumps(response_sources, ensure_ascii=False),
-        context_json=json.dumps(context_trace, ensure_ascii=False),
-        version_group_id=str(uuid.uuid4()),
-    )
-    db.add(assistant_message)
-    session.updated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(assistant_message)
-    agent_run = None
-    if generated_file:
-        agent_run = _write_document_generation_agent_run(
-            db,
-            user_id=user.id,
-            session=session,
-            message_id=assistant_message.id,
-            user_prompt=content,
-            generated_file=generated_file,
-        )
-        db.commit()
-
-    _write_chat_audit(
-        db,
-        user.id,
-        session_id,
-        llm_user_content,
-        True,
-        f"provider={llm_response.provider}, model={llm_response.model}, key_index={llm_response.key_index}",
-        token_cost=llm_response.token_cost,
-    )
-
-    return {
-        "user_message_id": user_message.id,
-        "assistant_message_id": assistant_message.id,
-        "reply": llm_response.text,
-        "provider": llm_response.provider,
-        "model": llm_response.model,
-        "key_index": llm_response.key_index,
-        "usage": llm_response.usage,
-        "intent": effective_intent.value,
-        "sources": response_sources,
-        "generated_file": generated_file,
-        "skill_run": None,
-        "user_attachments": [_attachment_to_response_dict(attachment) for attachment in selected_attachments],
-        "agent_run": serialize_agent_run(db, agent_run),
-        "context_trace": context_trace,
-    }
-
-
-@router.post("/sessions/{session_id}/attachments", response_model=AttachmentResponse)
-def create_session_attachment(
-    session_id: int,
-    req: CreateAttachmentRequest,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    return chat_attachment_api.create_session_attachment(
-        db,
-        session_id,
-        req,
-        user,
-        max_attachment_bytes=MAX_ATTACHMENT_BYTES,
-        attachment_root=SESSION_ATTACHMENTS_ROOT,
-        logger=logger,
-    )
-
-
-@router.post("/sessions/{session_id}/attachments/upload", response_model=AttachmentResponse)
-async def upload_session_attachment(
-    session_id: int,
-    file: UploadFile = File(...),
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-    source_scope: str = Form("session_upload"),
-    source_label: str = Form("会话临时上传"),
-    authorization_status: str = Form("uploaded"),
-):
-    return await chat_attachment_api.upload_session_attachment(
-        db,
-        session_id,
-        file,
-        user,
-        source_scope=source_scope,
-        source_label=source_label,
-        authorization_status=authorization_status,
-        max_upload_bytes=MAX_ATTACHMENT_UPLOAD_BYTES,
-        max_upload_mb=MAX_ATTACHMENT_UPLOAD_MB,
-        attachment_root=SESSION_ATTACHMENTS_ROOT,
-        logger=logger,
-    )
-
-
-def _store_session_attachment(
-    db: Session,
-    user: User,
-    session_id: int,
-    filename: str,
-    content_type: str,
-    content: bytes,
-    source_scope: str = "session_upload",
-    source_label: str = "会话临时上传",
-    authorization_status: str = "uploaded",
-) -> SessionAttachment:
-    return chat_attachment_api.store_session_attachment(
-        db,
-        user,
-        session_id,
-        filename,
-        content_type,
-        content,
-        attachment_root=SESSION_ATTACHMENTS_ROOT,
-        logger=logger,
-        source_scope=source_scope,
-        source_label=source_label,
-        authorization_status=authorization_status,
-    )
-
-
-def _get_user_session_attachment(
-    db: Session,
-    user_id: int,
-    session_id: int,
-    attachment_id: int,
-) -> SessionAttachment:
-    return chat_attachment_api.get_user_session_attachment(db, user_id, session_id, attachment_id)
-
-
-@router.get("/sessions/{session_id}/attachments", response_model=list[AttachmentResponse])
-def list_session_attachments(
-    session_id: int,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    return chat_attachment_api.list_session_attachments(db, session_id, user)
-
-
-@router.get("/sessions/{session_id}/attachments/{attachment_id}/content")
-def get_session_attachment_content(
-    session_id: int,
-    attachment_id: int,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    return chat_attachment_api.get_session_attachment_content(db, session_id, attachment_id, user)
-
-
-@router.delete("/sessions/{session_id}/attachments/{attachment_id}")
-def delete_session_attachment(
-    session_id: int,
-    attachment_id: int,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    return chat_attachment_api.delete_session_attachment(db, session_id, attachment_id, user)
-
+    return send_message_use_case(db, session_id, req, user, ports=_send_message_ports())
 
 from app.features.chat.internal import (
     message_query as _message_query,
@@ -1385,7 +550,6 @@ from app.features.chat.internal import (
 def _message_to_response_dict(db: Session, message: ChatMessage) -> dict:
     return _message_to_response_dict_core(db, message, feedback_root=MESSAGE_FEEDBACK_ROOT)
 
-
 def _parse_file_generation_command(content: str) -> tuple[str | None, str]:
     normalized = content.strip()
     lowered = normalized.lower()
@@ -1395,11 +559,6 @@ def _parse_file_generation_command(content: str) -> tuple[str | None, str]:
         if lowered.startswith(f"{command} "):
             return output_format, normalized[len(command):].strip()
     return None, ""
-
-
-
-
-
 
 def _create_generated_file(
     db: Session,
@@ -1419,7 +578,6 @@ def _create_generated_file(
         output_format=output_format,
         generated_files_root=GENERATED_FILES_ROOT,
     )
-
 
 def _write_document_generation_agent_run(
     db: Session,

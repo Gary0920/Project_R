@@ -2,7 +2,7 @@
 
 版本：V2.0（产品化精修）
 创建时间：2026-06-10
-修订时间：2026-06-15
+修订时间：2026-06-17
 状态：执行计划
 规划目标：在已完成的"基座精修"之上，对 Chat、Agent、GBrain 三大板块做针对性产品化精修，把 MVP 推进到"可分发给局部内部人员测试"的水平。
 
@@ -21,6 +21,7 @@
 | 2026-06-16 | Sprint 5.1 优化闭环 | 建立 Markdown 结构化解析接缝，拆分 renderer，新增文本类 PDF 渲染；不做 xlsx/pptx 转 PDF |
 | 2026-06-16 | Sprint 5.2 设计落地 | 新增 `project_r.document.render` dispatcher tool，Skill 可从已收集输入生成 `GeneratedFile` |
 | 2026-06-16 | Sprint 6.1 产品级优化 | 抽离邮件草稿/文本变换小模块，补邮件草稿编辑器、文本变换结果卡，并接入公司项目邮件规则 |
+| 2026-06-17 | V2.1 结构债收口 | 拆分 Workspace/App/Settings/Admin/chat 路由大文件，补本地 Playwright 关键路径验证 |
 
 本次修订对照了 Codex 生成的计划框架（`steady-yawning-phoenix.md`）并逐项核对真实代码，修正了其中的依赖误判（`playwright` 实际不在依赖、`openpyxl` 已存在）、状态误判（多项"未实现"实为"部分实现"），以及一个被忽略的关键约束：`intent.py` 已冻结显式路由，使旧 docx 生成分支成为不可达死代码。
 
@@ -107,9 +108,9 @@
 
 | 文件 | 当前行数 | 本轮要求 |
 |---|---|---|
-| `frontend/src/renderer/pages/AppPage.tsx` | ~2603 | 触碰即抽离：把 chat 发送/流式/草稿/快捷键逻辑拆到 `features/chat/` 的 hooks（如 `useChatSend`、`useChatStream`、`useChatDraft`）。`pages/` 只做组装 |
-| `frontend/src/renderer/features/settings/components/SettingsModal.tsx` | ~2291 | 新增管理项（G5/G6/G7）必须落到 `features/admin/`（或 knowledge）子组件，不得继续加进本文件 |
-| `backend/api/chat.py` | ~1444 | 保持薄路由：C3 导出、T2 transform、C1 流式的业务逻辑放 `app/features/chat/`，路由只做参数校验与转发 |
+| `frontend/src/renderer/pages/AppPage.tsx` | ~2603；2026-06-17 收口后 1140 | 触碰即抽离：把 chat 发送/流式/草稿/快捷键逻辑拆到 `features/chat/` 的 hooks（如 `useChatSend`、`useChatStream`、`useChatDraft`）。`pages/` 只做组装 |
+| `frontend/src/renderer/features/settings/components/SettingsModal.tsx` | ~2291；2026-06-17 收口后 804 | 新增管理项（G5/G6/G7）必须落到 `features/admin/`（或 knowledge）子组件，不得继续加进本文件 |
+| `backend/api/chat.py` | ~1444；2026-06-17 收口后 999 | 保持薄路由：C3 导出、T2 transform、C1 流式的业务逻辑放 `app/features/chat/`，路由只做参数校验与转发 |
 | `frontend/src/renderer/features/chat/components/ChatMessageList.tsx` | ~1193 | C4/C8/A5 相关 UI 抽成独立子组件（如 `MessageActions`、`GeneratedFileCard`），不得整体膨胀 |
 | `frontend/src/renderer/features/chat/components/AppWorkspaceChrome.tsx` | ~1129 | C9 会话预览等抽成 `SessionListItem` 子组件 |
 
@@ -385,6 +386,53 @@ Sprint 9  GBrain 管理侧（P1/P2）【G5/G6.0/G7.0 MVP 代码级闭环】
 - 个人工作台文件库、个人 GBrain source、个人长期记忆。
 - 用 Project_R 自建替代 GBrain 的图谱/timeline/citation/embedding。
 - 完整 MCP 协议支持、语音实时麦克风（C11）、批量会话操作（C12）、回复长度预设（C14）——按需后补。
+
+---
+
+## 9.1 V2.1 本地开发收口任务
+
+状态：执行中  
+目标：在 V2.0 主线代码级闭环基础上，把本地开发版收口到可稳定内测的工程状态。当前不处理发布安装、运维 runbook、正式账号治理，也不把 G6 完整知识文件 diff 作为阻塞项。
+
+### 9.1.1 范围与验收口径
+
+| 收口项 | 本轮做什么 | 本轮不做什么 |
+|---|---|---|
+| 关键 Playwright 覆盖 | 使用本地已启动前后端，覆盖登录、Chat 关键入口、`/query` 来源范围提示、引用来源预览、Agent 生成文件保存边界、GBrain 管理入口基础可见性 | 不在测试中启动 dev server；不依赖真实文件保存弹窗 |
+| GBrain 真实数据 smoke | 只读验证已有 `company-wiki` 与 `customer-crm` 数据下的 query / evidence / source scope 行为；项目 source 使用 TEST 或明确可控项目 | 不重新录入公司知识库或 CRM 知识库；不运行高级 GBrain 写操作 |
+| G6 审核增强 | 验证审核工作台 UI、权限、当前页批量操作安全边界和不误写真实知识库 | 不要求复现完整知识文件 diff；不补完整 batch endpoint、备注、历史 |
+| 上帝文件拆分 | 优先低风险拆 `AppPage.tsx`、`AppWorkspaceChrome.tsx`、`ChatMessageList.tsx`、`SettingsModal.tsx`；`backend/api/chat.py` 继续保持薄路由并逐步下沉业务逻辑 | 不为追求行数做大规模重构；不改变 API 行为 |
+| 文档口径 | V2.0 标记为“主线代码级完成 / 内测 MVP+ 达成”；V2.1 标记为“本地开发收口中” | 不把发布运维、正式安装测试混入当前阶段 |
+
+### 9.1.2 任务清单
+
+- [x] 新增 V2.1 Playwright 关键路径测试：登录、普通 Chat 输入区、`/query` 来源范围提示、来源面板、生成文件卡保存边界、会话导出入口。
+- [x] 使用已有 `company-wiki` 与 `customer-crm` 做只读 smoke，记录 source scope 和引用来源展示结果；2026-06-17 本机只读回归通过：`gbrain_query_regression.py` 9/9，`gbrain_customer_reference_regression.py` 3/3。
+- [x] 跑 `bun run typecheck`、相关 `pytest`、新增 Playwright；2026-06-17 本地验证通过。
+- [x] 第一轮拆分 `AppWorkspaceChrome.tsx`：抽出会话列表项等低风险子组件，减少壳层职责。
+- [x] 第一轮拆分 `AppPage.tsx`：优先抽出纯处理器/状态派生逻辑，避免页面继续承载业务细节；2026-06-17 继续抽出 `useChatMessageActions`、`useChatSessionManagement`、`useSlashCommandSelection`、`useAppPromptSelection`，主文件 1140 行。
+- [x] 第二轮拆分 `ChatMessageList.tsx`：抽出附件渲染与 Agent Run 卡片，主文件降至约 532 行。
+- [x] 第二轮拆分 `WorkspaceFilePanel.tsx`：抽出 header、context menu、客户情报 overlay、知识图谱 sidecar/map overlay、知识图谱 hook、会议工作流 hook、文件动作 hook，主文件 888 行。
+- [x] 第二轮拆分 `SettingsModal.tsx`：抽出 `useSettingsAdminController`，管理员状态/动作从弹窗容器迁出；`AdminSettingsPanel.tsx` 抽出 `AdminGBrainSection` 并复用 `AdminComboInput`，主文件分别 804 / 632 行。
+- [x] 第二轮拆分 `AppWorkspaceChrome.tsx`：抽出通知弹窗，壳层降至约 901 行。
+- [x] 保守收口 `backend/api/chat.py`：附件路由迁入 `app/features/chat/attachment_routes.py`，消息上下文/版本/编辑路由迁入 `app/features/chat/message_routes.py`，现有 `/chat` 路径和直接测试入口保持兼容，主文件 999 行。
+- [x] 收口 `backend/api/chat.py` 的 `send_message` 主链路：抽出 `app/features/chat/send_message_service.py`，路由层仅保留依赖注入包装，现有 `/chat` 路径、直接测试入口和 monkeypatch 点保持兼容，主文件 768 行。
+- [x] 复核剩余结构债：`AppWorkspaceChrome.tsx` 仍偏大但主要是跨区壳层编排，当前不为追求行数继续强拆；后续只在新功能触碰对应独立职责时再抽离。
+
+### 9.1.3 结构债收口验证记录（2026-06-17）
+
+- `cd frontend && bun run typecheck`：通过。
+- `cd frontend && bunx playwright test e2e/v2-local-closure.spec.ts`：3 passed。
+- `cd backend && .\venv\Scripts\python.exe -m pytest tests/test_chat_phase6.py tests/test_session_attachments.py tests/test_workspace_files.py`：164 passed，5 个既有 Pydantic deprecation warnings。
+- `cd backend && .\venv\Scripts\python.exe -m py_compile api\chat.py app\features\chat\send_message_service.py`：通过。
+
+### 9.1.4 完成定义
+
+- 新增 Playwright 可在本地已启动服务上运行；缺少真实数据或权限时跳过并给出明确原因。
+- 不污染 `backend/app.db`、真实 `workspace_data`、真实 GBrain source。
+- 公司知识库与 CRM 知识库只读验证通过或有明确降级说明。
+- 至少一个前端上帝文件完成低风险抽离，且 `bun run typecheck` 通过。
+- V2.0/V2.1 文档口径一致：V2.0 不再被表述为产品级完整完成，V2.1 聚焦本地开发收口。
 
 ---
 

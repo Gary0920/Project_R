@@ -1,29 +1,12 @@
-import { MouseEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 
 import { ApiError, type ApiClientOptions } from "../shared/api/client";
 import { createApiOptions } from "../shared/api/options";
-import {
-  activateChatMessageVersion,
-  archiveChatSession,
-  createChatSession,
-  deleteChatMessage,
-  deleteChatSession,
-  editChatMessage,
-  fetchSessionAttachmentBlob,
-  listChatMessages,
-  listChatSessions,
-  restoreDeletedChatMessages,
-  exportChatSession,
-  searchChatSessions,
-  submitGBrainThinkReview,
-  submitMessageFeedback,
-  updateChatSession,
-} from "../features/chat/api";
+import { createChatSession, fetchSessionAttachmentBlob, listChatMessages, listChatSessions, searchChatSessions } from "../features/chat/api";
 import { useChatDraft } from "../features/chat/useChatDraft";
 import { getLLMHealth } from "../shared/api/health";
 import type { NotificationView } from "../features/notifications/api";
-import { listCompanyPrompts } from "../features/prompts/api";
 import { listSkills } from "../features/skills/api";
 import { authTokenAtom, clearAuthAtom, currentUserAtom } from "../features/auth/state";
 import { parseApiDate } from "../shared/utils/time";
@@ -49,11 +32,9 @@ import {
 import type {
   ChatSearchResultResponse,
   ChatSessionResponse,
-  ChatMessageVersionResponse,
   ChatContextTraceResponse,
   ChatSourceResponse,
   AgentRunResponse,
-  CompanyPromptResponse,
   GeneratedFileResponse,
   LLMProviderStatusResponse,
   SkillResponse,
@@ -61,7 +42,7 @@ import type {
 } from "../shared/api/types";
 import { APP_NAME } from "../shared/config/app";
 import { useContextMenu, type ContextMenuItemDef } from "../shared/components/ContextMenu";
-import { getPromptOptionId, PromptPanel, type PromptOption } from "../features/prompts/components/PromptPanel";
+import { PromptPanel } from "../features/prompts/components/PromptPanel";
 import { ScratchPad } from "../features/chat/components/ScratchPad";
 import { SearchDialog } from "../features/chat/components/SearchDialog";
 import { SettingsModal } from "../features/settings/components/SettingsModal";
@@ -99,28 +80,11 @@ import {
   renderAvatar,
   resolveAvatarUrl,
 } from "../features/chat/sessionDisplay";
-import {
-  BUILTIN_SLASH_COMMANDS,
-  findSlashCommand,
-  getSkillScopeLabel,
-  scoreBuiltinSlashCommand,
-  scoreSkill,
-  type BuiltinSlashCommand,
-  type SkillSlashCandidate,
-  type SlashCommandMatch,
-} from "../features/chat/slashCommands";
+import { getSkillScopeLabel } from "../features/chat/slashCommands";
 import { toModelOption } from "../features/chat/modelOptions";
 import { makeLocalMessage } from "../features/chat/localMessages";
-import {
-  PROMPT_SELECTION_KEY,
-  composeSystemPrompt,
-  makePromptId,
-  readPromptSelectionMap,
-  readWebSearchPreference,
-  shouldSuggestAgentMode,
-  writeWebSearchPreference,
-} from "../features/prompts/sessionPrompt";
-import { PROJECT_R_BUILTIN_PROMPT } from "../features/prompts/constants";
+import { latestSessionTokenTotal } from "../features/chat/sessionMetrics";
+import { readWebSearchPreference, shouldSuggestAgentMode, writeWebSearchPreference } from "../features/prompts/sessionPrompt";
 import { useChatSendResults } from "../features/chat/useChatSend";
 import { useChatSendOrchestrator } from "../features/chat/useChatSendOrchestrator";
 import { useChatStreamControls } from "../features/chat/useChatStream";
@@ -132,9 +96,12 @@ import { useClientUpdate } from "../features/updates/hooks/useClientUpdate";
 import { useAppShellPanels } from "../features/chat/hooks/useAppShellPanels";
 import { useChatAttachments } from "../features/chat/hooks/useChatAttachments";
 import { useAppShellPointerDismiss } from "../features/chat/hooks/useAppShellPointerDismiss";
+import { useChatMessageActions } from "../features/chat/hooks/useChatMessageActions";
+import { useChatSessionManagement, type RenameScope } from "../features/chat/hooks/useChatSessionManagement";
+import { useSlashCommandSelection } from "../features/chat/hooks/useSlashCommandSelection";
+import { useAppPromptSelection } from "../features/chat/hooks/useAppPromptSelection";
 type SplitPaneKey = "left" | "right";
 type UtilityPanel = "workspace" | "customer-intelligence" | "prompt" | "skills" | "source" | "crm";
-type RenameScope = "header" | "sidebar";
 type SettingsAdminTab = "overview" | "users" | "reviews" | "gbrain" | "templates" | "updates" | "audit";
 type SourcePreview = {
   index: number;
@@ -177,11 +144,6 @@ export function AppPage() {
   const [showSearch, setShowSearch] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [searchResults, setSearchResults] = useState<ChatSearchResultResponse[]>([]);
-  const [renameInput, setRenameInput] = useState<{ id: number; value: string; scope: RenameScope } | null>(null);
-  const [companyPrompts, setCompanyPrompts] = useState<CompanyPromptResponse[]>([]);
-  const [userPrompts, setUserPrompts] = useState<UserPromptRecord[]>([]);
-  const [promptSelections, setPromptSelections] = useState<Record<string, string>>(readPromptSelectionMap);
-  const [pendingPromptId, setPendingPromptId] = useState<string | null>(null);
   const [utilityPanel, setUtilityPanel] = useState<UtilityPanel | null>(null);
   const [sourcePreview, setSourcePreview] = useState<SourcePreview | null>(null);
   const [sideBySideOpen, setSideBySideOpen] = useState(false);
@@ -191,25 +153,8 @@ export function AppPage() {
   const { appendLegacyAssistantResponse, finalizeStreamAssistantResponse } = useChatSendResults({ setMessagesBySession });
   const { cancelSessionSend, finishSessionSend, registerSendAbortController, removeStreamPlaceholder, setSessionSending, typeAssistantReply, updateStreamPlaceholder } =
     useChatStreamControls({ setMessagesBySession, setSendingSessions });
-  const [deleteConfirmSessionId, setDeleteConfirmSessionId] = useState<number | null>(null);
-  const [deleteMessageTarget, setDeleteMessageTarget] = useState<ChatMessage | null>(null);
-  const [deleteLastMessageTarget, setDeleteLastMessageTarget] = useState<ChatMessage | null>(null);
-  const [copiedMessageId, setCopiedMessageId] = useState<number | null>(null);
-  const [deletedMessageUndo, setDeletedMessageUndo] = useState<{ sessionId: number; messageIds: number[] } | null>(null);
-  const [editingMessageId, setEditingMessageId] = useState<number | null>(null);
-  const [editingDraft, setEditingDraft] = useState("");
-  const [feedbackTarget, setFeedbackTarget] = useState<ChatMessage | null>(null);
-  const [feedbackRating, setFeedbackRating] = useState(0);
-  const [feedbackComment, setFeedbackComment] = useState("");
-  const [messageActionBusyId, setMessageActionBusyId] = useState<number | null>(null);
   const [emailDraftEditorFile, setEmailDraftEditorFile] = useState<GeneratedFileResponse | null>(null);
-  const [moveSessionId, setMoveSessionId] = useState<number | null>(null);
   const [skills, setSkills] = useState<SkillResponse[]>([]);
-  const [skillPanelVisible, setSkillPanelVisible] = useState(false);
-  const [skillPanelIndex, setSkillPanelIndex] = useState(0);
-  const [slashCommand, setSlashCommand] = useState<SlashCommandMatch | null>(null);
-  const [selectedSkill, setSelectedSkill] = useState<SkillResponse | null>(null);
-  const [selectedBuiltinCommand, setSelectedBuiltinCommand] = useState<BuiltinSlashCommand | null>(null);
   const [llmProviders, setLlmProviders] = useState<LLMProviderStatusResponse[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelConfigError, setModelConfigError] = useState("");
@@ -226,13 +171,55 @@ export function AppPage() {
   const modelSelectRef = useRef<HTMLDivElement | null>(null);
   const notificationPanelRef = useRef<HTMLDivElement | null>(null);
   const notificationButtonRef = useRef<HTMLButtonElement | null>(null);
-  const copyResetTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
-  const undoDeleteTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
 
   const apiOptions = useMemo(
     () => createApiOptions(serverUrl, token, clearAuth),
     [clearAuth, serverUrl, token],
   );
+  const {
+    clearPromptSelection,
+    companyPrompts,
+    defaultPromptId,
+    handleCreateUserPrompt,
+    handleDeleteUserPrompt,
+    handleSelectPrompt,
+    pendingPromptId,
+    promptOptions,
+    selectedPrompt,
+    selectedPromptId,
+    selectedPromptIsDefault,
+    setPendingPromptId,
+    storePromptSelection,
+    userPrompts,
+  } = useAppPromptSelection({
+    activeSessionId,
+    apiOptions,
+    setUtilityPanel,
+    textareaRef,
+  });
+  const {
+    clearSelectedSkillIfMissing,
+    insertSlashCandidate,
+    selectedBuiltinCommand,
+    selectedSkill,
+    setSelectedBuiltinCommand,
+    setSelectedSkill,
+    setSkillPanelIndex,
+    setSkillPanelVisible,
+    setSlashCommand,
+    skillPanelIndex,
+    skillPanelVisible,
+    slashCandidates,
+    slashCommand,
+    syncSlashCommand,
+  } = useSlashCommandSelection({
+    draft,
+    mode,
+    setDraft,
+    setMode,
+    skills,
+    textareaRef,
+  });
   const {
     handleMarkAllNotificationsRead,
     handleNotificationAction,
@@ -302,6 +289,42 @@ export function AppPage() {
     setSlashCommand,
     skillPanelVisible,
   });
+  const {
+    commitRename,
+    deleteConfirmSessionId,
+    handleArchiveSession,
+    handleDeleteSession,
+    handleMoveSession,
+    handlePinSession,
+    handleRenameSession,
+    moveSessionId,
+    openSessionMenu,
+    renameInput,
+    setDeleteConfirmSessionId,
+    setMoveSessionId,
+    setRenameInput,
+  } = useChatSessionManagement({
+    activeSessionId,
+    activeTabId,
+    activeWorkspaceId,
+    apiOptions,
+    clearAuth,
+    selectSession,
+    sessions,
+    setActionNotice,
+    setActiveSessionId,
+    setActiveTabId,
+    setContextMenu,
+    setError,
+    setMessagesBySession,
+    setSessions,
+    setSplitPaneSessionIds,
+    setTabs,
+    sidebarRenameInputRef,
+    tabs,
+    titleInputRef,
+    workspaces,
+  });
 
   function toggleWebSearch() {
     setWebSearchEnabled((current) => {
@@ -321,30 +344,6 @@ export function AppPage() {
     onNewSession: () => void handleCreateSession(),
   });
   const activeWorkspace = workspaces.find((item) => item.id === activeWorkspaceId);
-  const promptOptions = useMemo<PromptOption[]>(() => [
-    PROJECT_R_BUILTIN_PROMPT,
-    ...companyPrompts.map((prompt) => ({
-      id: prompt.id,
-      source: "company" as const,
-      name: prompt.name,
-      description: prompt.description,
-      content: prompt.content,
-    })),
-    ...userPrompts.map((prompt) => ({
-      id: prompt.id,
-      source: "user" as const,
-      name: prompt.name,
-      description: "仅本机可用",
-      content: prompt.content,
-    })),
-  ], [companyPrompts, userPrompts]);
-  const defaultPromptId = makePromptId(PROJECT_R_BUILTIN_PROMPT.source, PROJECT_R_BUILTIN_PROMPT.id);
-  const selectedPromptId = activeSessionId
-    ? promptSelections[String(activeSessionId)] ?? defaultPromptId
-    : pendingPromptId ?? defaultPromptId;
-  const matchedPrompt = promptOptions.find((prompt) => getPromptOptionId(prompt) === selectedPromptId);
-  const selectedPrompt = matchedPrompt ?? PROJECT_R_BUILTIN_PROMPT;
-  const selectedPromptIsDefault = !matchedPrompt || selectedPromptId === defaultPromptId;
   const modelOptions = useMemo(() => {
     return llmProviders
       .filter((provider) => provider.configured)
@@ -352,6 +351,56 @@ export function AppPage() {
       .sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || a.label.localeCompare(b.label, "zh-CN"));
   }, [llmProviders]);
   const selectedModelOption = modelOptions.find((option) => option.key === selectedModelKey) ?? modelOptions.find((option) => option.isDefault) ?? modelOptions[0] ?? null;
+  const {
+    copiedMessageId,
+    deleteLastMessageTarget,
+    deleteMessageTarget,
+    deletedMessageUndo,
+    editingDraft,
+    editingMessageId,
+    feedbackComment,
+    feedbackRating,
+    feedbackTarget,
+    handleActivateVersion,
+    handleCopyMessage,
+    handleDeleteMessageContext,
+    handleSubmitEditedMessage,
+    handleSubmitFeedback,
+    handleSubmitGBrainThinkReview,
+    handleUndoDeleteMessages,
+    messageActionBusyId,
+    openFeedbackDialog,
+    requestDeleteMessageContext,
+    setDeleteConfirmMessageTarget,
+    setDeleteLastMessageTarget,
+    setDeleteMessageTarget,
+    setEditingDraft,
+    setEditingMessageId,
+    setFeedbackComment,
+    setFeedbackRating,
+    setFeedbackTarget,
+    setMessageActionBusyId,
+    startEditingMessage,
+  } = useChatMessageActions({
+    activeWorkspaceId,
+    apiOptions,
+    clearAuth,
+    clearSourcePreview: () => {
+      setSourcePreview(null);
+      setUtilityPanel((value) => value === "source" ? null : value);
+    },
+    messagesBySession,
+    mode,
+    selectedModelOption,
+    selectedPromptContent: selectedPrompt.content,
+    setActionNotice,
+    setError,
+    setMessagesBySession,
+    setSessions,
+    sourcePreviewSessionId: sourcePreview?.sessionId,
+    thinkingEnabled,
+    webSearchEnabled,
+  });
   const {
     handleCopyEditableEmailDraft,
     handleCopyGeneratedEmailBody,
@@ -492,24 +541,6 @@ export function AppPage() {
     ];
   }, [sessions]);
 
-  const skillQuery = slashCommand?.query ?? "";
-  const slashCandidates = useMemo<SkillSlashCandidate[]>(() => {
-    const builtinCandidates: SkillSlashCandidate[] = BUILTIN_SLASH_COMMANDS
-      .map((command) => ({ kind: "command" as const, command, score: scoreBuiltinSlashCommand(command, skillQuery) }))
-      .filter((item) => !skillQuery || item.score > 0);
-    const skillCandidates: SkillSlashCandidate[] = skills
-      .map((skill) => ({ kind: "skill" as const, skill, score: scoreSkill(skill, skillQuery) }))
-      .filter((item) => !skillQuery || item.score > 0);
-    return [...builtinCandidates, ...skillCandidates]
-      .sort((a, b) => {
-        if (b.score !== a.score) return b.score - a.score;
-        if (a.kind !== b.kind) return a.kind === "command" ? -1 : 1;
-        const aName = a.kind === "command" ? a.command.displayName : a.skill.display_name;
-        const bName = b.kind === "command" ? b.command.displayName : b.skill.display_name;
-        return aName.localeCompare(bName, "zh-CN");
-      })
-      .slice(0, 8);
-  }, [skills, skillQuery]);
   const handleKeyDown = useChatComposerShortcuts({
     handleSend,
     insertSlashCandidate,
@@ -520,66 +551,6 @@ export function AppPage() {
     skillPanelVisible,
     slashCandidates,
   });
-
-  function syncSlashCommand(value: string, caret: number) {
-    const command = findSlashCommand(value, caret);
-    setSlashCommand(command);
-    setSkillPanelVisible(Boolean(command));
-    if (!command) setSkillPanelIndex(0);
-  }
-
-  function clearSelectedSkillIfMissing(_value: string) {
-    // Skill 选择是本次发送的上下文状态，不再依赖输入框里的触发词。
-  }
-
-  function insertSkill(skill: SkillResponse) {
-    const target = slashCommand ?? findSlashCommand(draft, textareaRef.current?.selectionStart ?? draft.length);
-    if (!target) return;
-    const before = draft.slice(0, target.start).replace(/[ \t]+$/, "");
-    const after = draft.slice(target.end).replace(/^[ \t]+/, "");
-    const spacer = before && after ? " " : "";
-    const nextDraft = `${before}${spacer}${after}`;
-    const nextCaret = before.length + spacer.length;
-    setDraft(nextDraft);
-    setSelectedSkill(skill);
-    setSelectedBuiltinCommand(null);
-    setSlashCommand(null);
-    setSkillPanelVisible(false);
-    window.requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(nextCaret, nextCaret);
-    });
-    if (mode === "chat" && skill.outputs.length > 0) {
-      setMode("agent");
-    }
-  }
-
-  function insertBuiltinSlashCommand(command: BuiltinSlashCommand) {
-    const target = slashCommand ?? findSlashCommand(draft, textareaRef.current?.selectionStart ?? draft.length);
-    if (!target) return;
-    const before = draft.slice(0, target.start).replace(/[ \t]+$/, "");
-    const after = draft.slice(target.end).replace(/^[ \t]+/, "");
-    const spacer = before && after ? " " : "";
-    const nextDraft = `${before}${spacer}${after}`;
-    const nextCaret = before.length + spacer.length;
-    setDraft(nextDraft);
-    setSelectedSkill(null);
-    setSelectedBuiltinCommand(command);
-    setSlashCommand(null);
-    setSkillPanelVisible(false);
-    window.requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(nextCaret, nextCaret);
-    });
-  }
-
-  function insertSlashCandidate(candidate: SkillSlashCandidate) {
-    if (candidate.kind === "command") {
-      insertBuiltinSlashCommand(candidate.command);
-      return;
-    }
-    insertSkill(candidate.skill);
-  }
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -600,28 +571,6 @@ export function AppPage() {
       el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
     }
   }, [activeMessages]);
-
-  useEffect(() => {
-    return () => {
-      if (copyResetTimerRef.current) {
-        window.clearTimeout(copyResetTimerRef.current);
-      }
-      if (undoDeleteTimerRef.current) {
-        window.clearTimeout(undoDeleteTimerRef.current);
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    setSkillPanelIndex(0);
-  }, [skillQuery]);
-
-  useEffect(() => {
-    setSkillPanelIndex((index) => {
-      if (slashCandidates.length === 0) return 0;
-      return Math.min(index, slashCandidates.length - 1);
-    });
-  }, [slashCandidates.length]);
 
   useEffect(() => {
     if (utilityPanel === "source" && sourcePreview?.sessionId != null && sourcePreview.sessionId !== activeSessionId) {
@@ -706,26 +655,12 @@ export function AppPage() {
 
   useEffect(() => {
     let mounted = true;
-    listCompanyPrompts(apiOptions)
-      .then((items) => {
-        if (mounted) setCompanyPrompts(items);
-      })
-      .catch(() => {
-        if (mounted) setCompanyPrompts([]);
-      });
     listSkills(apiOptions)
       .then((items) => {
         if (mounted) setSkills(items);
       })
       .catch(() => {
         if (mounted) setSkills([]);
-      });
-    window.projectR?.prompts?.listUser()
-      .then((items) => {
-        if (mounted) setUserPrompts(items);
-      })
-      .catch(() => {
-        if (mounted) setUserPrompts([]);
       });
     return () => {
       mounted = false;
@@ -815,29 +750,6 @@ export function AppPage() {
     }
   }
 
-  function storePromptSelection(sessionId: number, promptId: string) {
-    setPromptSelections((current) => {
-      const next = { ...current, [String(sessionId)]: promptId };
-      localStorage.setItem(PROMPT_SELECTION_KEY, JSON.stringify(next));
-      return next;
-    });
-  }
-
-  function clearPromptSelection() {
-    if (!activeSessionId) {
-      setPendingPromptId(null);
-      window.requestAnimationFrame(() => textareaRef.current?.focus());
-      return;
-    }
-    setPromptSelections((current) => {
-      const next = { ...current };
-      delete next[String(activeSessionId)];
-      localStorage.setItem(PROMPT_SELECTION_KEY, JSON.stringify(next));
-      return next;
-    });
-    window.requestAnimationFrame(() => textareaRef.current?.focus());
-  }
-
   async function createSessionFromInput(
     content = "新对话",
     openInNewTab = true,
@@ -889,443 +801,6 @@ export function AppPage() {
     });
   }
 
-  async function handleDeleteSession(sessionId: number) {
-    setError(null);
-    try {
-      await deleteChatSession(apiOptions, sessionId);
-      const nextSessions = sessions.filter((session) => session.id !== sessionId);
-      setSessions(nextSessions);
-      setMessagesBySession((current) => {
-        const next = { ...current };
-        delete next[sessionId];
-        return next;
-      });
-      setTabs((current) => current.filter((tab) => tab.sessionId !== sessionId));
-      setSplitPaneSessionIds((current) => ({
-        left: current.left === sessionId ? null : current.left,
-        right: current.right === sessionId ? null : current.right,
-      }));
-      if (activeSessionId === sessionId) setActiveSessionId(nextSessions[0]?.id ?? null);
-    } catch (deleteError: unknown) {
-      if (deleteError instanceof ApiError && deleteError.status === 401) {
-        clearAuth();
-        window.location.hash = "#/login";
-        return;
-      }
-      setError("删除会话失败，请稍后重试。");
-    }
-  }
-
-  async function handleCopyMessage(message: ChatMessage) {
-    try {
-      await copyText(message.content, true);
-      setCopiedMessageId(message.id);
-      if (copyResetTimerRef.current) {
-        window.clearTimeout(copyResetTimerRef.current);
-      }
-      copyResetTimerRef.current = window.setTimeout(() => {
-        setCopiedMessageId(null);
-        copyResetTimerRef.current = null;
-      }, 1500);
-    } catch {
-      setError("复制失败：当前浏览器拒绝剪贴板权限。");
-    }
-  }
-
-  function getMessageDeleteTargetIds(target: ChatMessage) {
-    const sessionMessages = (messagesBySession[target.session_id] ?? [])
-      .filter((message) => message.id > 0)
-      .sort((a, b) => {
-        const timeDiff = parseApiDate(a.created_at).getTime() - parseApiDate(b.created_at).getTime();
-        return timeDiff || a.id - b.id;
-      });
-    const targetIndex = sessionMessages.findIndex((message) => message.id === target.id);
-    if (targetIndex < 0) return target.id > 0 ? [target.id] : [];
-    if (target.role !== "user") return [target.id];
-
-    const targetIds: number[] = [];
-    for (let index = targetIndex; index < sessionMessages.length; index += 1) {
-      const message = sessionMessages[index];
-      if (index !== targetIndex && message.role === "user") break;
-      targetIds.push(message.id);
-    }
-    return targetIds.length > 0 ? targetIds : [target.id];
-  }
-
-  function willDeleteEntireSession(target: ChatMessage) {
-    if (target.id < 0) return false;
-    const sessionMessages = (messagesBySession[target.session_id] ?? []).filter((message) => message.id > 0);
-    if (sessionMessages.length === 0) return false;
-    const deleteIds = new Set(getMessageDeleteTargetIds(target));
-    return sessionMessages.every((message) => deleteIds.has(message.id));
-  }
-
-  function requestDeleteMessageContext(target: ChatMessage) {
-    if (willDeleteEntireSession(target)) {
-      setDeleteLastMessageTarget(target);
-      return;
-    }
-    setDeleteMessageTarget(target);
-  }
-
-  async function handleDeleteMessageContext(target: ChatMessage) {
-    if (target.id < 0) return;
-    setError(null);
-    try {
-      const response = await deleteChatMessage(apiOptions, target.session_id, target.id);
-      const excludedIds = new Set(response.excluded_message_ids);
-      setMessagesBySession((current) => ({
-        ...current,
-        [target.session_id]: (current[target.session_id] ?? []).filter((message) => !excludedIds.has(message.id)),
-      }));
-      setDeletedMessageUndo({ sessionId: target.session_id, messageIds: response.excluded_message_ids });
-      if (undoDeleteTimerRef.current) {
-        window.clearTimeout(undoDeleteTimerRef.current);
-      }
-      undoDeleteTimerRef.current = window.setTimeout(() => {
-        setDeletedMessageUndo(null);
-        undoDeleteTimerRef.current = null;
-      }, 8000);
-      if (sourcePreview?.sessionId === target.session_id) {
-        setSourcePreview(null);
-        setUtilityPanel((value) => value === "source" ? null : value);
-      }
-    } catch (deleteError: unknown) {
-      if (deleteError instanceof ApiError && deleteError.status === 401) {
-        clearAuth();
-        window.location.hash = "#/login";
-        return;
-      }
-      setError("删除消息失败，请稍后重试。");
-    }
-  }
-
-  async function handleUndoDeleteMessages() {
-    if (!deletedMessageUndo) return;
-    const undo = deletedMessageUndo;
-    setError(null);
-    try {
-      const response = await restoreDeletedChatMessages(apiOptions, undo.sessionId, undo.messageIds);
-      setMessagesBySession((current) => {
-        const merged = [...(current[undo.sessionId] ?? []), ...response.messages];
-        const byId = new Map<number, ChatMessage>();
-        for (const message of merged) {
-          byId.set(message.id, message);
-        }
-        return {
-          ...current,
-          [undo.sessionId]: Array.from(byId.values()).sort((a, b) => {
-            const timeDiff = parseApiDate(a.created_at).getTime() - parseApiDate(b.created_at).getTime();
-            return timeDiff || a.id - b.id;
-          }),
-        };
-      });
-      setDeletedMessageUndo(null);
-      if (undoDeleteTimerRef.current) {
-        window.clearTimeout(undoDeleteTimerRef.current);
-        undoDeleteTimerRef.current = null;
-      }
-    } catch (restoreError: unknown) {
-      if (restoreError instanceof ApiError && restoreError.status === 401) {
-        clearAuth();
-        window.location.hash = "#/login";
-        return;
-      }
-      setError("撤回删除失败，请刷新消息后确认。");
-    }
-  }
-
-  function replaceMessageInSession(sessionId: number, currentMessage: ChatMessage, nextMessage: ChatMessage) {
-    setMessagesBySession((current) => ({
-      ...current,
-      [sessionId]: (current[sessionId] ?? []).map((message) =>
-        message.id === currentMessage.id ||
-        (message.version_group_id && message.version_group_id === currentMessage.version_group_id)
-          ? { ...nextMessage }
-          : message,
-      ),
-    }));
-  }
-
-  function startEditingMessage(message: ChatMessage) {
-    setEditingMessageId(message.id);
-    setEditingDraft(message.content);
-  }
-
-  async function handleSubmitEditedMessage(message: ChatMessage) {
-    const content = editingDraft.trim();
-    if (!content || content === message.content || message.id < 0) {
-      setEditingMessageId(null);
-      setEditingDraft("");
-      return;
-    }
-    setError(null);
-    setMessageActionBusyId(message.id);
-    try {
-      const response = await editChatMessage(apiOptions, message.session_id, message.id, {
-        content,
-        provider: selectedModelOption?.provider ?? null,
-        modelProfile: selectedModelOption?.profile ?? null,
-        systemPrompt: composeSystemPrompt(selectedPrompt.content, mode),
-        thinking: thinkingEnabled,
-        webSearch: webSearchEnabled,
-      });
-      const excludedIds = new Set(response.excluded_message_ids);
-      setMessagesBySession((current) => {
-        const existing = current[message.session_id] ?? [];
-        const next: ChatMessage[] = [];
-        for (const item of existing) {
-          if (excludedIds.has(item.id)) continue;
-          if (item.id === message.id) {
-            next.push(response.user_message, response.assistant_message);
-          } else {
-            next.push(item);
-          }
-        }
-        return { ...current, [message.session_id]: next };
-      });
-      setEditingMessageId(null);
-      setEditingDraft("");
-      setSessions(await listChatSessions(apiOptions, activeWorkspaceId));
-    } catch (editError: unknown) {
-      if (editError instanceof ApiError && editError.status === 401) {
-        clearAuth();
-        window.location.hash = "#/login";
-        return;
-      }
-      setError(editError instanceof ApiError ? editError.message : "编辑消息失败，请稍后重试。");
-    } finally {
-      setMessageActionBusyId(null);
-    }
-  }
-
-  async function handleActivateVersion(message: ChatMessage, version: ChatMessageVersionResponse) {
-    if (version.active_version || message.id < 0) return;
-    setError(null);
-    setMessageActionBusyId(message.id);
-    try {
-      const response = await activateChatMessageVersion(apiOptions, message.session_id, message.id, version.id);
-      replaceMessageInSession(message.session_id, message, response.message);
-    } catch (versionError: unknown) {
-      if (versionError instanceof ApiError && versionError.status === 401) {
-        clearAuth();
-        window.location.hash = "#/login";
-        return;
-      }
-      setError(versionError instanceof ApiError ? versionError.message : "切换消息版本失败。");
-    } finally {
-      setMessageActionBusyId(null);
-    }
-  }
-
-  function openFeedbackDialog(message: ChatMessage) {
-    setFeedbackTarget(message);
-    setFeedbackRating(message.feedback_rating ?? 0);
-    setFeedbackComment(message.feedback_comment ?? "");
-  }
-
-  async function handleSubmitFeedback() {
-    if (!feedbackTarget || feedbackRating < 1) return;
-    setError(null);
-    setMessageActionBusyId(feedbackTarget.id);
-    try {
-      const response = await submitMessageFeedback(apiOptions, feedbackTarget.session_id, feedbackTarget.id, {
-        rating: feedbackRating,
-        comment: feedbackComment,
-      });
-      setMessagesBySession((current) => ({
-        ...current,
-        [feedbackTarget.session_id]: (current[feedbackTarget.session_id] ?? []).map((message) =>
-          message.id === feedbackTarget.id
-            ? { ...message, feedback_rating: response.rating, feedback_comment: response.comment }
-            : message,
-        ),
-      }));
-      setFeedbackTarget(null);
-      setFeedbackRating(0);
-      setFeedbackComment("");
-    } catch (feedbackError: unknown) {
-      if (feedbackError instanceof ApiError && feedbackError.status === 401) {
-        clearAuth();
-        window.location.hash = "#/login";
-        return;
-      }
-      setError(feedbackError instanceof ApiError ? feedbackError.message : "保存评分失败，请稍后重试。");
-    } finally {
-      setMessageActionBusyId(null);
-    }
-  }
-
-  async function handleSubmitGBrainThinkReview(message: ChatMessage) {
-    if (message.id < 0) return;
-    setError(null);
-    setActionNotice("");
-    setMessageActionBusyId(message.id);
-    try {
-      const response = await submitGBrainThinkReview(apiOptions, message.session_id, message.id, {});
-      setActionNotice(
-        response.created
-          ? `已提交 GBrain 缺口/冲突审核 #${response.knowledge_review_id}。`
-          : `已更新 GBrain 缺口/冲突审核 #${response.knowledge_review_id}。`,
-      );
-    } catch (reviewError: unknown) {
-      if (reviewError instanceof ApiError && reviewError.status === 401) {
-        clearAuth();
-        window.location.hash = "#/login";
-        return;
-      }
-      setError(reviewError instanceof ApiError ? reviewError.message : "提交 GBrain 缺口/冲突审核失败。");
-    } finally {
-      setMessageActionBusyId(null);
-    }
-  }
-
-  async function handlePinSession(sessionId: number) {
-    const session = sessions.find((item) => item.id === sessionId);
-    if (!session) return;
-    const nextPinned = !session.is_pinned;
-    setSessions((prev) => prev.map((item) => item.id === sessionId ? { ...item, is_pinned: nextPinned } : item));
-    try {
-      const updated = await updateChatSession(apiOptions, sessionId, { is_pinned: nextPinned });
-      setSessions((prev) => prev.map((item) => item.id === sessionId ? updated : item));
-    } catch {
-      setSessions(await listChatSessions(apiOptions, activeWorkspaceId));
-    }
-  }
-
-  function handleRenameSession(sessionId: number, scope: RenameScope = "sidebar") {
-    const session = sessions.find((item) => item.id === sessionId);
-    setRenameInput({ id: sessionId, value: session?.title ?? "", scope });
-    window.requestAnimationFrame(() => {
-      const input = scope === "header" ? titleInputRef.current : sidebarRenameInputRef.current;
-      input?.focus();
-      input?.select();
-    });
-  }
-
-  async function commitRename() {
-    if (!renameInput) return;
-    const title = renameInput.value.trim();
-    const current = sessions.find((item) => item.id === renameInput.id);
-    if (!title || title === current?.title) {
-      setRenameInput(null);
-      return;
-    }
-    const sid = renameInput.id;
-    setSessions((prev) => prev.map((item) => item.id === sid ? { ...item, title } : item));
-    setTabs((prev) => prev.map((tab) => tab.sessionId === sid ? { ...tab, title } : tab));
-    setRenameInput(null);
-    try {
-      const updated = await updateChatSession(apiOptions, sid, { title });
-      setSessions((prev) => prev.map((item) => item.id === sid ? updated : item));
-    } catch {
-      setSessions(await listChatSessions(apiOptions, activeWorkspaceId));
-    }
-  }
-
-  async function handleArchiveSession(sessionId: number) {
-    try {
-      await archiveChatSession(apiOptions, sessionId);
-      const nextSessions = sessions.filter((item) => item.id !== sessionId);
-      const archivedTabId = `chat-${sessionId}`;
-      const nextTabs = tabs.filter((tab) => tab.sessionId !== sessionId);
-      setSessions(nextSessions);
-      setTabs(nextTabs);
-      setMessagesBySession((prev) => {
-        const next = { ...prev };
-        delete next[sessionId];
-        return next;
-      });
-      setSplitPaneSessionIds((current) => ({
-        left: current.left === sessionId ? null : current.left,
-        right: current.right === sessionId ? null : current.right,
-      }));
-      if (activeTabId === archivedTabId) {
-        const nextTab = nextTabs[0];
-        if (nextTab?.sessionId) {
-          setActiveTabId(nextTab.id);
-          setActiveSessionId(nextTab.sessionId);
-          if (nextTab.workspaceId && nextTab.workspaceId !== activeWorkspaceId) {
-            setActiveWorkspaceId(nextTab.workspaceId);
-          }
-        } else {
-          setActiveTabId("");
-          setActiveSessionId(nextSessions[0]?.id ?? null);
-        }
-      } else if (activeSessionId === sessionId) {
-        setActiveSessionId(nextSessions[0]?.id ?? null);
-      }
-    } catch {
-      setError("归档失败，请稍后重试。");
-    }
-  }
-
-  async function handleMoveSession(sessionId: number, workspaceId: number) {
-    try {
-      await updateChatSession(apiOptions, sessionId, { workspace_id: workspaceId });
-      const nextSessions = sessions.filter((item) => item.id !== sessionId);
-      setSessions(nextSessions);
-      setTabs((current) => current.filter((tab) => tab.sessionId !== sessionId));
-      setSplitPaneSessionIds((current) => ({
-        left: current.left === sessionId ? null : current.left,
-        right: current.right === sessionId ? null : current.right,
-      }));
-      if (activeSessionId === sessionId) {
-        setActiveSessionId(null);
-        setActiveTabId("");
-      }
-      setMoveSessionId(null);
-    } catch {
-      setError("迁移会话失败，请稍后重试。");
-    }
-  }
-
-  function openSessionMenu(event: MouseEvent, session: ChatSessionResponse) {
-    event.preventDefault();
-    const moveTargets = workspaces.filter((workspace) => workspace.id !== session.workspace_id);
-    const items: ContextMenuItemDef[] = [
-      { type: "item", label: "在新标签页打开", action: () => selectSession(session, true) },
-      { type: "separator" },
-      { type: "item", label: session.is_pinned ? "取消置顶" : "置顶", action: () => void handlePinSession(session.id) },
-      { type: "item", label: "重命名", action: () => handleRenameSession(session.id, "sidebar") },
-      { type: "item", label: "归档", action: () => void handleArchiveSession(session.id) },
-    ];
-    if (moveTargets.length > 0) {
-      items.push({ type: "separator" });
-      items.push({ type: "item", label: "迁移项目", action: () => setMoveSessionId(session.id) });
-    }
-    items.push(
-      { type: "separator" },
-      {
-        type: "item",
-        label: "导出 Markdown",
-        action: () => {
-          setActionNotice("正在导出...");
-          exportChatSession(apiOptions, session.id, "markdown")
-            .then(() => setActionNotice(""))
-            .catch((err: unknown) => {
-              setActionNotice(err instanceof ApiError ? err.message : "导出失败");
-            });
-        },
-      },
-      {
-        type: "item",
-        label: "导出 JSON",
-        action: () => {
-          setActionNotice("正在导出...");
-          exportChatSession(apiOptions, session.id, "json")
-            .then(() => setActionNotice(""))
-            .catch((err: unknown) => {
-              setActionNotice(err instanceof ApiError ? err.message : "导出失败");
-            });
-        },
-      },
-      { type: "separator" },
-      { type: "item", label: "删除", destructive: true, action: () => setDeleteConfirmSessionId(session.id) },
-    );
-    setContextMenu({ x: event.clientX, y: event.clientY, items });
-  }
-
   function handleLogout() {
     clearAuth();
     window.location.hash = "#/login";
@@ -1372,36 +847,6 @@ export function AppPage() {
 
   function handleSwitchToAgent(_messageId: number) {
     setMode("agent");
-  }
-
-  function handleSelectPrompt(prompt: PromptOption) {
-    const promptId = getPromptOptionId(prompt);
-    if (!activeSessionId) {
-      setPendingPromptId(promptId);
-      setUtilityPanel(null);
-      window.requestAnimationFrame(() => textareaRef.current?.focus());
-      return;
-    }
-    storePromptSelection(activeSessionId, promptId);
-    setUtilityPanel(null);
-    window.requestAnimationFrame(() => textareaRef.current?.focus());
-  }
-
-  async function handleCreateUserPrompt(name: string, content: string) {
-    const saved = await window.projectR?.prompts?.saveUser({ name, content });
-    if (!saved) return;
-    setUserPrompts((prev) => [saved, ...prev.filter((item) => item.id !== saved.id)]);
-  }
-
-  async function handleDeleteUserPrompt(id: string) {
-    const next = await window.projectR?.prompts?.deleteUser(id);
-    setUserPrompts(next ?? []);
-    if (activeSessionId && promptSelections[String(activeSessionId)] === makePromptId("user", id)) {
-      handleSelectPrompt(PROJECT_R_BUILTIN_PROMPT);
-    }
-    if (pendingPromptId === makePromptId("user", id)) {
-      setPendingPromptId(null);
-    }
   }
 
   function handleToggleSideBySide() {
@@ -1452,18 +897,7 @@ export function AppPage() {
     return { path: result.path };
   }
 
-  // 当前会话已消耗 tokens（从最后一条非 typing assistant 消息取）
-  const activeSessionTokenTotal = (() => {
-    if (!activeSessionId) return 0;
-    const msgs = messagesBySession[activeSessionId];
-    if (!msgs || msgs.length === 0) return 0;
-    const nonTyping = msgs.filter((m) => !m.isTyping);
-    for (let i = nonTyping.length - 1; i >= 0; i--) {
-      const token = nonTyping[i].token_total ?? nonTyping[i].token_output;
-      if (token != null) return token;
-    }
-    return 0;
-  })();
+  const activeSessionTokenTotal = latestSessionTokenTotal(activeSessionId, messagesBySession);
 
   const conversationPaneController = {
     activeSessionTokenTotal,
