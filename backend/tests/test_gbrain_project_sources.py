@@ -59,6 +59,34 @@ class _RecordingThinkAdapter:
         }
 
 
+class _SourceAwareThinkAdapter:
+    """think() 按 source_id 返回不同答案与引用，用于验证项目分支的多 source 叠加。"""
+
+    def __init__(self, company_source_id: str = "company-wiki"):
+        self.company_source_id = company_source_id
+        self.calls: list[dict] = []
+
+    def think(self, query: str, *, source_id: str | None = None):
+        self.calls.append({"query": query, "source_id": source_id})
+        if source_id == self.company_source_id:
+            return {
+                "status": "ok",
+                "result": {
+                    "answer": "公司标准要求 AS 2047 合规。",
+                    "modelUsed": "deepseek:deepseek-chat",
+                    "citations": [{"page_slug": "standards/as-2047", "source_id": self.company_source_id}],
+                },
+            }
+        return {
+            "status": "ok",
+            "result": {
+                "answer": "项目纪要记录了启动会决定。",
+                "modelUsed": "deepseek:deepseek-chat",
+                "citations": [{"page_slug": "meetings/kickoff", "source_id": source_id}],
+            },
+        }
+
+
 class _StatusAdapter(GBrainAdapter):
     def __init__(self, local_path: Path):
         super().__init__(
@@ -204,6 +232,84 @@ class GBrainProjectSourceTests(unittest.TestCase):
         self.assertTrue(response["ok"])
         self.assertEqual(response["source_id"], CRM_CUSTOMER_SOURCE_ID)
         self.assertEqual(adapter.calls[0]["source_id"], CRM_CUSTOMER_SOURCE_ID)
+
+    def test_project_think_overlays_company_wiki_and_project_source(self):
+        workspace = SimpleNamespace(
+            id=7,
+            brand="BFI",
+            slug="BG007",
+            name="BG007",
+            workspace_kind="project",
+        )
+
+        class _Query:
+            def filter(self, *_args, **_kwargs):
+                return self
+
+            def first(self):
+                return workspace
+
+        class _Db:
+            def query(self, _model):
+                return _Query()
+
+        adapter = _SourceAwareThinkAdapter()
+        response = KnowledgeSources(lambda: adapter).think(_Db(), "启动会决定是什么", workspace_id=workspace.id)
+
+        queried_sources = {call["source_id"] for call in adapter.calls}
+        self.assertEqual(queried_sources, {"project-bfi-7", "company-wiki"})
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["source_id"], "project-bfi-7")
+        self.assertEqual(response["source_ids"], ["project-bfi-7", "company-wiki"])
+        source_files = {source["file"] for source in response["sources"]}
+        self.assertIn("gbrain:project-bfi-7/meetings/kickoff", source_files)
+        self.assertIn("gbrain:company-wiki/standards/as-2047", source_files)
+        self.assertIn("公司知识库补充", response["reply"])
+        self.assertIn("项目纪要", response["reply"])
+
+    def test_project_think_falls_back_when_company_unavailable(self):
+        workspace = SimpleNamespace(
+            id=7,
+            brand="BFI",
+            slug="BG007",
+            name="BG007",
+            workspace_kind="project",
+        )
+
+        class _Query:
+            def filter(self, *_args, **_kwargs):
+                return self
+
+            def first(self):
+                return workspace
+
+        class _Db:
+            def query(self, _model):
+                return _Query()
+
+        class _CompanyUnavailableAdapter(_SourceAwareThinkAdapter):
+            def think(self, query: str, *, source_id: str | None = None):
+                self.calls.append({"query": query, "source_id": source_id})
+                if source_id == self.company_source_id:
+                    return {"status": "disabled", "error": "GBRAIN_THINK_ENABLED is not true"}
+                return {
+                    "status": "ok",
+                    "result": {
+                        "answer": "项目纪要记录了启动会决定。",
+                        "modelUsed": "deepseek:deepseek-chat",
+                        "citations": [{"page_slug": "meetings/kickoff", "source_id": source_id}],
+                    },
+                }
+
+        adapter = _CompanyUnavailableAdapter()
+        response = KnowledgeSources(lambda: adapter).think(_Db(), "启动会决定是什么", workspace_id=workspace.id)
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["source_id"], "project-bfi-7")
+        self.assertNotIn("source_ids", response)
+        self.assertNotIn("公司知识库补充", response["reply"])
+        source_files = {source["file"] for source in response["sources"]}
+        self.assertIn("gbrain:project-bfi-7/meetings/kickoff", source_files)
 
     def test_project_query_sources_include_derived_location(self):
         with tempfile.TemporaryDirectory() as temp_dir:

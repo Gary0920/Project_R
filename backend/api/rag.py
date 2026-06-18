@@ -53,6 +53,12 @@ from app.features.knowledge.gbrain.maintenance.worker import (
     restart_gbrain_maintenance_worker,
 )
 from app.features.knowledge.sources import KnowledgeSources
+from app.features.knowledge.browser import (
+    search_knowledge_for_workspace,
+    serialize_source_scopes,
+    source_scopes_for_workspace,
+)
+from app.features.workspaces.permissions import ensure_can_open_workspace
 from app.features.notifications.service import notify_gbrain_maintenance_event
 from models import get_db
 from models.audit_log import AuditLog
@@ -61,6 +67,7 @@ from models.user import User
 from models.workspace import Workspace
 
 router = APIRouter(prefix="/admin/knowledge", tags=["gbrain"])
+knowledge_router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 QUERY_REGRESSION_CASES_PATH = BACKEND_DIR / "tests" / "fixtures" / "gbrain_query_regression_cases.json"
 THINK_REGRESSION_CASES_PATH = BACKEND_DIR / "tests" / "fixtures" / "gbrain_think_regression_cases.json"
@@ -68,6 +75,111 @@ from app.features.knowledge.quality import report_manifest as _report_manifest  
 
 QUALITY_REPORTS_MANIFEST_NAME = _report_manifest.QUALITY_REPORTS_MANIFEST_NAME
 QUALITY_REPORTS_LIMIT = _report_manifest.QUALITY_REPORTS_LIMIT
+
+
+class KnowledgeSourceScopeResponse(BaseModel):
+    scope: str
+    source_id: str
+    label: str
+    description: str
+    workspace_kind: str
+
+
+class KnowledgeSourcesResponse(BaseModel):
+    workspace_id: int | None = None
+    workspace_kind: str
+    scopes: list[KnowledgeSourceScopeResponse]
+
+
+class KnowledgeSearchResultResponse(BaseModel):
+    scope: str
+    title: str
+    excerpt: str
+    file: str
+    source_id: str | None = None
+    section_path: str | None = None
+    type: str | None = None
+    score: float | None = None
+    tags: str | None = None
+
+
+class KnowledgeSearchResponse(BaseModel):
+    query: str
+    workspace_id: int | None = None
+    workspace_kind: str
+    source_scope: str
+    results: list[KnowledgeSearchResultResponse]
+
+
+def _resolve_browse_workspace(db: Session, user: User, workspace_id: int | None) -> Workspace | None:
+    if workspace_id is None:
+        return None
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id, Workspace.is_archived == False).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="工作区不存在")
+    ensure_can_open_workspace(db, user, workspace)
+    return workspace
+
+
+def _serialize_knowledge_result(item: dict) -> KnowledgeSearchResultResponse:
+    file = str(item.get("file") or "")
+    source_id = None
+    if file.startswith("gbrain:"):
+        source_id = file.split(":", 1)[1].split("/", 1)[0] or None
+    return KnowledgeSearchResultResponse(
+        scope=str(item.get("scope") or "company"),
+        title=str(item.get("source_title") or item.get("section_path") or file or "知识来源"),
+        excerpt=str(item.get("content") or ""),
+        file=file,
+        source_id=source_id,
+        section_path=str(item.get("section_path") or "") or None,
+        type=str(item.get("type") or "") or None,
+        score=item.get("score") if isinstance(item.get("score"), (int, float)) else None,
+        tags=str(item.get("tags") or "") or None,
+    )
+
+
+@knowledge_router.get("/sources", response_model=KnowledgeSourcesResponse)
+def list_employee_knowledge_sources(
+    workspace_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    workspace = _resolve_browse_workspace(db, user, workspace_id)
+    scopes = source_scopes_for_workspace(workspace)
+    workspace_kind = str(workspace.workspace_kind or "user") if workspace else "user"
+    return KnowledgeSourcesResponse(
+        workspace_id=workspace.id if workspace else None,
+        workspace_kind=workspace_kind,
+        scopes=serialize_source_scopes(scopes),
+    )
+
+
+@knowledge_router.get("/search", response_model=KnowledgeSearchResponse)
+def search_employee_knowledge(
+    q: str = Query(..., min_length=1, max_length=500),
+    workspace_id: int | None = Query(default=None),
+    source_scope: str = Query(default="all", pattern="^(all|company|project|customer)$"),
+    limit: int = Query(default=10, ge=1, le=20),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    workspace = _resolve_browse_workspace(db, user, workspace_id)
+    results = search_knowledge_for_workspace(
+        db,
+        q,
+        workspace=workspace,
+        source_scope=source_scope,
+        limit=limit,
+    )
+    workspace_kind = str(workspace.workspace_kind or "user") if workspace else "user"
+    return KnowledgeSearchResponse(
+        query=q,
+        workspace_id=workspace.id if workspace else None,
+        workspace_kind=workspace_kind,
+        source_scope=source_scope,
+        results=[_serialize_knowledge_result(item) for item in results],
+    )
 
 
 # Wrappers that pass the monkeypatch-compatible load_gbrain_settings

@@ -33,7 +33,6 @@ import type {
   ChatSearchResultResponse,
   ChatSessionResponse,
   ChatContextTraceResponse,
-  ChatSourceResponse,
   AgentRunResponse,
   GeneratedFileResponse,
   LLMProviderStatusResponse,
@@ -54,6 +53,7 @@ import { downloadGeneratedFile } from "../features/chat/generatedFiles";
 import { EmailDraftEditor } from "../features/chat/components/EmailDraftEditor";
 import { AppWorkspaceChrome } from "../features/chat/components/AppWorkspaceChrome";
 import { ChatConversationPane } from "../features/chat/components/ChatConversationPane";
+import type { SourcePreview } from "../features/chat/messageContent";
 import { useGeneratedEmailDraftActions } from "../features/chat/useGeneratedEmailDraftActions";
 import { useTextTransformActions } from "../features/chat/useTextTransformActions";
 import {
@@ -101,13 +101,8 @@ import { useChatSessionManagement, type RenameScope } from "../features/chat/hoo
 import { useSlashCommandSelection } from "../features/chat/hooks/useSlashCommandSelection";
 import { useAppPromptSelection } from "../features/chat/hooks/useAppPromptSelection";
 type SplitPaneKey = "left" | "right";
-type UtilityPanel = "workspace" | "customer-intelligence" | "prompt" | "skills" | "source" | "crm";
+type UtilityPanel = "workspace" | "knowledge" | "customer-intelligence" | "prompt" | "skills" | "source" | "crm";
 type SettingsAdminTab = "overview" | "users" | "reviews" | "gbrain" | "templates" | "updates" | "audit";
-type SourcePreview = {
-  index: number;
-  source: ChatSourceResponse;
-  sessionId?: number | null;
-};
 
 export function AppPage() {
   const serverUrl = useAtomValue(serverUrlAtom);
@@ -594,9 +589,9 @@ export function AppPage() {
     let mounted = true;
     setIsLoading(true);
     setError(null);
+    setSessions([]);
+    setActiveSessionId(null);
     if (!activeWorkspaceId) {
-      setSessions([]);
-      setActiveSessionId(null);
       setIsLoading(false);
       return;
     }
@@ -604,6 +599,7 @@ export function AppPage() {
       .then((loadedSessions) => {
         if (!mounted) return;
         setSessions(loadedSessions);
+        setError(null);
       })
       .catch((loadError: unknown) => {
         if (!mounted) return;
@@ -676,6 +672,7 @@ export function AppPage() {
       .then((response) => {
         if (!mounted) return;
         setMessagesBySession((current) => ({ ...current, [activeSessionId]: response.items }));
+        setError(null);
       })
       .catch((loadError: unknown) => {
         if (!mounted) return;
@@ -1127,6 +1124,7 @@ export function AppPage() {
         setShowScratchPad,
         setShowSearch,
         setShowSettings,
+        setDraft,
         setUpdateDialogOpen,
         setUpdateStep,
         setUtilityPanel,
@@ -1144,6 +1142,7 @@ export function AppPage() {
         startClientUpdateDownload,
         sourcePreview,
         tabs,
+        textareaRef,
         unreadNotificationCount,
         updateDialogOpen,
         updateError,

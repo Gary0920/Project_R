@@ -775,6 +775,11 @@
   color: #fde68a;
 }
 
+:root[data-theme="dark"] .workspace-rag-badge.is-processing {
+  background: rgba(30, 64, 175, 0.26);
+  color: #bfdbfe;
+}
+
 .prompt-empty {
   padding: 10px 12px;
   color: hsl(var(--muted-foreground));
@@ -910,6 +915,101 @@
   min-width: max-content;
 }
 
+.workspace-file-primary-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.workspace-file-primary-action:hover {
+  border-color: hsl(var(--control-active-border));
+  background: hsl(var(--control-active-bg));
+  color: hsl(var(--control-active-foreground));
+}
+
+.workspace-file-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  cursor: pointer;
+}
+
+.workspace-file-action:hover {
+  border-color: hsl(var(--control-active-border));
+  background: hsl(var(--control-active-bg));
+  color: hsl(var(--control-active-foreground));
+}
+
+.workspace-file-action-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.workspace-file-action-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: var(--layer-popover);
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--card));
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+}
+
+.workspace-file-action-menu button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.workspace-file-action-menu button:hover {
+  background: hsl(var(--muted));
+}
+
+.workspace-file-action-menu button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.agent-file-panel.is-compact-actions .workspace-file-primary-action {
+  width: 28px;
+  padding: 0;
+  justify-content: center;
+}
+
+.agent-file-panel.is-compact-actions .workspace-file-primary-action span {
+  display: none;
+}
+
 .agent-file-panel-icon {
   display: grid;
   place-items: center;
@@ -921,15 +1021,25 @@
 }
 
 .agent-file-panel-header h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   margin: 0;
   font-size: 14px;
   font-weight: 700;
 }
 
 .agent-file-panel-header p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   margin: 2px 0 0;
   color: hsl(var(--muted-foreground));
   font-size: 12px;
+}
+
+.hidden-file-input {
+  display: none;
 }
 
 .agent-file-panel-note,
@@ -1213,7 +1323,7 @@
 
 .workspace-file-row {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
+  grid-template-columns: 24px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 6px;
   min-height: 32px;
@@ -1228,12 +1338,12 @@
   background: hsl(var(--accent));
 }
 
-.workspace-file-row.is-selected {
+.workspace-file-row[data-selected="true"] {
   background: hsl(156 30% 94%);
   color: hsl(156 42% 26%);
 }
 
-.workspace-file-row.is-drag-target {
+.workspace-file-row[data-drop-target="true"] {
   background: hsl(var(--control-active-bg));
   box-shadow: inset 0 0 0 1px hsl(var(--control-active-border));
 }
@@ -1283,62 +1393,70 @@
   white-space: nowrap;
 }
 
-.workspace-file-row.is-selected .workspace-file-row-name {
+.workspace-file-row[data-selected="true"] .workspace-file-row-name {
   font-weight: 650;
 }
 
-.workspace-file-upload-btn {
-  border: 1px dashed hsl(var(--dashed-border));
-  border-radius: 7px;
-  background: transparent;
-  color: hsl(var(--muted-foreground));
-  font-size: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 30px;
-  margin: 4px 4px 0;
-  cursor: pointer;
-}
-
-.workspace-file-upload-btn:hover {
-  border-color: hsl(var(--dashed-border-hover));
-  background: hsl(var(--muted) / 0.35);
-  color: hsl(var(--foreground));
-}
-
-.workspace-file-actions {
-  display: flex;
-  flex-wrap: wrap;
+.workspace-rag-badge {
+  display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin: 4px 4px 0;
-  padding: 4px 4px 0;
-  border-top: 1px solid hsl(var(--border));
+  flex-shrink: 0;
+  max-width: 100%;
+  border-radius: 5px;
+  padding: 1px 6px;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.6;
+  white-space: nowrap;
 }
 
-.workspace-file-actions button {
-  flex: 0 0 auto;
-  height: 28px;
-  padding: 0 8px;
+.workspace-rag-badge.is-indexed {
+  background: hsl(var(--success) / 0.12);
+  color: hsl(var(--success));
+}
+
+.workspace-rag-badge.is-failed {
+  background: hsl(var(--destructive) / 0.12);
+  color: hsl(var(--destructive));
+}
+
+.workspace-rag-badge.is-pending {
+  background: hsl(var(--warning) / 0.12);
+  color: hsl(var(--warning));
+}
+
+.workspace-rag-badge.is-processing {
+  background: hsl(210 30% 94%);
+  color: hsl(210 32% 30%);
+}
+
+.workspace-rag-badge.is-muted,
+.workspace-rag-badge.is-empty,
+.workspace-rag-badge.is-directory {
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+}
+
+.workspace-rag-retry {
+  flex-shrink: 0;
   border: 1px solid hsl(var(--border));
-  border-radius: 6px;
+  border-radius: 4px;
+  padding: 0 4px;
   background: hsl(var(--card));
-  color: hsl(var(--foreground));
-  font-size: 12px;
+  color: inherit;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.5;
   cursor: pointer;
 }
 
-.workspace-file-actions button:hover {
+.workspace-rag-retry:hover {
   border-color: hsl(var(--control-active-border));
   background: hsl(var(--control-active-bg));
   color: hsl(var(--control-active-foreground));
-}
-
-.workspace-file-actions button:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
 }
 
 .workspace-file-upload-progress {
@@ -1494,7 +1612,7 @@
   color: hsl(var(--destructive));
 }
 
-:root[data-theme="dark"] .workspace-file-row.is-selected {
+:root[data-theme="dark"] .workspace-file-row[data-selected="true"] {
   background: hsl(var(--control-active-bg));
   color: hsl(var(--control-active-foreground));
 }

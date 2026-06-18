@@ -279,6 +279,40 @@ export type GeneratedFileResponse = {
   } | null;
 };
 
+export type KnowledgeSourceScopeResponse = {
+  scope: "all" | "company" | "project" | "customer" | string;
+  source_id: string;
+  label: string;
+  description: string;
+  workspace_kind: string;
+};
+
+export type KnowledgeSourcesResponse = {
+  workspace_id: number | null;
+  workspace_kind: string;
+  scopes: KnowledgeSourceScopeResponse[];
+};
+
+export type KnowledgeSearchResultResponse = {
+  scope: "company" | "project" | "customer" | string;
+  title: string;
+  excerpt: string;
+  file: string;
+  source_id?: string | null;
+  section_path?: string | null;
+  type?: string | null;
+  score?: number | null;
+  tags?: string | null;
+};
+
+export type KnowledgeSearchResponse = {
+  query: string;
+  workspace_id: number | null;
+  workspace_kind: string;
+  source_scope: string;
+  results: KnowledgeSearchResultResponse[];
+};
+
 export type TransformTextResponse = {
   ok: boolean;
   action: "rewrite" | "translate" | "summarize" | "expand" | string;
