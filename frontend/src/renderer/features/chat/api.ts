@@ -130,7 +130,7 @@ export function submitMessageFeedback(
   options: ApiClientOptions,
   sessionId: number,
   messageId: number,
-  data: { rating: number; comment: string },
+  data: { feedback?: "like" | "dislike"; rating?: number; comment?: string },
 ) {
   return apiRequest<MessageFeedbackResponse>(
     options,

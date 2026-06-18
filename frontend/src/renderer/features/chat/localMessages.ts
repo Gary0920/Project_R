@@ -26,6 +26,7 @@ export function makeLocalMessage(
     version_count: 1,
     active_version: true,
     versions: [],
+    feedback: null,
     feedback_rating: null,
     feedback_comment: null,
     sources: [],

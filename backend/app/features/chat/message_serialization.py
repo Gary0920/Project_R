@@ -57,7 +57,7 @@ def message_attachments(db: Session, message: ChatMessage) -> list[SessionAttach
 
 def message_to_response_dict(db: Session, message: ChatMessage, *, feedback_root: Path) -> dict:
     versions = message_versions(db, message)
-    feedback = chat_feedback_api.load_latest_message_feedback(feedback_root, message)
+    feedback = chat_feedback_api.load_latest_message_feedback(db, feedback_root, message)
     attachments = message_attachments(db, message)
     agent_run = get_agent_run_for_message(db, message.user_id, message.id)
     serialized_agent_run = serialize_agent_run(db, agent_run)
@@ -92,6 +92,7 @@ def message_to_response_dict(db: Session, message: ChatMessage, *, feedback_root
             }
             for version in versions
         ],
+        "feedback": feedback.get("feedback") if feedback else None,
         "feedback_rating": feedback.get("rating") if feedback else None,
         "feedback_comment": feedback.get("comment") if feedback else None,
         "sources": message.sources,

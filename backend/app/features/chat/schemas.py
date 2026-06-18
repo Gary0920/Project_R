@@ -96,7 +96,8 @@ class TransformTextResponse(BaseModel):
 
 
 class MessageFeedbackRequest(BaseModel):
-    rating: int = Field(ge=1, le=5)
+    feedback: str | None = Field(default=None, pattern="^(like|dislike)$")
+    rating: int | None = Field(default=None, ge=1, le=5)
     comment: str = ""
 
 
@@ -174,6 +175,7 @@ class MessageResponse(BaseModel):
     version_count: int = 1
     active_version: bool = True
     versions: list["MessageVersionResponse"] = Field(default_factory=list)
+    feedback: str | None = None
     feedback_rating: int | None = None
     feedback_comment: str | None = None
     sources: list[ChatSourceResponse] = Field(default_factory=list)
@@ -232,6 +234,7 @@ class ActivateMessageVersionResponse(BaseModel):
 class MessageFeedbackResponse(BaseModel):
     ok: bool
     feedback_id: str
+    feedback: str
     rating: int
     comment: str
     created_at: str

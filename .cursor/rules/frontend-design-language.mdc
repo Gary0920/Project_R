@@ -1,0 +1,29 @@
+---
+description: 前端视觉改动强制契约 — 改任何前端样式/组件/布局前必须遵守 Project_R 设计约束
+globs: frontend/src/renderer/**/*.css,frontend/src/renderer/**/*.tsx
+alwaysApply: false
+---
+
+# 前端设计语言契约（强制）
+
+改动任何前端样式、组件、布局、颜色、字号、图标或动效前，**必须先完整阅读** [`docs/design/ui-design-language.md`](../../docs/design/ui-design-language.md)，它是前端视觉的唯一权威设计契约。交付前必须逐条核对该文件第 8 节《Agent 交付前自检清单》。
+
+真相源 token 在 [`frontend/src/renderer/shared/styles/base.css`](../../frontend/src/renderer/shared/styles/base.css)（`:root` 与 `:root[data-theme="dark"]`）。
+
+## 核心红线
+
+- 严禁硬编码颜色：用 `hsl(var(--token))`，不写 `#hex` / `rgb()` 临时色。
+- 普通选中/激活态只用 `--control-active-*`（柔和浅绿）；不引入蓝/紫/橙做普通 active。语义色（`--success`/`--warning`/`--destructive`）只在语义明确时用。
+- 字号取自字号阶梯（10/11/12/13/14/15-16/17-20/21-26px）；卡片/侧栏/工具栏/设置项标题禁用 hero 字号。
+- 间距用 4 的倍数阶梯（2/4/6/8/12/16/24，或既有 token）；圆角用 `--shell-radius`/`--card-radius`/`--control-radius`，不引随机圆角。
+- 图标尺寸取自图标阶梯（12-13/14/15-16/18px），同组统一，`flex-shrink:0`；位置遵守布局职责（业务入口顶部、系统动作右上、用户区左下）。
+- z-index 只用 `--layer-*`，禁止魔法数字（如 9999）。
+- 卡片只用于具体对象（消息/计划/工具调用/文件变更/结果/Review/弹窗）；不要把普通 section 做成浮动卡片或层层嵌套。
+- 交互态（hover/active/选中/展开）必须加 `0.12–0.16s` 过渡，不硬切；禁止大面积/闪烁/装饰动效；尊重 `prefers-reduced-motion`。
+- 深浅主题都要验证；深色不得直接塞浅色卡片。
+
+## 流程
+
+1. 改前先搜现有类名/token/相似组件，能复用就复用，不造第二套。
+2. 确需新视觉规则：先更新 `docs/design/ui-design-language.md`，再改 CSS。
+3. 完成后跑 `bun run typecheck`（涉及构建配置补 `bun run build`），并对可见 UI 做深浅主题截图/DOM 验证。

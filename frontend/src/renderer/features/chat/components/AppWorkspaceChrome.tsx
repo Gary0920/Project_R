@@ -56,9 +56,6 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     deletedMessageUndo,
     downloadedUpdatePath,
     error,
-    feedbackComment,
-    feedbackRating,
-    feedbackTarget,
     formatNotificationTime,
     formatSessionDisplayTitle,
     formatSidebarTime,
@@ -85,7 +82,6 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     handleSelectPrompt,
     handleSelectSkillFromSidePanel,
     handleSelectTab,
-    handleSubmitFeedback,
     handleSidebarResizeStart,
     handleUndoDeleteMessages,
     handleWorkspaceChanged,
@@ -126,9 +122,6 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     setDeleteConfirmSessionId,
     setDeleteLastMessageTarget,
     setDeleteMessageTarget,
-    setFeedbackComment,
-    setFeedbackRating,
-    setFeedbackTarget,
     setMoveSessionId,
     setNotificationPanelOpen,
     setNotificationView,
@@ -767,46 +760,6 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
                 type="button"
               >
                 生成新版本
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {feedbackTarget !== null ? (
-        <div className="confirm-overlay" onClick={() => setFeedbackTarget(null)}>
-          <div className="confirm-card message-operation-card" onClick={(event) => event.stopPropagation()}>
-            <h3>回答评分</h3>
-            <p>评分和意见会保存到后端反馈目录；低分且带知识库引用的回答会进入管理员知识纠错审核。</p>
-            <div className="message-rating-row" role="radiogroup" aria-label="回答评分">
-              {[1, 2, 3, 4, 5].map((rating) => (
-                <button
-                  className={`message-rating-btn ${feedbackRating === rating ? "is-active" : ""}`}
-                  key={rating}
-                  onClick={() => setFeedbackRating(rating)}
-                  type="button"
-                >
-                  {rating}
-                </button>
-              ))}
-            </div>
-            <label className="message-operation-field">
-              <span>补充意见</span>
-              <textarea
-                onChange={(event) => setFeedbackComment(event.target.value)}
-                placeholder="例如：回答遗漏了 AS2047 条款，或格式更适合项目周报。"
-                value={feedbackComment}
-              />
-            </label>
-            <div className="confirm-actions">
-              <button className="btn-secondary" onClick={() => setFeedbackTarget(null)} type="button">取消</button>
-              <button
-                className="btn-primary"
-                disabled={feedbackRating < 1 || messageActionBusyId === feedbackTarget.id}
-                onClick={() => void handleSubmitFeedback()}
-                type="button"
-              >
-                保存评分
               </button>
             </div>
           </div>

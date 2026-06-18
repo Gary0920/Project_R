@@ -21,6 +21,13 @@ from app.features.chat.access import (
 from app.features.chat.audio_transcription_skill import (
     run_audio_transcription_skill_response as _run_audio_transcription_skill_response,
 )
+from app.features.chat.audio_attachments import (
+    is_audio_attachment as _is_audio_attachment,
+    is_video_attachment as _is_video_attachment,
+)
+from app.features.chat.audio_understanding import (
+    transcribe_audio_attachments_for_chat as _transcribe_audio_attachments_for_chat,
+)
 from app.features.chat import feedback_api as chat_feedback_api
 from app.features.chat import stream_service as chat_stream
 from app.features.chat.export_service import export_session as _export_session
@@ -487,7 +494,9 @@ def _send_message_ports() -> SendMessagePorts:
         start_skill_run_from_chat=_start_skill_run_from_chat,
         run_gbrain_think_response=_run_gbrain_think_response,
         is_image_attachment=_is_image_attachment,
-        is_audio_video_attachment=_is_audio_video_attachment,
+        is_audio_attachment=_is_audio_attachment,
+        is_video_attachment=_is_video_attachment,
+        transcribe_audio_attachments_for_chat=_transcribe_audio_attachments_for_chat,
         get_llm_client=get_llm_client,
         write_failed_assistant_message=_write_failed_assistant_message,
         write_chat_audit=_write_chat_audit,
@@ -535,7 +544,6 @@ from app.features.chat.internal import (
     load_selected_session_attachments as _load_selected_session_attachments,
     load_attachment_context_from_attachments as _load_attachment_context_from_attachments,
     is_image_attachment as _is_image_attachment,
-    is_audio_video_attachment as _is_audio_video_attachment,
     load_vision_image_inputs as _load_vision_image_inputs,
     normalize_vision_image_media_type as _normalize_vision_image_media_type,
     delete_session_attachments as _delete_session_attachments,

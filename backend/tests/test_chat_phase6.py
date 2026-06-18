@@ -19,6 +19,7 @@ from models.attachment import SessionAttachment
 from models.audit_log import AuditLog
 from models.knowledge_review import KnowledgeReview
 from models.message import ChatMessage
+from models.message_feedback import MessageFeedback
 from models.notification import Notification
 from models.session import ChatSession
 from models.skill_run import SkillRun
@@ -524,13 +525,57 @@ class ChatPhase6Tests(unittest.TestCase):
         files = list(Path(self.feedback_root.name).rglob("*.json"))
         self.assertEqual(len(files), 1)
         payload = json.loads(files[0].read_text(encoding="utf-8"))
+        self.assertEqual(payload["feedback"], "like")
         self.assertEqual(payload["rating"], 4)
         self.assertEqual(payload["comment"], "Need more AS2047 detail")
         self.assertEqual(payload["message"]["id"], message.id)
+        stored = self.db.query(MessageFeedback).filter(MessageFeedback.message_id == message.id).one()
+        self.assertEqual(stored.feedback, "like")
+        self.assertEqual(stored.rating, 4)
         visible = chat_api.list_messages(self.session.id, 50, 0, self.user, self.db)
+        self.assertEqual(visible.items[0].feedback, "like")
         self.assertEqual(visible.items[0].feedback_rating, 4)
         self.assertIsNone(response["knowledge_review_id"])
         self.assertEqual(self.db.query(KnowledgeReview).count(), 0)
+
+    def test_submit_binary_message_feedback_updates_existing_record(self):
+        message = ChatMessage(
+            session_id=self.session.id,
+            user_id=self.user.id,
+            role="assistant",
+            content="answer to like",
+            status="success",
+            provider="mock",
+            model="mock-model",
+        )
+        self.db.add(message)
+        self.db.commit()
+        self.db.refresh(message)
+
+        liked = chat_api.submit_message_feedback(
+            self.session.id,
+            message.id,
+            chat_api.MessageFeedbackRequest(feedback="like"),
+            self.user,
+            self.db,
+        )
+        disliked = chat_api.submit_message_feedback(
+            self.session.id,
+            message.id,
+            chat_api.MessageFeedbackRequest(feedback="dislike", comment="不够准确"),
+            self.user,
+            self.db,
+        )
+
+        self.assertEqual(liked["feedback"], "like")
+        self.assertEqual(disliked["feedback"], "dislike")
+        self.assertEqual(self.db.query(MessageFeedback).filter(MessageFeedback.message_id == message.id).count(), 1)
+        stored = self.db.query(MessageFeedback).filter(MessageFeedback.message_id == message.id).one()
+        self.assertEqual(stored.feedback, "dislike")
+        self.assertEqual(stored.comment, "不够准确")
+        visible = chat_api.list_messages(self.session.id, 50, 0, self.user, self.db)
+        self.assertEqual(visible.items[0].feedback, "dislike")
+        self.assertEqual(visible.items[0].feedback_rating, 1)
 
     def test_low_rating_gbrain_feedback_creates_knowledge_correction_review(self):
         user_message = ChatMessage(
@@ -1395,7 +1440,7 @@ class ChatPhase6Tests(unittest.TestCase):
         )
 
         self.assertEqual(response["intent"], "skill_trigger")
-        self.assertIn("请先在当前会话上传或从项目文件中引用一个音频/视频文件", response["reply"])
+        self.assertIn("请先在当前会话上传或从项目文件中引用一个音频文件", response["reply"])
         self.assertIn("```text", response["reply"])
         self.assertEqual(response["skill_run"]["skill_name"], "audio-transcription")
 

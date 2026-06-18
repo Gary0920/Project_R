@@ -76,10 +76,10 @@ export function KnowledgeBrowserPanel({
   }
 
   return (
-    <aside className="utility-side-pane auxiliary-side-pane knowledge-browser-pane" aria-label="知识库浏览">
+    <aside className="utility-side-pane auxiliary-side-pane knowledge-browser-pane" aria-label="资料查询">
       <header className="utility-side-header">
         <div>
-          <h2>知识库</h2>
+          <h2>资料查询</h2>
           <p>{scopeInfo.scopeLabel}</p>
         </div>
         <button className="prompt-panel-close" onClick={onClose} type="button">×</button>
@@ -91,7 +91,7 @@ export function KnowledgeBrowserPanel({
           <p>{scopeInfo.riskNote}</p>
           <div className="knowledge-browser-scope-list">
             {scopes.map((scope) => (
-              <span key={`${scope.scope}-${scope.source_id || "empty"}`}>
+              <span key={scope.scope}>
                 {scope.label}
               </span>
             ))}
@@ -138,16 +138,14 @@ export function KnowledgeBrowserPanel({
 
         <div className="knowledge-browser-results">
           {results.map((result, index) => (
-            <article className="knowledge-browser-result" key={`${result.scope}-${result.file}-${result.section_path ?? index}`}>
+            <article className="knowledge-browser-result" key={`${result.scope}-${result.reference_label}-${index}`}>
               <div className="knowledge-browser-result-meta">
                 <span>{scopeLabel(result.scope)}</span>
-                {result.type ? <small>{result.type}</small> : null}
+                <small>{result.reference_label}</small>
               </div>
               <h3>{result.title}</h3>
-              {result.section_path ? <p className="knowledge-browser-path">{result.section_path}</p> : null}
               <p>{result.excerpt || "该结果未返回可展示片段。"}</p>
               <footer>
-                <code>{result.source_id ?? result.file}</code>
                 <button onClick={() => onUseQuery(query.trim())} type="button">用 /query 追问</button>
               </footer>
             </article>

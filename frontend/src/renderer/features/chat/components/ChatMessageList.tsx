@@ -161,6 +161,8 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
     formatClockTime,
     handleActivateVersion,
     handleCopyMessage,
+    handleExportConversation,
+    handleSetBinaryFeedback,
     handleSubmitEditedMessage,
     handleSubmitGBrainThinkReview,
     handleSwitchToAgent,
@@ -169,7 +171,6 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
     messageActionBusyId,
     messages,
     mode,
-    openFeedbackDialog,
     openRegenerateDialog,
     onCopyGeneratedEmailBody,
     onEditGeneratedEmailDraft,
@@ -463,9 +464,9 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
               </button>
             </div>
           ) : null}
-          {message.role === "assistant" && message.feedback_rating ? (
+          {message.role === "assistant" && message.feedback ? (
             <div className="message-feedback-status">
-              <span>已评分 {message.feedback_rating}/5</span>
+              <span>{message.feedback === "like" ? "已喜欢" : "已不喜欢"}</span>
               {message.feedback_comment ? <small>含意见</small> : null}
             </div>
           ) : null}
@@ -473,9 +474,11 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
             copied={copiedMessageId === message.id}
             isBusy={isBusy}
             message={message}
+            onActivateVersion={handleActivateVersion}
             onCopy={(target) => void handleCopyMessage(target)}
             onDelete={requestDeleteMessageContext}
-            onFeedback={openFeedbackDialog}
+            onExportConversation={(sessionId) => void handleExportConversation(sessionId)}
+            onFeedback={(target, feedback) => void handleSetBinaryFeedback(target, feedback)}
             onQuote={(target) => controller.setQuotedMessage({ messageId: target.id, sessionId: paneSessionId!, content: target.content ?? "", role: target.role })}
             onRegenerate={openRegenerateDialog}
             onStartEdit={startEditingMessage}

@@ -35,7 +35,7 @@ def run_audio_transcription_skill_response(
 ) -> dict[str, Any]:
     """Handle the audio-transcription special path within a chat text skill run.
 
-    Loads session attachments, finds audio/video files, runs media transcription,
+    Loads session attachments, finds audio files, runs media transcription,
     and returns the complete skill response dict.
 
     Returns the same shape as _run_chat_text_skill_by_name for the
@@ -56,7 +56,7 @@ def run_audio_transcription_skill_response(
         )
         skill_response: dict[str, Any] = {
             "reply": (
-                "还不能开始录音转文字，因为当前消息没有可处理的音频/视频附件。\n\n"
+                "还不能开始录音转文字，因为当前消息没有可处理的音频附件。\n\n"
                 f"下一步操作：\n```text\n{instruction}\n```"
             ),
             "skill_run": run_to_dict(run, skill),

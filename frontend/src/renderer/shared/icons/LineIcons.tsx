@@ -34,6 +34,8 @@ import splitUrl from "iconoir/icons/horizontal-split.svg";
 import sparkUrl from "iconoir/icons/sparks.svg";
 import textSquareUrl from "iconoir/icons/text-square.svg";
 import trashUrl from "iconoir/icons/trash.svg";
+import thumbsDownUrl from "iconoir/icons/thumbs-down.svg";
+import thumbsUpUrl from "iconoir/icons/thumbs-up.svg";
 import xmarkUrl from "iconoir/icons/xmark.svg";
 
 type IconProps = HTMLAttributes<HTMLSpanElement>;
@@ -64,6 +66,8 @@ export function HomeIcon(props: IconProps) { return <IconoirIcon url={homeUrl} {
 export function EditIcon(props: IconProps) { return <IconoirIcon url={editUrl} {...props} />; }
 export function GlobeIcon(props: IconProps) { return <IconoirIcon url={globeUrl} {...props} />; }
 export function TrashIcon(props: IconProps) { return <IconoirIcon url={trashUrl} {...props} />; }
+export function ThumbsUpIcon(props: IconProps) { return <IconoirIcon url={thumbsUpUrl} {...props} />; }
+export function ThumbsDownIcon(props: IconProps) { return <IconoirIcon url={thumbsDownUrl} {...props} />; }
 export function PinIcon(props: IconProps) { return <IconoirIcon url={pinUrl} {...props} />; }
 export function ArchiveIcon(props: IconProps) { return <IconoirIcon url={archiveUrl} {...props} />; }
 export function MoveIcon(props: IconProps) { return <IconoirIcon url={moveUrl} {...props} />; }

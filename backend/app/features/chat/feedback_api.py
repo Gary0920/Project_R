@@ -18,6 +18,7 @@ from app.shared.time.utils import serialize_datetime_utc
 from models.audit_log import AuditLog
 from models.knowledge_review import KnowledgeReview
 from models.message import ChatMessage
+from models.message_feedback import MessageFeedback
 from models.session import ChatSession
 from models.user import User
 
@@ -36,15 +37,17 @@ def submit_message_feedback(
     session = get_user_session(db, user.id, session_id)
     message = _assistant_message(db, user.id, session_id, message_id)
     comment = req.comment.strip()[:2000]
-    feedback = write_message_feedback(feedback_root, user, message, req.rating, comment)
+    feedback_kind, rating = normalize_feedback_request(req)
+    feedback = upsert_message_feedback(db, user, message, feedback_kind, rating, comment)
+    write_message_feedback(feedback_root, user, message, feedback_kind, rating, comment, feedback.feedback_id)
     correction_review = maybe_create_answer_correction_review(
         db,
         user=user,
         session=session,
         message=message,
-        rating=req.rating,
+        rating=rating,
         comment=comment,
-        feedback_id=feedback["feedback_id"],
+        feedback_id=feedback.feedback_id,
         answer_correction_rating_threshold=answer_correction_rating_threshold,
         answer_correction_review_prefix=answer_correction_review_prefix,
     )
@@ -53,7 +56,7 @@ def submit_message_feedback(
             user_id=user.id,
             action="message_feedback",
             detail=(
-                f"会话 {session_id} 回答 {message_id} 评分 {req.rating}/5"
+                f"会话 {session_id} 回答 {message_id} 反馈 {feedback_kind}"
                 + (f"，生成知识纠错审核 {correction_review.id}" if correction_review else "")
             ),
             success=True,
@@ -62,10 +65,11 @@ def submit_message_feedback(
     db.commit()
     return {
         "ok": True,
-        "feedback_id": feedback["feedback_id"],
-        "rating": req.rating,
+        "feedback_id": feedback.feedback_id,
+        "feedback": feedback.feedback,
+        "rating": feedback.rating,
         "comment": comment,
-        "created_at": feedback["created_at"],
+        "created_at": serialize_datetime_utc(feedback.created_at),
         "knowledge_review_id": correction_review.id if correction_review else None,
         "knowledge_review_status": correction_review.status if correction_review else None,
     }
@@ -136,13 +140,70 @@ def feedback_message_dir(feedback_root: Path, message: ChatMessage) -> Path:
     return feedback_root / f"user_{message.user_id}" / f"session_{message.session_id}" / f"message_{message.id}"
 
 
-def write_message_feedback(feedback_root: Path, user: User, message: ChatMessage, rating: int, comment: str) -> dict:
+def normalize_feedback_request(req: MessageFeedbackRequest) -> tuple[str, int]:
+    if req.feedback:
+        return req.feedback, 5 if req.feedback == "like" else 1
+    if req.rating is None:
+        raise HTTPException(status_code=422, detail="feedback 或 rating 必须提供")
+    if req.rating >= 4:
+        return "like", req.rating
+    return "dislike", req.rating
+
+
+def upsert_message_feedback(
+    db: Session,
+    user: User,
+    message: ChatMessage,
+    feedback_kind: str,
+    rating: int,
+    comment: str,
+) -> MessageFeedback:
+    current = (
+        db.query(MessageFeedback)
+        .filter(MessageFeedback.user_id == user.id, MessageFeedback.message_id == message.id)
+        .first()
+    )
+    now = datetime.now(timezone.utc)
+    if current:
+        current.feedback = feedback_kind
+        current.rating = rating
+        current.comment = comment
+        current.updated_at = now
+        db.flush()
+        return current
+    feedback_id = f"{now.strftime('%Y%m%dT%H%M%S%fZ')}-{uuid.uuid4().hex[:8]}"
+    current = MessageFeedback(
+        feedback_id=feedback_id,
+        user_id=user.id,
+        session_id=message.session_id,
+        message_id=message.id,
+        feedback=feedback_kind,
+        rating=rating,
+        comment=comment,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(current)
+    db.flush()
+    return current
+
+
+def write_message_feedback(
+    feedback_root: Path,
+    user: User,
+    message: ChatMessage,
+    feedback_kind: str,
+    rating: int,
+    comment: str,
+    feedback_id: str | None = None,
+) -> dict:
     created_at = datetime.now(timezone.utc)
-    feedback_id = f"{created_at.strftime('%Y%m%dT%H%M%S%fZ')}-{uuid.uuid4().hex[:8]}"
+    feedback_id = feedback_id or f"{created_at.strftime('%Y%m%dT%H%M%S%fZ')}-{uuid.uuid4().hex[:8]}"
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "feedback_id": feedback_id,
         "created_at": serialize_datetime_utc(created_at),
+        "feedback": feedback_kind,
         "rating": rating,
         "comment": comment,
         "user": {
@@ -436,7 +497,22 @@ def safe_trace_list(value: object, *, limit: int = 6, item_limit: int = 220) -> 
     return items
 
 
-def load_latest_message_feedback(feedback_root: Path, message: ChatMessage) -> dict | None:
+def load_latest_message_feedback(db: Session, feedback_root: Path, message: ChatMessage) -> dict | None:
+    current = (
+        db.query(MessageFeedback)
+        .filter(MessageFeedback.user_id == message.user_id, MessageFeedback.message_id == message.id)
+        .order_by(MessageFeedback.updated_at.desc(), MessageFeedback.id.desc())
+        .first()
+    )
+    if current:
+        return {
+            "feedback_id": current.feedback_id,
+            "feedback": current.feedback,
+            "rating": current.rating,
+            "comment": current.comment,
+            "created_at": serialize_datetime_utc(current.created_at),
+            "updated_at": serialize_datetime_utc(current.updated_at),
+        }
     target_dir = feedback_message_dir(feedback_root, message)
     if not target_dir.exists():
         return None

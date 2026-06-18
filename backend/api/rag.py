@@ -79,7 +79,6 @@ QUALITY_REPORTS_LIMIT = _report_manifest.QUALITY_REPORTS_LIMIT
 
 class KnowledgeSourceScopeResponse(BaseModel):
     scope: str
-    source_id: str
     label: str
     description: str
     workspace_kind: str
@@ -95,12 +94,7 @@ class KnowledgeSearchResultResponse(BaseModel):
     scope: str
     title: str
     excerpt: str
-    file: str
-    source_id: str | None = None
-    section_path: str | None = None
-    type: str | None = None
-    score: float | None = None
-    tags: str | None = None
+    reference_label: str
 
 
 class KnowledgeSearchResponse(BaseModel):
@@ -122,21 +116,32 @@ def _resolve_browse_workspace(db: Session, user: User, workspace_id: int | None)
 
 
 def _serialize_knowledge_result(item: dict) -> KnowledgeSearchResultResponse:
-    file = str(item.get("file") or "")
-    source_id = None
-    if file.startswith("gbrain:"):
-        source_id = file.split(":", 1)[1].split("/", 1)[0] or None
+    scope = str(item.get("scope") or "company")
+    section_path = str(item.get("section_path") or "").strip()
+    source_title = str(item.get("source_title") or "").strip()
     return KnowledgeSearchResultResponse(
-        scope=str(item.get("scope") or "company"),
-        title=str(item.get("source_title") or item.get("section_path") or file or "知识来源"),
+        scope=scope,
+        title=source_title or _scope_reference_label(scope),
         excerpt=str(item.get("content") or ""),
-        file=file,
-        source_id=source_id,
-        section_path=str(item.get("section_path") or "") or None,
-        type=str(item.get("type") or "") or None,
-        score=item.get("score") if isinstance(item.get("score"), (int, float)) else None,
-        tags=str(item.get("tags") or "") or None,
+        reference_label=_public_reference_label(scope, section_path, source_title),
     )
+
+
+def _scope_reference_label(scope: str) -> str:
+    if scope == "project":
+        return "当前项目资料"
+    if scope == "customer":
+        return "当前客户情报"
+    return "公司知识"
+
+
+def _public_reference_label(scope: str, section_path: str, source_title: str) -> str:
+    base = _scope_reference_label(scope)
+    title = source_title or section_path
+    if not title:
+        return base
+    safe_title = title.split("/")[-1].strip()[:80]
+    return f"{base} · {safe_title}" if safe_title else base
 
 
 @knowledge_router.get("/sources", response_model=KnowledgeSourcesResponse)

@@ -39,7 +39,7 @@ def missing_input_instruction(skill_name: str, missing_inputs: list[dict]) -> st
     missing_names = {str(item.get("name") or "").strip() for item in missing_inputs}
     missing_labels = {str(item.get("label") or "").strip() for item in missing_inputs}
     if normalized_skill == "audio-transcription" or "audio_source" in missing_names or "音频或视频文件" in missing_labels:
-        return "请先在当前会话上传或从项目文件中引用一个音频/视频文件，然后重新发送“将这段录音转录成文字”。支持 MP3、WAV、M4A、OGG、FLAC、MP4、MOV 等格式。"
+        return "请先在当前会话上传或从项目文件中引用一个音频文件，然后重新发送“将这段录音转录成文字”。支持 MP3、WAV、M4A、OGG、FLAC 等格式。"
     if normalized_skill in ("term-correction", "术语纠错") or "term_corrections" in missing_names:
         return "请提供术语纠正规则，每行一条，例如：LAM Wiki -> LLM Wiki。"
     fields = "、".join(item.get("label") or item.get("name") or "待补充字段" for item in missing_inputs)

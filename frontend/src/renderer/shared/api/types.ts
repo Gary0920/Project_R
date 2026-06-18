@@ -88,6 +88,7 @@ export type ChatMessageResponse = {
   version_count: number;
   active_version: boolean;
   versions: ChatMessageVersionResponse[];
+  feedback: "like" | "dislike" | null;
   feedback_rating: number | null;
   feedback_comment: string | null;
   sources: ChatSourceResponse[];
@@ -244,6 +245,7 @@ export type ActivateMessageVersionResponse = {
 export type MessageFeedbackResponse = {
   ok: boolean;
   feedback_id: string;
+  feedback: "like" | "dislike";
   rating: number;
   comment: string;
   created_at: string;
@@ -281,7 +283,6 @@ export type GeneratedFileResponse = {
 
 export type KnowledgeSourceScopeResponse = {
   scope: "all" | "company" | "project" | "customer" | string;
-  source_id: string;
   label: string;
   description: string;
   workspace_kind: string;
@@ -297,12 +298,7 @@ export type KnowledgeSearchResultResponse = {
   scope: "company" | "project" | "customer" | string;
   title: string;
   excerpt: string;
-  file: string;
-  source_id?: string | null;
-  section_path?: string | null;
-  type?: string | null;
-  score?: number | null;
-  tags?: string | null;
+  reference_label: string;
 };
 
 export type KnowledgeSearchResponse = {

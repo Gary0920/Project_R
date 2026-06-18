@@ -10,6 +10,7 @@ import {
   activateChatMessageVersion,
   deleteChatMessage,
   editChatMessage,
+  exportChatSession,
   listChatSessions,
   restoreDeletedChatMessages,
   submitGBrainThinkReview,
@@ -320,6 +321,53 @@ export function useChatMessageActions({
     }
   }
 
+  async function handleSetBinaryFeedback(message: ChatMessage, feedback: "like" | "dislike") {
+    if (message.id < 0 || message.role !== "assistant") return;
+    setError("");
+    setMessageActionBusyId(message.id);
+    try {
+      const response = await submitMessageFeedback(apiOptions, message.session_id, message.id, { feedback });
+      setMessagesBySession((current) => ({
+        ...current,
+        [message.session_id]: (current[message.session_id] ?? []).map((item) =>
+          item.id === message.id
+            ? {
+                ...item,
+                feedback: response.feedback,
+                feedback_rating: response.rating,
+                feedback_comment: response.comment,
+              }
+            : item,
+        ),
+      }));
+      setActionNotice(feedback === "like" ? "已记录喜欢反馈。" : "已记录不喜欢反馈。");
+    } catch (feedbackError: unknown) {
+      if (feedbackError instanceof ApiError && feedbackError.status === 401) {
+        clearAuth();
+        window.location.hash = "#/login";
+        return;
+      }
+      setError(feedbackError instanceof ApiError ? feedbackError.message : "保存反馈失败，请稍后重试。");
+    } finally {
+      setMessageActionBusyId(null);
+    }
+  }
+
+  async function handleExportConversation(sessionId: number) {
+    setActionNotice("正在导出 Markdown...");
+    try {
+      await exportChatSession(apiOptions, sessionId, "markdown");
+      setActionNotice("已导出对话。");
+    } catch (exportError: unknown) {
+      if (exportError instanceof ApiError && exportError.status === 401) {
+        clearAuth();
+        window.location.hash = "#/login";
+        return;
+      }
+      setActionNotice(exportError instanceof ApiError ? exportError.message : "导出失败");
+    }
+  }
+
   async function handleSubmitGBrainThinkReview(message: ChatMessage) {
     if (message.id < 0) return;
     setError("");
@@ -359,6 +407,8 @@ export function useChatMessageActions({
     handleDeleteMessageContext,
     handleSubmitEditedMessage,
     handleSubmitFeedback,
+    handleSetBinaryFeedback,
+    handleExportConversation,
     handleSubmitGBrainThinkReview,
     handleUndoDeleteMessages,
     messageActionBusyId,

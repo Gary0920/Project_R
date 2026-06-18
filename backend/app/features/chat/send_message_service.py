@@ -38,7 +38,9 @@ class SendMessagePorts:
     start_skill_run_from_chat: Callable[..., Any]
     run_gbrain_think_response: Callable[..., Any]
     is_image_attachment: Callable[..., Any]
-    is_audio_video_attachment: Callable[..., Any]
+    is_audio_attachment: Callable[..., Any]
+    is_video_attachment: Callable[..., Any]
+    transcribe_audio_attachments_for_chat: Callable[..., Any]
     get_llm_client: Callable[..., Any]
     write_failed_assistant_message: Callable[..., Any]
     write_chat_audit: Callable[..., Any]
@@ -210,10 +212,13 @@ def send_message_use_case(
         )
 
     selected_image_attachments = [attachment for attachment in selected_attachments if ports.is_image_attachment(attachment)]
-    selected_audio_video_attachments = [
-        attachment for attachment in selected_attachments if ports.is_audio_video_attachment(attachment)
+    selected_audio_attachments = [
+        attachment for attachment in selected_attachments if ports.is_audio_attachment(attachment)
     ]
-    if selected_audio_video_attachments and not req.selected_skill:
+    selected_video_attachments = [
+        attachment for attachment in selected_attachments if ports.is_video_attachment(attachment)
+    ]
+    if selected_audio_attachments and not req.selected_skill:
         matched_skill = SkillRunner.get().match_skill(content)
         if matched_skill and matched_skill["skill"]["name"] == "audio-transcription":
             chat_text_response = ports.run_chat_text_skill_by_name(
@@ -242,8 +247,8 @@ def send_message_use_case(
         ports.write_failed_assistant_message(db, user.id, session_id, detail, requested_model)
         ports.write_chat_audit(db, user.id, session_id, llm_user_content, False, detail)
         raise HTTPException(status_code=400, detail=detail)
-    if selected_audio_video_attachments:
-        detail = "当前版本暂未接入视频/音频附件理解，请先改用图片或可提取文本的附件。"
+    if selected_video_attachments:
+        detail = "当前版本暂未接入视频附件理解；如需处理会议视频，请使用会议工作流的转写能力。"
         ports.write_failed_assistant_message(db, user.id, session_id, detail, requested_model)
         ports.write_chat_audit(db, user.id, session_id, llm_user_content, False, detail)
         raise HTTPException(status_code=400, detail=detail)
@@ -277,6 +282,14 @@ def send_message_use_case(
         selected_attachments,
         supports_vision=bool(vision_images),
     )
+    audio_understanding = None
+    if selected_audio_attachments:
+        audio_understanding = ports.transcribe_audio_attachments_for_chat(
+            selected_audio_attachments,
+            model_profile=req.model_profile,
+        )
+        if audio_understanding.context:
+            attachment_context = "\n\n".join(part for part in [attachment_context, audio_understanding.context] if part)
     system_prompt = ports.compose_system_prompt(
         req.system_prompt,
         knowledge_sources,
@@ -299,6 +312,7 @@ def send_message_use_case(
             reduce_knowledge_context=reduce_knowledge_context,
             extra={
                 **ports.web_search_context_extra(web_search_trace),
+                **audio_understanding_context_extra(audio_understanding),
             },
         )
         return StreamingResponse(
@@ -374,6 +388,7 @@ def send_message_use_case(
         extra={
             "generated_file": generated_file_context(generated_file),
             **ports.web_search_context_extra(web_search_trace),
+            **audio_understanding_context_extra(audio_understanding),
         },
     )
     assistant_message = ChatMessage(
@@ -433,4 +448,17 @@ def send_message_use_case(
         "user_attachments": [ports.attachment_to_response_dict(attachment) for attachment in selected_attachments],
         "agent_run": ports.serialize_agent_run(db, agent_run),
         "context_trace": context_trace,
+    }
+
+
+def audio_understanding_context_extra(audio_understanding: Any) -> dict[str, Any]:
+    if not audio_understanding:
+        return {}
+    warnings = list(getattr(audio_understanding, "warnings", []) or [])
+    return {
+        "audio_understanding": {
+            "transcript_count": getattr(audio_understanding, "transcript_count", 0),
+            "warning_count": len(warnings),
+            "warnings": warnings[:5],
+        }
     }

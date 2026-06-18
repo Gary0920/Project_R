@@ -75,7 +75,6 @@ def serialize_source_scopes(scopes: list[KnowledgeScope]) -> list[dict[str, str]
     return [
         {
             "scope": item.scope,
-            "source_id": item.source_id,
             "label": item.label,
             "description": item.description,
             "workspace_kind": item.workspace_kind,

@@ -65,9 +65,11 @@ class KnowledgeBrowserTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["workspace_kind"], "project")
-        scopes = {item["scope"]: item["source_id"] for item in data["scopes"]}
-        self.assertEqual(scopes["company"], "company-wiki")
-        self.assertEqual(scopes["project"], "project-bfi-1")
+        scopes = {item["scope"]: item for item in data["scopes"]}
+        self.assertIn("company", scopes)
+        self.assertIn("project", scopes)
+        self.assertNotIn("source_id", scopes["company"])
+        self.assertNotIn("source_id", scopes["project"])
 
     def test_customer_sources_do_not_include_company_scope(self):
         response = self.client.get(f"/knowledge/sources?workspace_id={self.customer.id}", headers=self.headers)
@@ -107,8 +109,12 @@ class KnowledgeBrowserTests(unittest.TestCase):
         self.assertEqual(calls, [{"query": "启动会", "workspace_kind": "project", "source_scope": "project", "limit": 5}])
         self.assertEqual(data["workspace_kind"], "project")
         self.assertEqual(data["results"][0]["scope"], "project")
-        self.assertEqual(data["results"][0]["source_id"], "project-bfi-1")
+        self.assertEqual(data["results"][0]["reference_label"], "当前项目资料 · Kickoff")
         self.assertEqual(data["results"][0]["excerpt"], "项目启动会决定。")
+        self.assertNotIn("source_id", data["results"][0])
+        self.assertNotIn("file", data["results"][0])
+        self.assertNotIn("section_path", data["results"][0])
+        self.assertNotIn("tags", data["results"][0])
 
 
 if __name__ == "__main__":

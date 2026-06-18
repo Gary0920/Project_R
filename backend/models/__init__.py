@@ -39,6 +39,7 @@ def init_db():
     from models.skill_run import SkillRun
     from models.client_update import ClientUpdateRelease
     from models.workspace_ingest_job import WorkspaceIngestJob
+    from models.message_feedback import MessageFeedback
     Base.metadata.create_all(bind=engine)
     _ensure_sqlite_columns()
     db = SessionLocal()
