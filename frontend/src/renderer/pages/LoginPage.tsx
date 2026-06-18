@@ -2,10 +2,10 @@ import { FormEvent, useState, useRef, useEffect, useCallback } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 
 import { apiRequest, ApiError } from "../shared/api/client";
-import type { LoginResponse } from "../shared/api/types";
+import type { HealthResponse, LoginResponse } from "../shared/api/types";
 import { setAuthAtom } from "../features/auth/state";
-import { serverUrlAtom } from "../shared/state/server";
-import { APP_NAME } from "../shared/config/app";
+import { serverUrlAtom, setServerUrlAtom } from "../shared/state/server";
+import { APP_NAME, DEFAULT_API_BASE_URL } from "../shared/config/app";
 
 /* ------------------------------------------------------------------ */
 /*  Animation helpers (pure functions, no React deps)                   */
@@ -48,6 +48,9 @@ function calcPupilOffset(
 const LAST_USERNAME_KEY = "project-r:last-username";
 const REMEMBER_PASSWORD_KEY = "project-r:remember-password";
 const STORED_PASSWORD_KEY = "project-r:stored-password";
+const ONBOARDING_DONE_KEY = "project-r:onboarding-complete";
+
+type ServerCheckState = "idle" | "checking" | "ok" | "error";
 
 function encodePwd(pwd: string): string {
   return btoa(encodeURIComponent(pwd));
@@ -64,7 +67,14 @@ function decodePwd(encoded: string): string {
 export function LoginPage() {
   /* ---------- Form state ---------- */
   const serverUrl = useAtomValue(serverUrlAtom);
+  const setServerUrl = useSetAtom(setServerUrlAtom);
   const setAuth = useSetAtom(setAuthAtom);
+  const [onboardingComplete, setOnboardingComplete] = useState(() => {
+    return window.localStorage.getItem(ONBOARDING_DONE_KEY) === "true";
+  });
+  const [draftServerUrl, setDraftServerUrl] = useState(serverUrl || DEFAULT_API_BASE_URL);
+  const [serverCheckState, setServerCheckState] = useState<ServerCheckState>("idle");
+  const [serverCheckMessage, setServerCheckMessage] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -513,6 +523,35 @@ export function LoginPage() {
     }
   }
 
+  async function handleServerCheck(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const normalized = draftServerUrl.trim().replace(/\/$/, "");
+    if (!normalized) {
+      setServerCheckState("error");
+      setServerCheckMessage("请填写后端服务地址。");
+      return;
+    }
+
+    setServerCheckState("checking");
+    setServerCheckMessage("正在检测 Project_R Workbench 服务。");
+    try {
+      const health = await apiRequest<HealthResponse>({ baseUrl: normalized }, "/health");
+      if (health.status !== "ok") {
+        setServerCheckState("error");
+        setServerCheckMessage(`服务状态异常：${health.status}`);
+        return;
+      }
+      setServerUrl(normalized);
+      window.localStorage.setItem(ONBOARDING_DONE_KEY, "true");
+      setServerCheckState("ok");
+      setServerCheckMessage("已连接到 Project_R Workbench 服务。");
+      setOnboardingComplete(true);
+    } catch {
+      setServerCheckState("error");
+      setServerCheckMessage("连接失败，请检查地址或后端是否启动。");
+    }
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -557,16 +596,6 @@ export function LoginPage() {
     <div className="alp-page">
       {/* ---------- Left Panel (characters) ---------- */}
       <div className="alp-left" aria-hidden="true">
-        <div className="alp-logo">
-          <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
-            <path d="M12 2L15 9H9L12 2Z" />
-            <path d="M12 22L9 15H15L12 22Z" />
-            <path d="M2 12L9 9V15L2 12Z" />
-            <path d="M22 12L15 15V9L22 12Z" />
-          </svg>
-          <span>{APP_NAME}</span>
-        </div>
-
         <div className="alp-characters-wrapper">
           <div className="alp-characters-scene">
             {/* Purple */}
@@ -635,151 +664,225 @@ export function LoginPage() {
       {/* ---------- Right Panel (form) ---------- */}
       <div className="alp-right">
         <div className="alp-form-container">
-          <div className="alp-sparkle">
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 2L13.5 9H10.5L12 2Z" fill="#1a1a2e" />
-              <path d="M12 22L10.5 15H13.5L12 22Z" fill="#1a1a2e" />
-              <path d="M2 12L9 10.5V13.5L2 12Z" fill="#1a1a2e" />
-              <path d="M22 12L15 13.5V10.5L22 12Z" fill="#1a1a2e" />
-            </svg>
-          </div>
-
-          <div className="alp-form-header">
-            <h1>欢迎回来</h1>
-            <p>登录您的账号以继续</p>
-          </div>
-
-          <form className="alp-form" onSubmit={handleSubmit}>
-            <div className="alp-form-group">
-              <label htmlFor="username">账户</label>
-              <div className="alp-input-wrap">
-                <input
-                  id="username"
-                  autoComplete="username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  onFocus={() => setTyping(true)}
-                  onBlur={() => setTyping(false)}
-                  placeholder="请输入账户"
-                  required
-                />
+          {!onboardingComplete ? (
+            <>
+              <div className="alp-form-header">
+                <h1>环境检测</h1>
+                <p>先连接 Project_R Workbench 服务，再登录账号。</p>
               </div>
-            </div>
 
-            <div className="alp-form-group">
-              <label htmlFor="password">密码</label>
-              <div className="alp-input-wrap">
-                <input
-                  id="password"
-                  ref={passwordInputRef}
-                  type={showPassword ? "text" : "password"}
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  onFocus={() => {
-                    anim.current.isPasswordFocused = true;
-                    updateCharacters();
-                  }}
-                  onBlur={() => {
-                    anim.current.isPasswordFocused = false;
-                    updateCharacters();
-                  }}
-                  placeholder="请输入密码"
-                  required
-                />
+              <form className="alp-form alp-server-form" onSubmit={handleServerCheck}>
+                <div className="alp-form-group">
+                  <label htmlFor="server-url">后端地址</label>
+                  <div className="alp-input-wrap">
+                    <input
+                      id="server-url"
+                      className="alp-server-input"
+                      autoComplete="url"
+                      value={draftServerUrl}
+                      onChange={(event) => {
+                        setDraftServerUrl(event.target.value);
+                        if (serverCheckState !== "idle") {
+                          setServerCheckState("idle");
+                          setServerCheckMessage("");
+                        }
+                      }}
+                      placeholder={DEFAULT_API_BASE_URL}
+                      required
+                    />
+                  </div>
+                </div>
+
+                {serverCheckMessage ? (
+                  <div className={`alp-server-status is-${serverCheckState}`}>
+                    <span className="alp-server-status-icon" aria-hidden="true">
+                      {serverCheckState === "checking" ? (
+                        <span className="alp-server-spinner" />
+                      ) : serverCheckState === "ok" ? (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      ) : serverCheckState === "error" ? (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      ) : null}
+                    </span>
+                    <span>{serverCheckMessage}</span>
+                  </div>
+                ) : null}
+
                 <button
-                  type="button"
-                  className="alp-toggle-password"
-                  onClick={handleTogglePassword}
-                  tabIndex={-1}
+                  type="submit"
+                  className="alp-btn-login alp-btn-server-check"
+                  disabled={serverCheckState === "checking"}
                 >
-                  {showPassword ? (
+                  <span className="alp-btn-text">
+                    {serverCheckState === "checking" ? "检测中…" : "检测并继续"}
+                  </span>
+                  <div className="alp-btn-hover">
+                    <span>{serverCheckState === "checking" ? "检测中…" : "检测并继续"}</span>
                     <svg
-                      width="20"
-                      height="20"
+                      width="16"
+                      height="16"
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"
-                      strokeWidth="2"
+                      strokeWidth="2.5"
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     >
-                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
-                      <line x1="1" y1="1" x2="23" y2="23" />
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                      <polyline points="12 5 19 12 12 19" />
                     </svg>
-                  ) : (
+                  </div>
+                </button>
+              </form>
+            </>
+          ) : (
+            <>
+              <div className="alp-form-header">
+                <h1>欢迎回来</h1>
+                <p>登录您的账号以继续</p>
+              </div>
+
+              <form className="alp-form" onSubmit={handleSubmit}>
+                <div className="alp-form-group">
+                  <label htmlFor="username">账户</label>
+                  <div className="alp-input-wrap">
+                    <input
+                      id="username"
+                      autoComplete="username"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      onFocus={() => setTyping(true)}
+                      onBlur={() => setTyping(false)}
+                      placeholder="请输入账户"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="alp-form-group">
+                  <label htmlFor="password">密码</label>
+                  <div className="alp-input-wrap">
+                    <input
+                      id="password"
+                      ref={passwordInputRef}
+                      type={showPassword ? "text" : "password"}
+                      autoComplete="current-password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      onFocus={() => {
+                        anim.current.isPasswordFocused = true;
+                        updateCharacters();
+                      }}
+                      onBlur={() => {
+                        anim.current.isPasswordFocused = false;
+                        updateCharacters();
+                      }}
+                      placeholder="请输入密码"
+                      required
+                    />
+                    <button
+                      type="button"
+                      className="alp-toggle-password"
+                      onClick={handleTogglePassword}
+                      tabIndex={-1}
+                    >
+                      {showPassword ? (
+                        <svg
+                          width="20"
+                          height="20"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                          <line x1="1" y1="1" x2="23" y2="23" />
+                        </svg>
+                      ) : (
+                        <svg
+                          width="20"
+                          height="20"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="alp-remember-row">
+                  <label className="alp-remember-label">
+                    <input
+                      type="checkbox"
+                      checked={rememberPassword}
+                      onChange={(e) => setRememberPassword(e.target.checked)}
+                    />
+                    <span className="alp-remember-check" />
+                    <span>记住密码</span>
+                  </label>
+                </div>
+
+                {error ? (
+                  <div className="alp-error-msg">{error}</div>
+                ) : null}
+
+                <button
+                  type="submit"
+                  className="alp-btn-login"
+                  disabled={isLoading || !username || !password}
+                >
+                  <span className="alp-btn-text">
+                    {isLoading ? "登录中…" : "登录"}
+                  </span>
+                  <div className="alp-btn-hover">
+                    <span>{isLoading ? "登录中…" : "登录"}</span>
                     <svg
-                      width="20"
-                      height="20"
+                      width="16"
+                      height="16"
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"
-                      strokeWidth="2"
+                      strokeWidth="2.5"
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     >
-                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                      <circle cx="12" cy="12" r="3" />
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                      <polyline points="12 5 19 12 12 19" />
                     </svg>
-                  )}
+                  </div>
+                </button>
+              </form>
+
+              <div className="alp-form-footer">
+                <button
+                  className="alp-back-link"
+                  onClick={() => {
+                    window.localStorage.removeItem(ONBOARDING_DONE_KEY);
+                    setOnboardingComplete(false);
+                    setServerCheckState("idle");
+                    setServerCheckMessage("");
+                  }}
+                  type="button"
+                >
+                  重新检测服务连接
                 </button>
               </div>
-            </div>
-
-            <div className="alp-remember-row">
-              <label className="alp-remember-label">
-                <input
-                  type="checkbox"
-                  checked={rememberPassword}
-                  onChange={(e) => setRememberPassword(e.target.checked)}
-                />
-                <span className="alp-remember-check" />
-                <span>记住密码</span>
-              </label>
-            </div>
-
-            {error ? (
-              <div className="alp-error-msg">{error}</div>
-            ) : null}
-
-            <button
-              type="submit"
-              className="alp-btn-login"
-              disabled={isLoading || !username || !password}
-            >
-              <span className="alp-btn-text">
-                {isLoading ? "登录中…" : "登录"}
-              </span>
-              <div className="alp-btn-hover">
-                <span>{isLoading ? "登录中…" : "登录"}</span>
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                  <polyline points="12 5 19 12 12 19" />
-                </svg>
-              </div>
-            </button>
-          </form>
-
-          <div className="alp-form-footer">
-            <button
-              className="alp-back-link"
-              onClick={() => {
-                window.location.hash = "#/onboarding";
-              }}
-              type="button"
-            >
-              ← 返回环境检测
-            </button>
-          </div>
+            </>
+          )}
         </div>
       </div>
     </div>

@@ -4,281 +4,6 @@
    ============================================================ */
 
 /* ============================================================
-   Gate Page — backend connection onboarding
-   ============================================================ */
-
-.gate-page {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 100%;
-  padding: 16px;
-  background: hsl(var(--background));
-}
-
-.gate-content {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 24px;
-  width: min(380px, 100%);
-  animation: gate-enter 0.24s ease-out both;
-}
-
-@keyframes gate-enter {
-  from { opacity: 0; transform: translateY(16px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
-.gate-brand {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  text-align: center;
-}
-
-.gate-logo {
-  width: 64px;
-  height: 64px;
-  border-radius: var(--control-radius);
-  object-fit: cover;
-}
-
-.gate-title {
-  margin: 0;
-  color: hsl(var(--foreground));
-  font-size: 20px;
-  font-weight: 700;
-  line-height: 1.2;
-}
-
-.gate-card-header p {
-  margin: 0;
-  color: hsl(var(--muted-foreground));
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.gate-card {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  width: 100%;
-  padding: 16px;
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--card-radius);
-  background: hsl(var(--muted));
-  color: hsl(var(--foreground));
-}
-
-.gate-card-header {
-  display: flex;
-  flex-direction: column;
-  gap: var(--panel-gap);
-}
-
-.gate-card-header h2 {
-  margin: 0;
-  color: hsl(var(--foreground));
-  font-size: 17px;
-  font-weight: 700;
-  line-height: 1.25;
-}
-
-.gate-status {
-  display: flex;
-  align-items: center;
-  gap: var(--panel-gap);
-  min-height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--control-radius);
-  background: transparent;
-  transition: all 0.12s ease;
-}
-
-.gate-status.ok {
-  color: hsl(var(--success));
-}
-
-.gate-status.error {
-  color: hsl(var(--destructive));
-}
-
-.gate-pulse {
-  width: 14px;
-  height: 14px;
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  color: hsl(var(--muted-foreground));
-  transition: all 0.12s ease;
-}
-
-.gate-pulse svg {
-  width: 14px;
-  height: 14px;
-}
-
-.gate-status.ok .gate-pulse {
-  color: hsl(var(--success));
-}
-
-.gate-status.error .gate-pulse {
-  color: hsl(var(--destructive));
-}
-
-.gate-status-text {
-  margin: 0;
-  min-width: 0;
-  color: hsl(var(--muted-foreground));
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.gate-status.ok .gate-status-text {
-  color: hsl(var(--success));
-}
-
-.gate-status.error .gate-status-text {
-  color: hsl(var(--destructive));
-}
-
-.gate-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: hsl(var(--muted-foreground));
-  animation: pulse 1s linear infinite;
-}
-
-.gate-spinner {
-  width: 14px;
-  height: 14px;
-  border: 1px solid hsl(var(--border));
-  border-top-color: hsl(var(--muted-foreground));
-  border-radius: 999px;
-  animation: spin 0.8s linear infinite;
-}
-
-.gate-status.ok .gate-dot,
-.gate-status.error .gate-dot {
-  animation: none;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 0.35; }
-  50%      { opacity: 1; }
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.gate-form {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.gate-input-line {
-  display: flex;
-  flex-direction: column;
-  gap: var(--panel-gap);
-}
-
-.gate-input-line span {
-  color: hsl(var(--muted-foreground));
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.gate-input-line input {
-  width: 100%;
-  height: 32px;
-  padding: 0 12px;
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--control-radius);
-  background: hsl(var(--background));
-  color: hsl(var(--foreground));
-  font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
-  font-size: 13px;
-  transition: all 0.15s ease;
-}
-
-.gate-input-line input:hover {
-  border-color: hsl(var(--control-active-border));
-}
-
-.gate-input-line input:focus {
-  border-color: hsl(var(--control-active-border));
-}
-
-.gate-input-line input::placeholder {
-  color: hsl(var(--muted-foreground));
-}
-
-.gate-buttons {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--panel-gap);
-}
-
-.gate-btn {
-  height: 32px;
-  border-color: hsl(var(--border));
-  border-radius: var(--control-radius);
-  background: hsl(var(--card));
-  color: hsl(var(--foreground));
-  font-size: 13px;
-  font-weight: 600;
-  transition: all 0.15s ease;
-}
-
-.gate-btn:hover:not(:disabled) {
-  opacity: 1;
-  background: hsl(var(--muted));
-}
-
-.gate-btn-accent {
-  border-color: hsl(var(--primary));
-  background: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
-}
-
-.gate-btn-accent:hover:not(:disabled) {
-  background: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
-  opacity: 0.88;
-}
-
-@media (max-width: 900px) {
-  .gate-content {
-    gap: 24px;
-    width: min(380px, 100%);
-  }
-}
-
-@media (max-width: 540px) {
-  .gate-buttons {
-    flex-direction: column;
-  }
-
-  .gate-btn {
-    width: 100%;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .gate-content,
-  .gate-dot,
-  .gate-spinner {
-    animation: none;
-  }
-}
-
-/* ============================================================
    Animated Login Page
    ============================================================ */
 .alp-page {
@@ -322,28 +47,6 @@
   background: rgba(200, 195, 210, 0.2);
   border-radius: 50%;
   filter: blur(100px);
-}
-
-.alp-logo {
-  position: absolute;
-  top: 40px;
-  left: 48px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 16px;
-  font-weight: 600;
-  color: #fff;
-  z-index: 10;
-}
-
-.alp-logo svg {
-  width: 28px;
-  height: 28px;
-  background: rgba(255, 255, 255, 0.15);
-  backdrop-filter: blur(8px);
-  padding: 4px;
-  border-radius: 6px;
 }
 
 .alp-characters-wrapper {
@@ -509,17 +212,6 @@
   max-width: 400px;
 }
 
-.alp-sparkle {
-  display: flex;
-  justify-content: center;
-  margin-bottom: 24px;
-}
-
-.alp-sparkle svg {
-  width: 32px;
-  height: 32px;
-}
-
 .alp-form-header {
   text-align: center;
   margin-bottom: 36px;
@@ -575,6 +267,74 @@
 
 .alp-input-wrap input::placeholder {
   color: #ccc;
+}
+
+.alp-server-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.alp-server-input {
+  font-family: "JetBrains Mono", "Fira Code", Consolas, monospace !important;
+  letter-spacing: 0;
+}
+
+.alp-server-status {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 8px 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  background: hsl(var(--foreground) / 0.035);
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+  line-height: 1.4;
+  transition: all 0.15s ease;
+}
+
+.alp-server-status.is-ok {
+  border-color: hsl(var(--success) / 0.22);
+  background: hsl(var(--success) / 0.06);
+  color: hsl(var(--success));
+}
+
+.alp-server-status.is-error {
+  border-color: hsl(var(--destructive) / 0.2);
+  background: hsl(var(--destructive) / 0.08);
+  color: hsl(var(--destructive));
+}
+
+.alp-server-status-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.alp-server-status-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.alp-server-spinner {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid hsl(var(--border));
+  border-top-color: hsl(var(--muted-foreground));
+  border-radius: 50%;
+  animation: alp-spin 0.8s linear infinite;
+}
+
+.alp-btn-server-check {
+  margin-top: 4px;
+}
+
+@keyframes alp-spin {
+  to { transform: rotate(360deg); }
 }
 
 .alp-input-wrap input[type="password"]:not(:placeholder-shown) {

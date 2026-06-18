@@ -13,17 +13,10 @@ import { serverUrlAtom } from "../shared/state/server";
 import { AppShell } from "./AppShell";
 import { AppPage } from "../pages/AppPage";
 import { LoginPage } from "../pages/LoginPage";
-import { OnboardingPage } from "../pages/OnboardingPage";
 
 function getRoute() {
   const hash = window.location.hash || "#/login";
   return hash.replace("#", "");
-}
-
-const ONBOARDING_DONE_KEY = "project-r:onboarding-complete";
-
-function isOnboardingComplete() {
-  return localStorage.getItem(ONBOARDING_DONE_KEY) === "true";
 }
 
 function applyStoredTheme() {
@@ -40,7 +33,6 @@ function applyStoredTheme() {
 
 function RouteView() {
   const [route, setRoute] = useState(getRoute());
-  const [onboardingComplete, setOnboardingComplete] = useState(isOnboardingComplete);
   const token = useAtomValue(authTokenAtom);
   const isAuthenticated = useAtomValue(isAuthenticatedAtom);
   const serverUrl = useAtomValue(serverUrlAtom);
@@ -58,7 +50,7 @@ function RouteView() {
     const onHashChange = () => setRoute(getRoute());
     window.addEventListener("hashchange", onHashChange);
     if (!window.location.hash) {
-      window.location.hash = isOnboardingComplete() ? "#/login" : "#/onboarding";
+      window.location.hash = "#/login";
     }
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
@@ -108,19 +100,8 @@ function RouteView() {
     return null;
   }
   if (route === "/onboarding") {
-    return <OnboardingPage onComplete={() => {
-      localStorage.setItem(ONBOARDING_DONE_KEY, "true");
-      setOnboardingComplete(true);
-      window.location.hash = "#/login";
-    }} />;
-  }
-  if (!onboardingComplete && !isAuthenticated) {
-    window.location.hash = "#/onboarding";
-    return <OnboardingPage onComplete={() => {
-      localStorage.setItem(ONBOARDING_DONE_KEY, "true");
-      setOnboardingComplete(true);
-      window.location.hash = "#/login";
-    }} />;
+    window.location.hash = "#/login";
+    return <LoginPage />;
   }
   return <LoginPage />;
 }
