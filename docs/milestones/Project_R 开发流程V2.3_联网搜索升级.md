@@ -1,122 +1,147 @@
-结论：联网搜索方案建议做成 **DeepSeek 原生 Web Search 首选 + 现有搜索 provider 兜底**。前端“联网搜索”按钮语义不变，后端在开启后优先走 DeepSeek Anthropic Messages 接口，让 DeepSeek 自己调用 `web_search`，再把返回的搜索结果整理进 Project_R 的来源与审计链路。
+# Project_R 开发流程 V2.3：联网搜索升级任务计划
 
-**目标行为**
+## 1. 结论
+
+联网搜索升级采用 **Tavily Search API 主路径**。
+
+已取消：
+
+- 自托管 SearXNG 部署路线。
+- DeepSeek native web_search 路线。
+- DuckDuckGo HTML 解析作为默认 fallback。
+
+用户在前端选择任意聊天模型并打开“联网搜索”后，后端调用 Tavily Search API 获取公开网页结果，再把标题、URL 和摘要作为来源上下文交给当前选择的模型。搜索能力与模型 provider 解耦，前端不接触 API Key。
+
+## 2. 目标行为
 
 用户开启“联网搜索”后：
 
-1. 后端判断 `WEB_SEARCH_PROVIDER=deepseek_native`。
-2. 当前模型若为 DeepSeek，则走 `https://api.deepseek.com/anthropic/v1/messages`。
-3. 请求携带：
+1. 后端读取 `WEB_SEARCH_PROVIDER`。
+2. 生产默认配置为 `WEB_SEARCH_PROVIDER=tavily`。
+3. 后端调用 `search_web()`，通过 Tavily `/search` API 获取网页结果。
+4. 搜索结果取前 5 条，过滤空标题、空 URL 和重复 URL。
+5. 结果格式化为 `[来源 N]` 引用块，注入当前模型上下文。
+6. 返回给前端的消息包含：
+   - assistant 文本。
+   - `sources_json` 来源。
+   - `context_trace.web_search` 调用轨迹。
+7. `web_search=False` 时不得触发搜索 provider。
+8. 未配置 Tavily Key 时，后端返回可审计 warning，不伪造结果，不降级到 DuckDuckGo。
 
-```json
-{
-  "tools": [
-    { "type": "web_search_20250305", "name": "web_search", "max_uses": 3 }
-  ]
-}
-```
+## 3. 推荐配置
 
-4. DeepSeek 自行决定搜索，返回 `server_tool_use`、`web_search_tool_result` 和最终回答。
-5. Project_R 解析搜索结果标题、URL、最终回答、usage。
-6. UI 继续显示回答，并在消息来源中展示联网来源。
-7. 如果 DeepSeek native 搜索失败，再降级到现有 `search_web()` provider。
-
-**建议配置**
-
-新增环境变量：
+真实配置写入 `backend/.env`：
 
 ```env
-WEB_SEARCH_PROVIDER=deepseek_native
-WEB_SEARCH_DEEPSEEK_MAX_USES=3
-WEB_SEARCH_DEEPSEEK_MODEL_PROFILE=deepseek-flash
-WEB_SEARCH_FALLBACK_PROVIDER=duckduckgo
+WEB_SEARCH_PROVIDER=tavily
 WEB_SEARCH_TIMEOUT_SECONDS=90
+TAVILY_BASE_URL=https://api.tavily.com
+TAVILY_SEARCH_DEPTH=basic
+TAVILY_MAX_RESULTS=5
+TAVILY_API_KEY_1=tvly-你的第一个key
+TAVILY_API_KEY_2=tvly-你的第二个key
 ```
 
-说明：
+也可以使用逗号写法：
 
-- `WEB_SEARCH_PROVIDER=deepseek_native`：启用 DeepSeek 原生搜索。
-- `WEB_SEARCH_DEEPSEEK_MAX_USES=3`：限制每轮最多搜索次数，控制 token 成本。
-- `WEB_SEARCH_DEEPSEEK_MODEL_PROFILE`：联网搜索优先使用的模型 profile。Flash 已验证可用；Pro 更稳但成本更高。
-- `WEB_SEARCH_FALLBACK_PROVIDER`：DeepSeek native 失败后的兜底 provider。
-
-**文件变更清单**
-
-1. `backend/app/shared/llm/client.py`  
-   新增 DeepSeek Anthropic-compatible Messages 调用能力。  
-   主要新增：
-   - `DeepSeekAnthropicMessagesClient` 或独立方法
-   - 支持 `tools=[web_search]`
-   - 解析 `content` block
-   - 提取 `web_search_tool_result`
-   - 提取 `usage.server_tool_use.web_search_requests`
-
-2. `backend/app/shared/web_search/service.py`  
-   保留现有 `duckduckgo / serper / bing` 结构，但新增 `deepseek_native` 的识别。  
-   注意：`deepseek_native` 不适合像 DuckDuckGo 那样“先搜索再返回摘要”，它应走 LLM 完整生成链路，所以这里更适合只提供 provider 判断、fallback 和通用 source 转换工具。
-
-3. `backend/app/features/chat/send_message_service.py`  
-   调整联网搜索分支：
-   - 如果 `WEB_SEARCH_PROVIDER=deepseek_native` 且本轮 `web_search=True`，跳过当前 `maybe_run_web_search()` 的预搜索注入方式。
-   - 改为调用 DeepSeek native web search completion。
-   - 将返回的 search results 写入 `sources_json`。
-   - 将 `context_trace.web_search` 记录为 native provider。
-
-4. `backend/app/features/chat/web_search_context.py`  
-   增加 native trace 结构，例如：
-
-```json
-{
-  "skill_name": "web-search-content",
-  "provider": "deepseek_native",
-  "native": true,
-  "web_search_requests": 1,
-  "result_count": 10,
-  "fallback_used": false
-}
+```env
+TAVILY_API_KEYS=tvly-你的第一个key,tvly-你的第二个key
 ```
 
-5. `backend/skills/builtin/web-search-content/SKILL.md`  
-   更新 Skill 文档：
-   - 默认推荐 `deepseek_native`
-   - 说明 DeepSeek 原生搜索会产生额外 token 费用
-   - 说明 fallback provider
-   - 删除或弱化 Bing，因为 Bing Search API 已退役，不适合作为新默认方案
+约束：
 
-6. `backend/.env.example`  
-   增加联网搜索配置示例，不写真实 key。
+- 真实 Tavily Key 只允许存在于 `backend/.env`。
+- Key 不进入前端、日志、响应体、文档示例或 Git。
+- 多 Key 使用后端轮询，避免前端感知 Key。
 
-7. `backend/tests/`  
-   新增或扩展测试：
-   - DeepSeek native 响应解析测试
-   - `web_search_tool_result` 转 sources 测试
-   - native 搜索失败后 fallback 测试
-   - `web_search=False` 时不触发 native 工具测试
-   - 不使用真实 DeepSeek API，全部 mock HTTP 响应
+## 4. 文件变更
 
-**实现优先级**
+### 4.1 `backend/app/shared/web_search/service.py`
 
-第一步，MVP：
+目标：新增 `tavily` provider。
 
-- 打通 `WEB_SEARCH_PROVIDER=deepseek_native`
-- 非流式聊天先支持
-- 解析来源并入库
-- 失败时明确降级或报 trace
-- 跑后端相关 pytest
+任务：
 
-第二步，体验补强：
+- 支持 `WEB_SEARCH_PROVIDER=tavily`。
+- 使用 `POST https://api.tavily.com/search`。
+- Header 使用 `Authorization: Bearer <key>`。
+- 请求体显式设置：
+  - `query`
+  - `search_depth`
+  - `max_results`
+  - `include_answer=false`
+  - `include_raw_content=false`
+- 解析 `results[].title`、`results[].url`、`results[].content`。
+- 支持：
+  - `TAVILY_API_KEYS`
+  - `TAVILY_API_KEY`
+  - `TAVILY_API_KEY_1`
+  - `TAVILY_API_KEY_2`
+- 多 Key 轮询。
+- 未配置 key 时返回 `missing_tavily_api_key` warning。
 
-- 前端来源区域显示“DeepSeek 原生联网搜索”
-- 后台健康检查显示 provider 状态
-- 管理员可看到是否缺 Key、是否调用过 web search
+### 4.2 `backend/.env.example`
 
-第三步，再考虑流式：
+目标：提供非敏感配置模板。
 
-- 当前 native web search 会出现工具调用等待期，流式处理要解析 `server_tool_use` 和 `web_search_tool_result` 事件。
-- 建议先不动流式，避免一次改动过大。
+任务：
 
-**关键取舍**
+- 默认 `WEB_SEARCH_PROVIDER=tavily`。
+- 提供 `TAVILY_API_KEY_1` / `TAVILY_API_KEY_2` 空位。
+- 不写真实 key。
 
-推荐先做非流式 native web search，因为这条链路最短、风险最小，也能直接解决你当前“联网搜索不工作”的问题。
+### 4.3 `backend/skills/builtin/web-search-content/SKILL.md`
 
-不建议继续把 DuckDuckGo 当生产默认。它在国内网络和 HTML 解析上都不稳定，不适合作为 Project_R 面向中国大陆用户的主要搜索能力。
+目标：同步业务 Skill 文档。
+
+任务：
+
+- 明确 Tavily 是生产默认 provider。
+- 移除 SearXNG 与 DeepSeek native 作为推荐路径。
+- 保留失败时不能伪造网络来源的规则。
+
+### 4.4 `docs/operations/WINDOWS_SETUP.md`
+
+目标：说明 Windows 本地如何填写 Tavily Key。
+
+任务：
+
+- 移除 Docker / SearXNG 运维步骤。
+- 说明两个 Tavily Key 的填写位置。
+
+### 4.5 `backend/tests/`
+
+目标：用 mock 测试覆盖 Tavily provider。
+
+任务：
+
+- 新增 `backend/tests/test_web_search_tavily.py`。
+- 覆盖 Tavily 响应解析。
+- 覆盖缺 Key warning。
+- 覆盖两个 Key 轮询。
+- 保留 Chat 层普通联网搜索测试。
+
+## 5. 验证命令
+
+```powershell
+cd backend
+.\venv\Scripts\python.exe -m pytest tests/test_web_search_tavily.py tests/test_chat_phase6.py
+```
+
+## 6. 验收标准
+
+- [ ] `.env.example` 默认 `WEB_SEARCH_PROVIDER=tavily`。
+- [ ] `backend/.env` 可填写两个 Tavily Key。
+- [ ] `WEB_SEARCH_PROVIDER=tavily` 时，`search_web()` 可解析 mock Tavily JSON 结果。
+- [ ] 未配置 Tavily Key 时返回 `missing_tavily_api_key`。
+- [ ] 两个 Tavily Key 可轮询。
+- [ ] Chat 开启 `web_search=True` 时仍走普通搜索上下文注入。
+- [ ] Chat 关闭 `web_search=False` 时不触发搜索。
+- [ ] SearXNG 部署脚本和 Docker 文档已移除。
+- [ ] 相关 pytest 使用项目虚拟环境运行并通过。
+
+## 7. 后续增强
+
+- 管理员健康检查展示 Tavily provider 状态。
+- 前端来源区域显示搜索 provider。
+- 根据业务需求增加 Tavily `topic`、时间范围、domain include/exclude。

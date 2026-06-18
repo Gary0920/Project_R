@@ -11,7 +11,12 @@ os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.NamedTemporaryFile(delete=Fal
 
 import api.chat as chat_api
 import app.features.skills.execution as skill_execution
-from app.shared.llm.client import LLMProviderError, LLMResponse, StreamChunk, StreamResponse
+from app.shared.llm.client import (
+    LLMProviderError,
+    LLMResponse,
+    StreamChunk,
+    StreamResponse,
+)
 from app.shared.web_search.service import WebSearchResponse, WebSearchResult
 from fastapi import HTTPException
 from models import Base, SessionLocal, engine
@@ -93,7 +98,7 @@ def fake_gbrain_think_result():
         "ok": True,
         "status": "ok",
         "source_id": "company-wiki",
-        "reply": "用车申请需要先获得审批。\n\n引用与缺口： 来源 1 来源 2",
+        "reply": "用车申请需要先获得审批。",
         "model": "gbrain-think-test",
         "metadata": {
             "gaps": ["缺少审批时限。"],
@@ -1038,12 +1043,14 @@ class ChatPhase6Tests(unittest.TestCase):
         )
 
         self.assertIn("Use Project_R prompt", client.last_system_prompt)
+        self.assertIn("当前时间上下文", client.last_system_prompt)
         self.assertIn("输出格式要求", client.last_system_prompt)
 
     def test_empty_global_base_prompt_does_not_change_system_prompt(self):
         prompt = chat_api._compose_system_prompt("Session prompt", [], None, "")
 
         self.assertTrue(prompt.startswith("Session prompt"))
+        self.assertIn("当前时间上下文", prompt)
         self.assertIn("输出格式要求", prompt)
 
     def test_global_base_prompt_is_injected_before_session_prompt(self):
@@ -1090,11 +1097,9 @@ class ChatPhase6Tests(unittest.TestCase):
         self.assertFalse(assistant.rag_used)
         self.assertEqual(assistant.sources, [])
 
-    def test_query_command_uses_gbrain_native_think_without_llm(self):
-        def fail_if_called(provider=None):
-            raise AssertionError("LLM should not be called for /query")
-
-        chat_api.get_llm_client = fail_if_called
+    def test_query_command_uses_gbrain_think_and_expands_with_llm(self):
+        client = FakeLLMClient()
+        chat_api.get_llm_client = lambda provider=None: client
         knowledge_sources = FakeKnowledgeSources(
             fake_gbrain_company_sources(),
             think_result=fake_gbrain_think_result(),
@@ -1109,9 +1114,10 @@ class ChatPhase6Tests(unittest.TestCase):
         )
 
         self.assertEqual(response["intent"], "rag_query")
-        self.assertEqual(response["provider"], "gbrain")
-        self.assertEqual(response["model"], "gbrain-think-test")
-        self.assertIn("用车申请需要先获得审批", response["reply"])
+        self.assertEqual(response["provider"], "mock")
+        self.assertEqual(response["model"], "mock-model")
+        self.assertIn("mock reply: 用车申请怎么做", response["reply"])
+        self.assertNotIn("引用与缺口", response["reply"])
         self.assertEqual(response["sources"][0]["file"], "gbrain:company-wiki/rules/用车申请")
         self.assertEqual(response["agent_run"]["source_type"], "gbrain_think")
         self.assertEqual(response["context_trace"]["gbrain_think"]["gap_count"], 1)
@@ -1121,6 +1127,9 @@ class ChatPhase6Tests(unittest.TestCase):
         self.assertIn("车辆申请权限", response["context_trace"]["gbrain_think"]["conflicts"][0])
         self.assertEqual(response["context_trace"]["gbrain_think"]["warnings"], ["source_scope_limited"])
         self.assertEqual(response["context_trace"]["gbrain_think"]["diagnostics"]["trace_id"], "think-trace-1")
+        self.assertTrue(response["context_trace"]["query_synthesis"]["expanded_with_llm"])
+        self.assertIn("用车申请需要先获得审批", client.last_system_prompt)
+        self.assertIn("知识库问答写作层", client.last_system_prompt)
         self.assertEqual(response["agent_run"]["result"]["gbrain_think"]["gap_count"], 1)
         self.assertEqual(knowledge_sources.think_calls[0]["content"], "用车申请怎么做")
         self.assertEqual(knowledge_sources.search_calls, [])
@@ -1191,10 +1200,8 @@ class ChatPhase6Tests(unittest.TestCase):
         self.assertNotIn("知识库中未检索到", client.last_system_prompt)
 
     def test_query_command_overrides_text_transformation_prompt_rag_reduction(self):
-        def fail_if_called(provider=None):
-            raise AssertionError("LLM should not be called for /query even when a text prompt is selected")
-
-        chat_api.get_llm_client = fail_if_called
+        client = FakeLLMClient()
+        chat_api.get_llm_client = lambda provider=None: client
         chat_api.KNOWLEDGE_SOURCES = FakeKnowledgeSources(think_result=fake_gbrain_think_result())
 
         response = chat_api.send_message(
@@ -1208,8 +1215,10 @@ class ChatPhase6Tests(unittest.TestCase):
         )
 
         self.assertEqual(response["intent"], "rag_query")
-        self.assertEqual(response["provider"], "gbrain")
-        self.assertIn("用车申请需要先获得审批", response["reply"])
+        self.assertEqual(response["provider"], "mock")
+        self.assertIn("mock reply: 如何借用公司车辆", response["reply"])
+        self.assertIn("知识库问答写作层", client.last_system_prompt)
+        self.assertNotIn("文本变换类提示词", client.last_system_prompt)
 
     def test_query_command_forces_knowledge_mode(self):
         def fail_if_called(provider=None):

@@ -663,12 +663,23 @@ def _run_gbrain_think_response(
     user_message_id: int,
     content: str,
     knowledge_query: str,
+    req: SendMessageRequest,
 ) -> dict:
     return _run_gbrain_think_response_core(
-        db, user_id, session, user_message_id, content, knowledge_query,
+        db,
+        user_id,
+        session,
+        user_message_id,
+        content,
+        knowledge_query,
+        req,
         knowledge_sources=KNOWLEDGE_SOURCES,
         serialize_sources_fn=_serialize_sources,
         write_gbrain_think_agent_run_fn=_write_gbrain_think_agent_run,
+        get_llm_client=get_llm_client,
+        load_global_base_prompt=_load_global_base_prompt,
+        llm_configuration_error=LLMConfigurationError,
+        llm_provider_error=LLMProviderError,
     )
 
 

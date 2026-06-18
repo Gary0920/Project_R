@@ -466,6 +466,7 @@
   padding: 12px;
   font-size: 13px;
   line-height: 1.7;
+  color: hsl(var(--foreground));
 }
 
 .source-preview-markdown > *:first-child {
@@ -474,6 +475,39 @@
 
 .source-preview-markdown > *:last-child {
   margin-bottom: 0;
+}
+
+.source-preview-markdown .message-paragraph,
+.source-preview-markdown .source-preview-paragraph,
+.source-preview-markdown .message-list,
+.source-preview-markdown .message-list li,
+.source-preview-markdown .message-quote,
+.source-preview-markdown .message-quote p,
+.source-preview-markdown .message-heading,
+.source-preview-markdown .message-table,
+.source-preview-markdown .message-table th,
+.source-preview-markdown .message-table td {
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.source-preview-markdown .message-heading {
+  margin: 8px 0 4px;
+  font-weight: 650;
+}
+
+.source-preview-markdown .message-paragraph,
+.source-preview-markdown .source-preview-paragraph {
+  margin: 0 0 8px;
+}
+
+.source-preview-markdown .message-list {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+
+.source-preview-markdown .message-inline-code {
+  font-size: 12px;
 }
 
 :root[data-theme="dark"] .source-preview-index {

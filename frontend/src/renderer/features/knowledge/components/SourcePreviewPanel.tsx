@@ -1,4 +1,4 @@
-import { renderMessageContent } from "../../chat/messageContent";
+import { renderSourceExcerptContent } from "../../chat/messageContent";
 import type { KnowledgeSourcePreview } from "../sourcePreview";
 import { evidenceContextFromTrace, normalizeSourceEvidence } from "../sourceEvidence";
 import { SourceEvidencePanel } from "./SourceEvidencePanel";
@@ -23,7 +23,7 @@ export function SourcePreviewPanel({ preview }: SourcePreviewPanelProps) {
         <div className="source-preview-excerpt">
           <strong>证据片段</strong>
           <div className="source-preview-markdown">
-            {renderMessageContent(source.evidenceExcerpt)}
+            {renderSourceExcerptContent(source.evidenceExcerpt)}
           </div>
         </div>
       ) : (

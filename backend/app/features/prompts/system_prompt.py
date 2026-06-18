@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.features.chat.intent import IntentType
+from app.shared.runtime_context import current_time_prompt
 
 
 TEXT_TRANSFORMATION_PROMPT_IDS = {
@@ -59,6 +60,7 @@ def compose_system_prompt(
         parts.append(global_base_prompt)
     if base_prompt and base_prompt.strip():
         parts.append(base_prompt.strip())
+    parts.append(current_time_prompt())
     parts.append(FORMAT_GUIDANCE_PROMPT)
     if intent == IntentType.DOCUMENT_GENERATION:
         parts.append(DOCUMENT_GENERATION_PROMPT)

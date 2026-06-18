@@ -1,7 +1,7 @@
 ---
 name: web-search-content
 display_name: 联网搜索内容
-description: 在用户显式开启联网搜索时，搜索公开网页并把结果摘要注入 DeepSeek / MiMo 对话上下文。
+description: 在用户显式开启联网搜索时，使用 Tavily Search API 获取公开网页结果，并把来源上下文交给当前选择的模型。
 category: Chat 工具
 priority: medium
 trigger:
@@ -33,28 +33,47 @@ references: []
 
 ## 目的
 
-当用户在聊天输入区打开“联网搜索”开关时，Project_R 使用本 Skill 对本轮用户问题进行公开网页搜索，并把搜索结果摘要作为上下文交给当前模型。
+当用户在聊天输入区打开“联网搜索”开关时，Project_R 调用后端配置的 Tavily Search API 获取公开网页结果，保留标题、URL 和摘要，并把这些来源作为上下文交给当前选择的模型。
+
+联网搜索能力应保持模型无关：前端选择 DeepSeek、MiMo 或其他模型时，只要开启联网搜索，都应通过同一搜索上下文链路获得可审计来源。
 
 ## 适配模型
 
-- DeepSeek：以文本 system prompt 方式注入网页摘要。
-- MiMo：同样以文本上下文注入，不依赖模型原生联网能力。
+- 所有可用聊天模型：默认使用 `WEB_SEARCH_PROVIDER=tavily` 的网页摘要注入方式。
 
 ## 处理步骤
 
-1. 使用本轮用户消息作为搜索 query。
-2. 调用后端配置的搜索 provider。
-3. 取前 5 条结果，保留标题、URL 和摘要。
-4. 将结果格式化为 `[来源 N]` 引用块注入模型上下文。
-5. 模型回答时应基于摘要给出结论，并在关键结论后标注 `[来源 N]`。
+1. 用户开启联网搜索后，后端按 `WEB_SEARCH_PROVIDER` 选择搜索链路。
+2. 生产默认链路为 `tavily`：调用 Tavily Search API。
+3. 搜索取前 5 条结果，保留标题、URL 和摘要。
+4. 搜索结果会格式化为 `[来源 N]` 引用块注入模型上下文。
+5. 搜索失败或摘要不足时，模型必须明确说明缺口，不能伪造网页来源。
 
 ## 搜索 Provider
 
-默认 provider 为 `duckduckgo`。可通过环境变量切换：
+生产推荐配置：
 
+- `WEB_SEARCH_PROVIDER=tavily`
+- `WEB_SEARCH_TIMEOUT_SECONDS=90`
+- `TAVILY_BASE_URL=https://api.tavily.com`
+- `TAVILY_SEARCH_DEPTH=basic`
+- `TAVILY_MAX_RESULTS=5`
+- `TAVILY_API_KEY_1`
+- `TAVILY_API_KEY_2`
+
+普通搜索 provider 可通过环境变量切换：
+
+- `WEB_SEARCH_PROVIDER=tavily`，需要 `TAVILY_API_KEYS` 或 `TAVILY_API_KEY_1` / `TAVILY_API_KEY_2`
+- `WEB_SEARCH_PROVIDER=serper`，需要 `SERPER_API_KEY`
 - `WEB_SEARCH_PROVIDER=duckduckgo`
 - `WEB_SEARCH_PROVIDER=bing`，需要 `BING_SEARCH_API_KEY`
-- `WEB_SEARCH_PROVIDER=serper`，需要 `SERPER_API_KEY`
+
+说明：
+
+- `tavily` 是生产默认路径。
+- `duckduckgo` 依赖 HTML 页面解析，只适合作为开发或临时 fallback，不作为生产默认。
+- `bing` 仅保留兼容入口，不作为新部署默认方案。
+- Tavily API Key 只允许写在后端 `.env`，不得进入前端、日志、响应体或文档示例。
 
 ## 错误处理
 

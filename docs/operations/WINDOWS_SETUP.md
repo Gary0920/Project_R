@@ -67,6 +67,24 @@ notepad .env
 
 按需填写真实 LLM API Key、Provider 配置等。`.env` 含敏感信息，不应提交到 GitHub，也不会放入源码运行包。
 
+联网搜索默认使用 Tavily Search API。若要启用前端“联网搜索”开关，需要在 `.env` 中确认：
+
+```env
+WEB_SEARCH_PROVIDER=tavily
+TAVILY_API_KEY_1=tvly-你的第一个key
+TAVILY_API_KEY_2=tvly-你的第二个key
+TAVILY_SEARCH_DEPTH=basic
+TAVILY_MAX_RESULTS=5
+```
+
+也可以使用逗号写法：
+
+```env
+TAVILY_API_KEYS=tvly-你的第一个key,tvly-你的第二个key
+```
+
+真实 Key 只允许写入 `backend/.env`，不得提交到 GitHub。后端会轮询使用多个 Tavily Key；当某个 Key 返回认证、额度、限流、网络或 5xx 类错误时，会在本次请求中尝试下一个 Key。
+
 ## 5. 前端依赖安装
 
 打开新的 PowerShell，进入项目目录后执行：
@@ -117,7 +135,7 @@ http://localhost:8000
 管理员账号：
 
 ```text
-admin / Project_R_2026
+sysadmin / Admin123
 ```
 
 ## 8. 大体积依赖与缓存说明
@@ -144,4 +162,3 @@ admin / Project_R_2026
 - 前端锁文件：`frontend/bun.lock`
 
 新增依赖时必须写入对应依赖声明文件，不能只安装在本机环境中。
-

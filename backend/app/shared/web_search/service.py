@@ -7,15 +7,20 @@ import json
 import os
 import re
 import socket
+import threading
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote_plus, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
+from app.shared.runtime_context import PROJECT_R_TIMEZONE_NAME, project_r_current_date
+
 
 DEFAULT_MAX_RESULTS = 5
 DEFAULT_TIMEOUT_SECONDS = 8.0
 WEB_SEARCH_SKILL_NAME = "web-search-content"
+_TAVILY_KEY_LOCK = threading.Lock()
+_TAVILY_KEY_CURSOR = 0
 
 
 class WebSearchError(RuntimeError):
@@ -39,15 +44,23 @@ class WebSearchResponse:
     warnings: list[str] = field(default_factory=list)
 
 
-def search_web(query: str, *, max_results: int = DEFAULT_MAX_RESULTS) -> WebSearchResponse:
+def search_web(
+    query: str,
+    *,
+    max_results: int = DEFAULT_MAX_RESULTS,
+    provider: str | None = None,
+) -> WebSearchResponse:
     normalized_query = " ".join(query.split()).strip()
+    search_provider = _provider_name(provider)
     if not normalized_query:
-        return WebSearchResponse(query="", provider=_provider_name(), warnings=["empty_query"])
+        return WebSearchResponse(query="", provider=search_provider, warnings=["empty_query"])
 
-    provider = _provider_name()
-    limit = max(1, min(int(max_results or DEFAULT_MAX_RESULTS), 10))
+    provider = search_provider
+    limit = _result_limit(max_results, provider)
     try:
-        if provider == "bing":
+        if provider == "tavily":
+            results = _search_tavily(normalized_query, limit)
+        elif provider == "bing":
             results = _search_bing(normalized_query, limit)
         elif provider == "serper":
             results = _search_serper(normalized_query, limit)
@@ -101,6 +114,7 @@ def format_web_search_prompt(response: WebSearchResponse, *, start_index: int = 
             "这些结果可能随时间变化；回答涉及新闻、价格、政策、版本或其他时效信息时，"
             "请优先依据这些网页摘要，并在关键结论后使用对应的 [来源 N] 标注。"
             "如果搜索摘要不足以支撑结论，请明确说明缺口，不要编造网页中没有的信息。\n\n"
+            f"当前日期：{project_r_current_date()}（{PROJECT_R_TIMEZONE_NAME}）\n"
             f"搜索问题：{response.query}\n"
             f"搜索 Provider：{response.provider}\n\n"
             + "\n\n".join(snippets)
@@ -109,6 +123,7 @@ def format_web_search_prompt(response: WebSearchResponse, *, start_index: int = 
     warning_text = "；".join(response.warnings) if response.warnings else "未返回可用结果"
     return (
         "本轮用户开启了联网搜索，但 Project_R 联网搜索 Skill 未返回可用网页摘要。"
+        f"当前日期：{project_r_current_date()}（{PROJECT_R_TIMEZONE_NAME}）。"
         f"搜索问题：{response.query or '空查询'}。"
         f"搜索 Provider：{response.provider}。"
         f"搜索状态：{warning_text}。"
@@ -116,8 +131,23 @@ def format_web_search_prompt(response: WebSearchResponse, *, start_index: int = 
     )
 
 
-def _provider_name() -> str:
-    return (os.getenv("WEB_SEARCH_PROVIDER") or os.getenv("PROJECT_R_WEB_SEARCH_PROVIDER") or "duckduckgo").strip().lower()
+def _provider_name(provider: str | None = None) -> str:
+    return (
+        provider
+        or os.getenv("WEB_SEARCH_PROVIDER")
+        or os.getenv("PROJECT_R_WEB_SEARCH_PROVIDER")
+        or "disabled"
+    ).strip().lower()
+
+
+def _result_limit(max_results: int, provider: str) -> int:
+    raw_limit: int | str | None = max_results or DEFAULT_MAX_RESULTS
+    if provider == "tavily":
+        raw_limit = os.getenv("TAVILY_MAX_RESULTS") or raw_limit
+    try:
+        return max(1, min(int(raw_limit), 10))
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_RESULTS
 
 
 def _timeout() -> float:
@@ -193,6 +223,116 @@ def _search_serper(query: str, limit: int) -> list[WebSearchResult]:
         if title and url:
             results.append(WebSearchResult(title=title, url=url, snippet=snippet, rank=index, provider="serper"))
     return results
+
+
+def _search_tavily(query: str, limit: int) -> list[WebSearchResult]:
+    keys = _next_tavily_key_rotation()
+    if not keys:
+        raise WebSearchError("missing_tavily_api_key")
+    last_error: WebSearchError | None = None
+    for key in keys:
+        try:
+            return _search_tavily_with_key(query, limit, key)
+        except WebSearchError as exc:
+            last_error = exc
+            if not _is_tavily_key_retryable_error(str(exc)):
+                raise
+    if last_error:
+        raise last_error
+    raise WebSearchError("missing_tavily_api_key")
+
+
+def _search_tavily_with_key(query: str, limit: int, key: str) -> list[WebSearchResult]:
+    base_url = (os.getenv("TAVILY_BASE_URL") or "https://api.tavily.com").strip().rstrip("/")
+    search_depth = (os.getenv("TAVILY_SEARCH_DEPTH") or "basic").strip().lower()
+    if search_depth not in {"basic", "advanced"}:
+        search_depth = "basic"
+    raw = _request_bytes(
+        f"{base_url}/search",
+        method="POST",
+        payload={
+            "query": query,
+            "search_depth": search_depth,
+            "max_results": limit,
+            "include_answer": False,
+            "include_raw_content": False,
+        },
+        headers={
+            "authorization": f"Bearer {key}",
+            "accept": "application/json",
+        },
+    )
+    payload = _json_loads(raw)
+    items = payload.get("results") or [] if isinstance(payload, dict) else []
+    results: list[WebSearchResult] = []
+    seen_urls: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        title = _clean_text(str(item.get("title") or ""))
+        url = str(item.get("url") or "").strip()
+        snippet = _clean_text(str(item.get("content") or item.get("snippet") or ""))
+        if not title or not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        results.append(
+            WebSearchResult(
+                title=title,
+                url=url,
+                snippet=snippet,
+                rank=len(results) + 1,
+                provider="tavily",
+            )
+        )
+        if len(results) >= limit:
+            break
+    return results
+
+
+def _next_tavily_key_rotation() -> list[str]:
+    keys = _load_tavily_keys()
+    if not keys:
+        return []
+    global _TAVILY_KEY_CURSOR
+    with _TAVILY_KEY_LOCK:
+        start = _TAVILY_KEY_CURSOR % len(keys)
+        _TAVILY_KEY_CURSOR = (_TAVILY_KEY_CURSOR + 1) % len(keys)
+    return keys[start:] + keys[:start]
+
+
+def _load_tavily_keys() -> list[str]:
+    raw_keys: list[str] = []
+    raw_keys.extend(
+        key.strip()
+        for key in (os.getenv("TAVILY_API_KEYS") or "").split(",")
+        if key.strip()
+    )
+    single_key = (os.getenv("TAVILY_API_KEY") or os.getenv("WEB_SEARCH_API_KEY") or "").strip()
+    if single_key:
+        raw_keys.append(single_key)
+    numbered_keys: list[tuple[int, str]] = []
+    for name, value in os.environ.items():
+        match = re.fullmatch(r"TAVILY_API_KEY_(\d+)", name)
+        if match and value.strip():
+            numbered_keys.append((int(match.group(1)), value.strip()))
+    raw_keys.extend(value for _, value in sorted(numbered_keys))
+    keys: list[str] = []
+    seen: set[str] = set()
+    for key in raw_keys:
+        if key not in seen:
+            keys.append(key)
+            seen.add(key)
+    return keys
+
+
+def _is_tavily_key_retryable_error(message: str) -> bool:
+    normalized = message.lower()
+    if normalized.startswith(("http_401", "http_403", "http_429")):
+        return True
+    if normalized.startswith(("http_500", "http_502", "http_503", "http_504", "network_error")):
+        return True
+    quota_markers = ("quota", "credit", "limit", "rate", "exhaust", "insufficient")
+    return any(marker in normalized for marker in quota_markers)
 
 
 def _search_duckduckgo_html(query: str, limit: int) -> list[WebSearchResult]:

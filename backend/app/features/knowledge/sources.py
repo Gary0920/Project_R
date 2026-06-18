@@ -372,8 +372,6 @@ class KnowledgeSources:
             }
         answer = partial.get("raw_answer") or ""
         sources = partial.get("sources") or []
-        if answer and sources:
-            answer = self._append_citation_summary(answer, sources)
         return {
             "ok": True,
             "status": "ok",
@@ -396,8 +394,6 @@ class KnowledgeSources:
             project_partial.get("raw_answer") or "",
             company_partial.get("raw_answer") or "",
         )
-        if answer and merged_sources:
-            answer = self._append_citation_summary(answer, merged_sources)
         metadata = self._merge_think_metadata(
             project_partial.get("metadata") or {},
             company_partial.get("metadata") or {},
@@ -412,10 +408,6 @@ class KnowledgeSources:
             "model": project_partial.get("model") or "think",
             "metadata": metadata,
         }
-
-    @staticmethod
-    def _append_citation_summary(answer: str, sources: list[dict]) -> str:
-        return answer.rstrip() + "\n\n引用与缺口： " + " ".join(f"来源 {index}" for index in range(1, len(sources) + 1))
 
     @staticmethod
     def _combine_project_company_answer(project_answer: str, company_answer: str) -> str:

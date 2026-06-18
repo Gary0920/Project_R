@@ -18,6 +18,12 @@ import { MessageAttachments } from "./MessageAttachments";
 import { MessageGeneratedFile } from "./MessageGeneratedFile";
 import { MessageSkillRunCard } from "./MessageSkillRunCard";
 import type { TextTransformAction } from "../textTransform";
+import { buildLoadingStatusTexts } from "../loadingStatusTexts";
+import {
+  buildWebSearchSummary,
+  hasNonDefaultSessionPrompt,
+  shouldShowContextTraceCard,
+} from "../contextTraceVisibility";
 import { MessageSourceList } from "../../knowledge/components/MessageSourceList";
 
 export type ChatMessageListController = Record<string, any> & {
@@ -47,49 +53,25 @@ export type ChatMessageListProps = {
   controller: ChatMessageListController;
 };
 
-function _isDefaultPromptId(promptId: string | null | undefined) {
-  return promptId === "builtin:builtin-project-r";
-}
-
-function hasContextTrace(contextTrace: ChatContextTraceResponse | null | undefined) {
-  if (!contextTrace) return false;
-  const hasVisiblePrompt = contextTrace.prompt?.system_prompt_provided
-    || (contextTrace.prompt?.selected_prompt_id && !_isDefaultPromptId(contextTrace.prompt.selected_prompt_id));
-  return Boolean(
-    contextTrace.attachments?.length ||
-    contextTrace.knowledge?.source_count ||
-    hasVisiblePrompt ||
-    contextTrace.skill?.skill_name ||
-    contextTrace.gbrain_think?.gap_count ||
-    contextTrace.gbrain_think?.conflict_count ||
-    contextTrace.gbrain_think?.warning_count ||
-    contextTrace.model?.model,
-  );
-}
-
 function renderContextTraceCard(
   contextTrace: ChatContextTraceResponse | null | undefined,
+  messageSourceCount = 0,
   options: { onSubmitGBrainThinkReview?: () => void; gbrainThinkReviewBusy?: boolean } = {},
 ) {
-  if (!hasContextTrace(contextTrace) || !contextTrace) return null;
+  if (!shouldShowContextTraceCard(contextTrace, messageSourceCount) || !contextTrace) return null;
   const attachments = contextTrace.attachments ?? [];
   const sources = contextTrace.knowledge?.sources ?? [];
   const prompt = contextTrace.prompt;
-  const model = contextTrace.model;
   const gbrainThink = contextTrace.gbrain_think;
   const gbrainGaps = gbrainThink?.gaps?.filter(Boolean) ?? [];
   const gbrainConflicts = gbrainThink?.conflicts?.filter(Boolean) ?? [];
   const gbrainWarnings = gbrainThink?.warnings?.filter(Boolean) ?? [];
-  const modelBadges = [
-    model?.model,
-    model?.thinking ? "思考" : null,
-    model?.web_search ? "联网搜索" : null,
-  ].filter(Boolean).join(" · ");
+  const showKnowledgeSection = !messageSourceCount && (sources.length || contextTrace.knowledge?.source_count);
+  const webSearchSummary = buildWebSearchSummary(contextTrace);
   return (
     <div className="message-context-trace">
       <div className="message-context-trace-header">
         <strong>本轮上下文</strong>
-        {modelBadges ? <span>{modelBadges}</span> : null}
       </div>
       <div className="message-context-trace-grid">
         {attachments.length ? (
@@ -101,7 +83,7 @@ function renderContextTraceCard(
             {attachments.length > 4 ? <small>另有 {attachments.length - 4} 个附件</small> : null}
           </div>
         ) : null}
-        {sources.length || contextTrace.knowledge?.source_count ? (
+        {showKnowledgeSection ? (
           <div className="message-context-trace-section">
             <span>知识来源</span>
             {sources.slice(0, 4).map((source) => (
@@ -110,6 +92,13 @@ function renderContextTraceCard(
             {(contextTrace.knowledge?.source_count ?? 0) > sources.length ? (
               <small>共 {contextTrace.knowledge?.source_count} 个来源</small>
             ) : null}
+          </div>
+        ) : null}
+        {webSearchSummary ? (
+          <div className="message-context-trace-section">
+            <span>联网搜索</span>
+            <small>检索词：{webSearchSummary.query}</small>
+            <small>{webSearchSummary.providerLabel} · {webSearchSummary.resultCount} 条结果</small>
           </div>
         ) : null}
         {gbrainThink && (gbrainGaps.length || gbrainConflicts.length || gbrainWarnings.length) ? (
@@ -132,11 +121,11 @@ function renderContextTraceCard(
             {gbrainWarnings.length ? <small className="is-warning">警告 {gbrainWarnings.length} 条</small> : null}
           </div>
         ) : null}
-        {prompt?.system_prompt_provided || (prompt?.selected_prompt_id && !_isDefaultPromptId(prompt.selected_prompt_id)) ? (
+        {hasNonDefaultSessionPrompt(prompt) ? (
           <div className="message-context-trace-section">
             <span>提示词</span>
-            {prompt?.selected_prompt_id && !_isDefaultPromptId(prompt.selected_prompt_id) ? <small>{prompt.selected_prompt_id}</small> : null}
-            {prompt?.system_prompt_provided ? <small>{prompt.system_prompt_preview || "已使用会话提示词"}</small> : null}
+            <small>{prompt?.selected_prompt_id}</small>
+            {prompt?.system_prompt_preview ? <small>{prompt.system_prompt_preview}</small> : null}
           </div>
         ) : null}
         {contextTrace.skill?.skill_name ? (
@@ -193,44 +182,55 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
     token,
   } = controller;
 
-  function getLoadingProcessSteps(isInline = false) {
+  function getLoadingStatusTexts(variant: "reply" | "regenerate") {
     const latestUserMessage = [...messages].reverse().find((message) => message.role === "user") as any;
     const latestContent = String(latestUserMessage?.content ?? "").trim();
-    // Skill from controller state (set when user selects a Skill before sending)
     const activeSkillName = (controller as any).selectedSkill?.display_name
       || (controller as any).selectedSkill?.name
       || null;
 
-    if (mode === "agent") {
-      if (activeSkillName) {
-        const label = typeof activeSkillName === "string" ? activeSkillName : String(activeSkillName);
-        return ["已选择 Skill：" + label, "正在读取上下文", "正在执行任务"];
-      }
-      return isInline
-        ? ["正在整理执行步骤", "正在更新任务状态", "正在生成结果"]
-        : ["正在理解任务目标", "正在整理执行计划", "正在准备步骤状态"];
-    }
-    const hasAttachments = Array.isArray(latestUserMessage?.attachments) && latestUserMessage.attachments.length > 0;
-    if (latestContent.startsWith("/query")) {
-      return ["正在识别知识库问题", "正在确认查询范围", "正在生成回答"];
-    }
-    if (hasAttachments) {
-      return ["正在读取本轮附件", "正在整理上下文", "正在生成回答"];
-    }
-    return ["正在理解问题", "正在整理上下文", "正在生成回答"];
+    return buildLoadingStatusTexts({
+      mode,
+      variant,
+      hasAttachments: Array.isArray(latestUserMessage?.attachments) && latestUserMessage.attachments.length > 0,
+      isKnowledgeQuery: latestContent.startsWith("/query"),
+      activeSkillName: activeSkillName ? String(activeSkillName) : null,
+      webSearchEnabled: Boolean((controller as any).webSearchEnabled),
+      thinkingEnabled: Boolean((controller as any).thinkingEnabled),
+    });
   }
 
-  function LoadingPlaceholder() {
+  function ReplyLoadingContent({
+    inline = false,
+    variant = "reply",
+  }: {
+    inline?: boolean;
+    variant?: "reply" | "regenerate";
+  }) {
     const [stepIndex, setStepIndex] = useState(0);
-    const processSteps = getLoadingProcessSteps();
+    const statusTexts = getLoadingStatusTexts(variant);
+    const statusTextKey = statusTexts.join("\u0000");
+
+    useEffect(() => {
+      setStepIndex(0);
+    }, [statusTextKey, variant]);
 
     useEffect(() => {
       const interval = window.setInterval(() => {
-        setStepIndex((value) => (value + 1) % processSteps.length);
+        setStepIndex((value) => (value + 1) % statusTexts.length);
       }, 2000);
       return () => window.clearInterval(interval);
-    }, [processSteps.length]);
+    }, [statusTexts.length, statusTextKey]);
 
+    return (
+      <div className={`loading-placeholder-inner ${inline ? "loading-placeholder-inline" : ""}`}>
+        <span aria-hidden="true" className="chat-loading-spinner" />
+        <span className="loading-placeholder-text">{statusTexts[stepIndex]}</span>
+      </div>
+    );
+  }
+
+  function LoadingPlaceholder() {
     return (
       <article className="message-row message-row-assistant message-row-loading">
         <span className="message-avatar assistant-avatar"><ProjectRLogo /></span>
@@ -241,44 +241,10 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
             </div>
           </div>
           <div className="message-bubble">
-            <div className="loading-placeholder-inner">
-              <svg className="pl" viewBox="0 0 128 128" width="128" height="128" xmlns="http://www.w3.org/2000/svg">
-                <circle className="pl__ring pl__ring--a" cx="64" cy="64" r="56" fill="none" strokeWidth="16" transform="rotate(90,64,64)" />
-                <circle className="pl__ring pl__ring--b" cx="64" cy="64" r="56" fill="none" strokeWidth="16" transform="rotate(90,64,64)" />
-                <circle className="pl__ring pl__ring--c" cx="64" cy="64" r="56" fill="none" strokeWidth="16" transform="rotate(90,64,64)" />
-                <circle className="pl__ring pl__ring--d" cx="64" cy="64" r="56" fill="none" strokeWidth="16" transform="rotate(90,64,64)" />
-              </svg>
-              <span className="loading-placeholder-text">{mode === "agent" ? "Agent 执行中" : "正在回复"}</span>
-              <small className="loading-process-text">{processSteps[stepIndex]}</small>
-            </div>
+            <ReplyLoadingContent />
           </div>
         </div>
       </article>
-    );
-  }
-
-  function InlineLoadingPlaceholder() {
-    const [stepIndex, setStepIndex] = useState(0);
-    const processSteps = getLoadingProcessSteps(true);
-
-    useEffect(() => {
-      const interval = window.setInterval(() => {
-        setStepIndex((value) => (value + 1) % processSteps.length);
-      }, 2000);
-      return () => window.clearInterval(interval);
-    }, [processSteps.length]);
-
-    return (
-      <div className="loading-placeholder-inner loading-placeholder-inline">
-        <svg className="pl" viewBox="0 0 128 128" width="128" height="128" xmlns="http://www.w3.org/2000/svg">
-          <circle className="pl__ring pl__ring--a" cx="64" cy="64" r="56" fill="none" strokeWidth="16" transform="rotate(90,64,64)" />
-          <circle className="pl__ring pl__ring--b" cx="64" cy="64" r="56" fill="none" strokeWidth="16" transform="rotate(90,64,64)" />
-          <circle className="pl__ring pl__ring--c" cx="64" cy="64" r="56" fill="none" strokeWidth="16" transform="rotate(90,64,64)" />
-          <circle className="pl__ring pl__ring--d" cx="64" cy="64" r="56" fill="none" strokeWidth="16" transform="rotate(90,64,64)" />
-        </svg>
-        <span className="loading-placeholder-text">{mode === "agent" ? "执行中" : "生成中"}</span>
-        <small className="loading-process-text">{processSteps[stepIndex]}</small>
-      </div>
     );
   }
 
@@ -395,14 +361,16 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
               {hasMessageBubble ? (
                 <div className="message-bubble">
                   {message.isRegenerating ? (
-                    <InlineLoadingPlaceholder />
+                    <ReplyLoadingContent inline variant="regenerate" />
+                  ) : message.isTyping && !message.content.trim() ? (
+                    <ReplyLoadingContent inline />
                   ) : (
                     renderMessageContent(message.content, message.sources ?? [], (preview) => {
                       setSourcePreview({ ...preview, contextTrace: message.context_trace, sessionId: message.session_id });
                       setUtilityPanel("source");
                     })
                   )}
-                  {message.isTyping && !message.isRegenerating ? <span className="typing-caret" /> : null}
+                  {message.isTyping && !message.isRegenerating && message.content.trim() ? <span className="typing-caret" /> : null}
                 </div>
               ) : null}
             </>
@@ -417,7 +385,7 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
               setUtilityPanel("source");
             }}
           />
-          {message.role === "assistant" ? renderContextTraceCard(message.context_trace, {
+          {message.role === "assistant" ? renderContextTraceCard(message.context_trace, message.sources?.length ?? 0, {
             gbrainThinkReviewBusy: messageActionBusyId === message.id,
             onSubmitGBrainThinkReview: message.context_trace?.gbrain_think
               ? () => void handleSubmitGBrainThinkReview(message)
@@ -499,6 +467,9 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
   const filteredMessages = isSearching
     ? messages.filter((msg) => (msg.content ?? "").toLowerCase().includes(query))
     : messages;
+  const hasPendingAssistantReply = messages.some(
+    (message) => message.role === "assistant" && (message.isTyping || message.isRegenerating),
+  );
 
   function handleToggleSearch() {
     setShowSearch((prev) => !prev);
@@ -553,7 +524,7 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
       ) : null}
       {messages.length === 0 ? renderEmptyState(isEmptySplitPane) : null}
       {filteredMessages.map(renderMessageCard)}
-      {paneSessionId && sessionIsSending ? <LoadingPlaceholder /> : null}
+      {paneSessionId && sessionIsSending && !hasPendingAssistantReply ? <LoadingPlaceholder /> : null}
     </div>
   );
 }

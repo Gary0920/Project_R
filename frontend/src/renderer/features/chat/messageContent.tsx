@@ -98,11 +98,39 @@ function renderMarkdownTable(
   );
 }
 
+type MarkdownRenderOptions = {
+  flattenHeadings?: boolean;
+};
+
+function stripMarkdownHeadingPrefix(line: string) {
+  return line.replace(/^#{1,6}\s+/, "");
+}
+
+function renderParagraphBlock(
+  lines: string[],
+  key: string,
+  sources?: ChatSourceResponse[],
+  onSelectSource?: (preview: SourcePreview) => void,
+  paragraphClassName = "message-paragraph",
+) {
+  return (
+    <p className={paragraphClassName} key={key}>
+      {lines.map((line, index) => (
+        <span key={`${key}-${index}`}>
+          {renderInlineMarkdown(stripMarkdownHeadingPrefix(line.trim()), `${key}-${index}`, sources, onSelectSource)}
+          {index < lines.length - 1 ? <br /> : null}
+        </span>
+      ))}
+    </p>
+  );
+}
+
 function renderMarkdownText(
   text: string,
   keyPrefix: string,
   sources?: ChatSourceResponse[],
   onSelectSource?: (preview: SourcePreview) => void,
+  options: MarkdownRenderOptions = {},
 ) {
   const blocks = text.split(/\n{2,}/g).filter((block) => block.trim().length > 0);
   return blocks.map((block, blockIndex) => {
@@ -117,6 +145,9 @@ function renderMarkdownText(
       return <hr className="message-divider" key={key} />;
     }
     if (/^#{1,4}\s+/.test(firstLine)) {
+      if (options.flattenHeadings) {
+        return renderParagraphBlock(lines, key, sources, onSelectSource, "message-paragraph source-preview-paragraph");
+      }
       const level = Math.min(4, firstLine.match(/^#+/)?.[0].length ?? 3);
       const headingContent = renderInlineMarkdown(firstLine.replace(/^#{1,4}\s+/, ""), key, sources, onSelectSource);
       if (level === 1) return <h1 className="message-heading" key={key}>{headingContent}</h1>;
@@ -141,23 +172,15 @@ function renderMarkdownText(
     if (lines.every((line) => /^\s*>\s?/.test(line))) {
       return <blockquote className="message-quote" key={key}>{lines.map((line, index) => <p key={`${key}-${index}`}>{renderInlineMarkdown(line.replace(/^\s*>\s?/, ""), `${key}-${index}`, sources, onSelectSource)}</p>)}</blockquote>;
     }
-    return (
-      <p className="message-paragraph" key={key}>
-        {lines.map((line, index) => (
-          <span key={`${key}-${index}`}>
-            {renderInlineMarkdown(line, `${key}-${index}`, sources, onSelectSource)}
-            {index < lines.length - 1 ? <br /> : null}
-          </span>
-        ))}
-      </p>
-    );
+    return renderParagraphBlock(lines, key, sources, onSelectSource);
   });
 }
 
-export function renderMessageContent(
+function renderMarkdownDocument(
   content: string,
   sources?: ChatSourceResponse[],
   onSelectSource?: (preview: SourcePreview) => void,
+  options: MarkdownRenderOptions = {},
 ) {
   const nodes: ReactNode[] = [];
   const pattern = /```([A-Za-z0-9_-]+)?\n?([\s\S]*?)```/g;
@@ -167,7 +190,7 @@ export function renderMessageContent(
   while ((match = pattern.exec(content)) !== null) {
     const before = content.slice(lastIndex, match.index);
     if (before.trim()) {
-      nodes.push(...renderMarkdownText(before, `text-${index}`, sources, onSelectSource));
+      nodes.push(...renderMarkdownText(before, `text-${index}`, sources, onSelectSource, options));
     }
     const language = match[1]?.trim();
     const code = match[2].trim();
@@ -179,7 +202,19 @@ export function renderMessageContent(
   }
   const rest = content.slice(lastIndex);
   if (rest.trim()) {
-    nodes.push(...renderMarkdownText(rest, `text-${index}`, sources, onSelectSource));
+    nodes.push(...renderMarkdownText(rest, `text-${index}`, sources, onSelectSource, options));
   }
   return nodes;
+}
+
+export function renderMessageContent(
+  content: string,
+  sources?: ChatSourceResponse[],
+  onSelectSource?: (preview: SourcePreview) => void,
+) {
+  return renderMarkdownDocument(content, sources, onSelectSource);
+}
+
+export function renderSourceExcerptContent(content: string) {
+  return renderMarkdownDocument(content, undefined, undefined, { flattenHeadings: true });
 }

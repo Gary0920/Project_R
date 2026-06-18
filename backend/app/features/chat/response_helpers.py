@@ -18,6 +18,7 @@ from fastapi import HTTPException
 
 from app.features.agents.events import serialize_agent_run
 from app.features.chat.context_trace import build_context_trace, gbrain_think_trace
+from app.features.chat.query_answer_synthesis import synthesize_query_answer
 from app.features.chat.intent import IntentType
 from app.features.skills.runner import SkillRunner, run_to_dict
 from models.audit_log import AuditLog
@@ -32,47 +33,86 @@ def run_gbrain_think_response(
     user_message_id: int,
     content: str,
     knowledge_query: str,
+    req: Any,
     *,
     knowledge_sources: Any,
     serialize_sources_fn: Any,
     write_gbrain_think_agent_run_fn: Any,
+    get_llm_client: Any,
+    load_global_base_prompt: Any,
+    llm_configuration_error: Any,
+    llm_provider_error: Any,
 ) -> dict:
-    """Run a GBrain Think query and write the response as a ChatMessage.
-
-    Args:
-        knowledge_sources: KNOWLEDGE_SOURCES instance (injected by wrapper).
-        serialize_sources_fn: _serialize_sources function (injected).
-        write_gbrain_think_agent_run_fn: _write_gbrain_think_agent_run wrapper (injected).
-    """
+    """Run a GBrain Think query, optionally expand with LLM, and write the response."""
     think_result = knowledge_sources.think(db, knowledge_query, workspace_id=session.workspace_id)
     response_sources = serialize_sources_fn(think_result.get("sources", []))
     ok = bool(think_result.get("ok"))
+    think_draft = str(think_result.get("reply") or "").strip()
+    requested_model = getattr(req, "model_profile", None) or getattr(req, "provider", None)
+    reply_provider = "gbrain"
+    reply_model = str(think_result.get("model") or ("think" if ok else "think-unavailable"))
+    token_input = 0
+    token_output = 0
+    token_total = 0
+    key_index = None
+
+    if ok and think_draft:
+        try:
+            llm_response = synthesize_query_answer(
+                llm_client=get_llm_client(requested_model),
+                req=req,
+                knowledge_query=knowledge_query,
+                think_draft=think_draft,
+                response_sources=response_sources,
+                metadata=think_result.get("metadata") if isinstance(think_result.get("metadata"), dict) else {},
+                load_global_base_prompt=load_global_base_prompt,
+                thinking=bool(getattr(req, "thinking", False)),
+            )
+            final_reply = llm_response.text.strip() or think_draft
+            reply_provider = llm_response.provider
+            reply_model = llm_response.model
+            token_input = llm_response.usage.get("input_tokens", 0)
+            token_output = llm_response.usage.get("output_tokens", 0)
+            token_total = llm_response.token_cost
+            key_index = llm_response.key_index
+        except llm_configuration_error:
+            final_reply = think_draft
+        except llm_provider_error:
+            final_reply = think_draft
+    else:
+        final_reply = think_draft
+
     context_trace = build_context_trace(
         session=session,
-        req=None,
+        req=req,
         attachments=[],
         sources=response_sources,
         intent=IntentType.RAG_QUERY,
-        provider="gbrain",
-        model=str(think_result.get("model") or ("think" if ok else "think-unavailable")),
-        requested_model="gbrain_think",
+        provider=reply_provider,
+        model=reply_model,
+        requested_model=requested_model or "gbrain_think",
         extra={
             "knowledge_query": knowledge_query,
             "gbrain_source_id": think_result.get("source_id"),
             "gbrain_status": think_result.get("status"),
             "gbrain_think": gbrain_think_trace(think_result),
+            "query_synthesis": {
+                "think_model": str(think_result.get("model") or "think"),
+                "think_draft_preview": think_draft[:220],
+                "expanded_with_llm": ok and reply_provider != "gbrain",
+            },
         },
     )
     assistant_message = ChatMessage(
         session_id=session.id,
         user_id=user_id,
         role="assistant",
-        content=str(think_result.get("reply") or ""),
-        provider="gbrain",
-        model=str(think_result.get("model") or ("think" if ok else "think-unavailable")),
-        token_input=0,
-        token_output=0,
-        token_total=0,
+        content=final_reply,
+        provider=reply_provider,
+        model=reply_model,
+        token_input=token_input,
+        token_output=token_output,
+        token_total=token_total,
         status="success",
         rag_used=bool(response_sources),
         sources_json=json.dumps(response_sources, ensure_ascii=False),
@@ -109,10 +149,10 @@ def run_gbrain_think_response(
         "user_message_id": user_message_id,
         "assistant_message_id": assistant_message.id,
         "reply": assistant_message.content,
-        "provider": "gbrain",
+        "provider": reply_provider,
         "model": assistant_message.model,
-        "key_index": None,
-        "usage": {"input_tokens": 0, "output_tokens": 0},
+        "key_index": key_index,
+        "usage": {"input_tokens": token_input, "output_tokens": token_output},
         "intent": IntentType.RAG_QUERY.value,
         "sources": response_sources,
         "generated_file": None,

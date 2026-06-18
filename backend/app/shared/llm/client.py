@@ -6,7 +6,7 @@ import re
 import socket
 import threading
 from collections.abc import Generator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError

@@ -40,20 +40,16 @@ export function readPromptSelectionMap() {
 }
 
 export function readWebSearchPreference() {
-  try {
-    const preferences = JSON.parse(localStorage.getItem(SETTINGS_PREFERENCES_KEY) ?? "{}") as { webSearchEnabled?: unknown };
-    return preferences.webSearchEnabled === true;
-  } catch {
-    return false;
-  }
+  return false;
 }
 
-export function writeWebSearchPreference(enabled: boolean) {
+export function writeWebSearchPreference(_enabled: boolean) {
   try {
-    const preferences = JSON.parse(localStorage.getItem(SETTINGS_PREFERENCES_KEY) ?? "{}");
-    localStorage.setItem(SETTINGS_PREFERENCES_KEY, JSON.stringify({ ...preferences, webSearchEnabled: enabled }));
+    const preferences = JSON.parse(localStorage.getItem(SETTINGS_PREFERENCES_KEY) ?? "{}") as Record<string, unknown>;
+    delete preferences.webSearchEnabled;
+    localStorage.setItem(SETTINGS_PREFERENCES_KEY, JSON.stringify(preferences));
   } catch {
-    localStorage.setItem(SETTINGS_PREFERENCES_KEY, JSON.stringify({ webSearchEnabled: enabled }));
+    // Invalid preference JSON should not make a paid search feature default-on.
   }
 }
 

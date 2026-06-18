@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import os
 import uuid
 from typing import Any, Callable
 
@@ -209,6 +210,7 @@ def send_message_use_case(
             user_message.id,
             content,
             query_content,
+            req,
         )
 
     selected_image_attachments = [attachment for attachment in selected_attachments if ports.is_image_attachment(attachment)]
@@ -272,6 +274,9 @@ def send_message_use_case(
         session.workspace_id,
         reduce_knowledge_context=reduce_knowledge_context,
     )
+    web_sources: list[dict] = []
+    web_search_context = ""
+    web_search_trace = None
     web_sources, web_search_context, web_search_trace = ports.maybe_run_web_search(
         query_content,
         req.web_search,
@@ -344,25 +349,18 @@ def send_message_use_case(
             },
         )
 
-    try:
-        llm_response = llm_client.complete(
-            llm_messages,
-            system_prompt=system_prompt,
-            thinking=req.thinking,
-            temperature=req.temperature,
-        )
-    except ports.llm_configuration_error as exc:
-        ports.write_failed_assistant_message(db, user.id, session_id, str(exc), requested_model)
-        ports.write_chat_audit(db, user.id, session_id, llm_user_content, False, str(exc))
-        raise HTTPException(status_code=503, detail="AI 服务暂时不可用，请稍后重试") from exc
-    except ports.llm_provider_error as exc:
-        status_code = 503 if exc.retryable else 502
-        detail = f"{exc}"
-        if exc.key_index:
-            detail = f"{detail}（key_index={exc.key_index}）"
-        ports.write_failed_assistant_message(db, user.id, session_id, detail, requested_model)
-        ports.write_chat_audit(db, user.id, session_id, llm_user_content, False, detail)
-        raise HTTPException(status_code=status_code, detail="AI 服务暂时不可用，请稍后重试") from exc
+    llm_response = _complete_standard(
+        llm_client,
+        llm_messages,
+        system_prompt=system_prompt,
+        req=req,
+        ports=ports,
+        db=db,
+        user=user,
+        session_id=session_id,
+        llm_user_content=llm_user_content,
+        requested_model=requested_model,
+    )
 
     usage = llm_response.usage
     generated_file = None
@@ -449,6 +447,40 @@ def send_message_use_case(
         "agent_run": ports.serialize_agent_run(db, agent_run),
         "context_trace": context_trace,
     }
+
+
+def _complete_standard(
+    llm_client: Any,
+    llm_messages: list[dict],
+    *,
+    system_prompt: str | None,
+    req: SendMessageRequest,
+    ports: SendMessagePorts,
+    db: Session,
+    user: User,
+    session_id: int,
+    llm_user_content: str,
+    requested_model: str | None,
+) -> Any:
+    try:
+        return llm_client.complete(
+            llm_messages,
+            system_prompt=system_prompt,
+            thinking=req.thinking,
+            temperature=req.temperature,
+        )
+    except ports.llm_configuration_error as exc:
+        ports.write_failed_assistant_message(db, user.id, session_id, str(exc), requested_model)
+        ports.write_chat_audit(db, user.id, session_id, llm_user_content, False, str(exc))
+        raise HTTPException(status_code=503, detail="AI 服务暂时不可用，请稍后重试") from exc
+    except ports.llm_provider_error as exc:
+        status_code = 503 if exc.retryable else 502
+        detail = f"{exc}"
+        if exc.key_index:
+            detail = f"{detail}（key_index={exc.key_index}）"
+        ports.write_failed_assistant_message(db, user.id, session_id, detail, requested_model)
+        ports.write_chat_audit(db, user.id, session_id, llm_user_content, False, detail)
+        raise HTTPException(status_code=status_code, detail="AI 服务暂时不可用，请稍后重试") from exc
 
 
 def audio_understanding_context_extra(audio_understanding: Any) -> dict[str, Any]:
