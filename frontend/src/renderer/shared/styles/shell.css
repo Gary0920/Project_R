@@ -121,10 +121,9 @@
   width: 26px;
   height: 26px;
   border-radius: 7px;
-  background: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
-  font-size: 15px;
-  font-weight: 700;
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
 }
 
 .sidebar-brand-name {
@@ -466,7 +465,7 @@
 
 .workbench-context {
   min-width: 0;
-  max-width: min(34vw, 360px);
+  max-width: min(42vw, 520px);
   display: flex;
   align-items: baseline;
   gap: 8px;
@@ -486,6 +485,7 @@
 
 .workbench-context-label {
   flex: 0 0 auto;
+  font-weight: 600;
 }
 
 .workbench-business-nav,
@@ -664,7 +664,10 @@
   justify-content: center;
   width: 34px;
   height: 32px;
-  margin: 0 4px 2px 0;
+  margin: 0 4px 0 0;
+  padding: 0;
+  gap: 0;
+  align-self: center;
   color: hsl(var(--muted-foreground));
   cursor: pointer;
   flex: 0 0 auto;
@@ -754,7 +757,9 @@
   justify-content: center;
   width: 32px;
   height: 32px;
-  margin-bottom: 2px;
+  padding: 0;
+  gap: 0;
+  align-self: center;
   font-size: 16px;
   color: hsl(var(--muted-foreground));
   cursor: pointer;

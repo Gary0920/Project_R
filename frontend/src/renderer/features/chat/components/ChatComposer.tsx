@@ -16,8 +16,6 @@ import {
 } from "../../../shared/icons/LineIcons";
 import { TextTransformResultCard } from "./TextTransformResultCard";
 import type { TextTransformResult } from "../textTransform";
-import { KnowledgeScopeIndicator } from "../../knowledge/components/KnowledgeScopeIndicator";
-import { isKnowledgeQueryDraft } from "../../knowledge/knowledgeScope";
 
 type SplitPaneKey = "left" | "right";
 
@@ -46,7 +44,6 @@ export function ChatComposer({ controller }: ChatComposerProps) {
     draft,
     fileInputRef,
     formatAttachmentSize,
-    getSkillScopeLabel,
     handleCancelSend,
     handleChoosePrivateWorkspaceFiles,
     handleComposerPaste,
@@ -244,7 +241,7 @@ export function ChatComposer({ controller }: ChatComposerProps) {
                 >
                   <span className="composer-context-chip-icon">/</span>
                   <strong>{selectedSkill.display_name}</strong>
-                  <small>{getSkillScopeLabel(selectedSkill)}</small>
+                  <small>公司预设</small>
                 </button>
               ) : null}
             </div>
@@ -252,7 +249,7 @@ export function ChatComposer({ controller }: ChatComposerProps) {
           {skillPanelVisible ? (
             <div className="skill-candidate-panel" role="listbox">
               <div className="skill-candidate-panel-header">
-                <span>选择指令或 Skill</span>
+                <span>选择 Skill 或指令</span>
                 <kbd>/</kbd>
               </div>
               {slashCandidates.length > 0 ? (
@@ -260,7 +257,7 @@ export function ChatComposer({ controller }: ChatComposerProps) {
                   const isCommand = candidate.kind === "command";
                   const label = isCommand ? candidate.command.displayName : candidate.skill.display_name;
                   const description = isCommand ? candidate.command.description : candidate.skill.description;
-                  const scope = isCommand ? candidate.command.scope : getSkillScopeLabel(candidate.skill);
+                  const scope = isCommand ? candidate.command.scope : "公司预设";
                   const key = isCommand ? `command-${candidate.command.name}` : `skill-${candidate.skill.name}`;
                   return (
                   <button
@@ -296,10 +293,6 @@ export function ChatComposer({ controller }: ChatComposerProps) {
               <button className="composer-quote-close" onClick={() => setQuotedMessage(null)} type="button">✕</button>
             </div>
           ) : null}
-          <KnowledgeScopeIndicator
-            active={isKnowledgeQueryDraft(draft, selectedBuiltinCommand)}
-            workspace={activeWorkspace}
-          />
           {textTransformResult ? (
             <TextTransformResultCard
               result={textTransformResult}

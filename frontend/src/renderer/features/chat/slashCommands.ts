@@ -149,8 +149,11 @@ export function scoreBuiltinSlashCommand(command: BuiltinSlashCommand, query: st
   return Math.max(...fields.map((field) => fuzzyScore(String(field ?? ""), query)));
 }
 
-export function getSkillScopeLabel(skill: SkillResponse) {
-  const path = skill.path.toLowerCase();
-  if (path.includes("/personal/") || path.includes("/user/")) return "个人";
-  return "Skills";
+export function matchesSkillSearch(skill: SkillResponse, query: string) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return true;
+  return (
+    skill.display_name.toLowerCase().includes(normalizedQuery)
+    || skill.description.toLowerCase().includes(normalizedQuery)
+  );
 }

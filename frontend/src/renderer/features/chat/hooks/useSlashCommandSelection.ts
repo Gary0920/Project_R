@@ -10,6 +10,20 @@ import {
   type SkillSlashCandidate,
   type SlashCommandMatch,
 } from "../slashCommands";
+
+const MAX_SLASH_CANDIDATES = 8;
+const DEFAULT_SKILL_CANDIDATE_LIMIT = 6;
+
+function sortSlashCandidates(items: SkillSlashCandidate[]) {
+  return [...items].sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    if (a.kind !== b.kind) return a.kind === "skill" ? -1 : 1;
+    const aName = a.kind === "command" ? a.command.displayName : a.skill.display_name;
+    const bName = b.kind === "command" ? b.command.displayName : b.skill.display_name;
+    return aName.localeCompare(bName, "zh-CN");
+  });
+}
+
 export function useSlashCommandSelection({
   draft,
   mode,
@@ -38,15 +52,19 @@ export function useSlashCommandSelection({
     const skillCandidates: SkillSlashCandidate[] = skills
       .map((skill) => ({ kind: "skill" as const, skill, score: scoreSkill(skill, skillQuery) }))
       .filter((item) => !skillQuery || item.score > 0);
-    return [...builtinCandidates, ...skillCandidates]
-      .sort((a, b) => {
-        if (b.score !== a.score) return b.score - a.score;
-        if (a.kind !== b.kind) return a.kind === "command" ? -1 : 1;
-        const aName = a.kind === "command" ? a.command.displayName : a.skill.display_name;
-        const bName = b.kind === "command" ? b.command.displayName : b.skill.display_name;
-        return aName.localeCompare(bName, "zh-CN");
-      })
-      .slice(0, 8);
+    const sortedSkillCandidates = sortSlashCandidates(skillCandidates);
+    const sortedBuiltinCandidates = sortSlashCandidates(builtinCandidates);
+
+    if (!skillQuery) {
+      const defaultSkills = sortedSkillCandidates.slice(0, DEFAULT_SKILL_CANDIDATE_LIMIT);
+      const remainingSlots = MAX_SLASH_CANDIDATES - defaultSkills.length;
+      return [
+        ...defaultSkills,
+        ...sortedBuiltinCandidates.slice(0, remainingSlots),
+      ];
+    }
+
+    return sortSlashCandidates([...skillCandidates, ...builtinCandidates]).slice(0, MAX_SLASH_CANDIDATES);
   }, [skills, skillQuery]);
 
   function syncSlashCommand(value: string, caret: number) {

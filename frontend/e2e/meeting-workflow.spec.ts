@@ -41,7 +41,7 @@ async function login(page: Page, user: string, pass: string) {
 }
 
 async function switchToTestWorkspace(page: Page) {
-  const wsToggle = page.locator("button.workspace-section-toggle");
+  const wsToggle = page.locator("button.workspace-section-main, button.workspace-section-chevron-btn").first();
   await wsToggle.waitFor({ state: "visible", timeout: 5000 });
   await wsToggle.click();
   await page.waitForTimeout(1500);
@@ -52,7 +52,7 @@ async function switchToTestWorkspace(page: Page) {
   await page.waitForTimeout(3000);
 
   await expect(
-    page.locator("button.workspace-section-toggle[title*='TEST'], button.workspace-section-toggle:has-text('TEST')")
+    page.locator("button.workspace-section-main[title*='TEST'], button.workspace-section-main:has-text('TEST')")
   ).toBeVisible({ timeout: 5000 });
 
   const drawerCloseBtn = page

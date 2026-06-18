@@ -1,6 +1,6 @@
 import type { KeyboardEvent, MouseEvent, RefObject } from "react";
 
-import { MoreIcon, PinIcon } from "../../../shared/icons/LineIcons";
+import { PinIcon } from "../../../shared/icons/LineIcons";
 
 type SessionListItemProps = {
   activeSessionId: number | null;
@@ -77,17 +77,6 @@ export function SessionListItem({
       {session.last_message_preview ? (
         <div className="session-preview">{String(session.last_message_preview ?? "").slice(0, 80)}</div>
       ) : null}
-      <button
-        className="session-more"
-        onClick={(event) => {
-          event.stopPropagation();
-          openSessionMenu(event, session);
-        }}
-        title="会话操作"
-        type="button"
-      >
-        <MoreIcon />
-      </button>
     </div>
   );
 }

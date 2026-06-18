@@ -8,6 +8,7 @@ import type {
 } from "../../../shared/api/types";
 import type { ChatMessage } from "../state";
 import { APP_NAME } from "../../../shared/config/app";
+import { ProjectRLogo } from "../../../shared/components/ProjectRLogo";
 import { AgentIcon } from "../../../shared/icons/LineIcons";
 import { renderMessageContent } from "../messageContent";
 import type { SourcePreview } from "../messageContent";
@@ -232,7 +233,7 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
 
     return (
       <article className="message-row message-row-assistant message-row-loading">
-        <span className="message-avatar assistant-avatar is-text">R</span>
+        <span className="message-avatar assistant-avatar"><ProjectRLogo /></span>
         <div className="message-body">
           <div className="message-meta">
             <div className="message-name-line">
@@ -285,7 +286,7 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
     if (isSplitPane) {
       return (
         <div className="empty-chat empty-chat-compact">
-          <span className="empty-chat-mark">R</span>
+          <span className="empty-chat-mark"><ProjectRLogo /></span>
           <h2>选择一个对话</h2>
           <p>先点击这个区域，再从左侧会话列表选择要放进来的对话。</p>
         </div>
@@ -295,7 +296,7 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
       return (
         <div className={`empty-agent ${sideBySideOpen ? "is-split-mode" : ""}`}>
           <div className="empty-agent-copy">
-            <span className="empty-chat-mark">R</span>
+            <span className="empty-chat-mark"><ProjectRLogo /></span>
             <h2>{activeWorkspace ? `在「${activeWorkspace.name}」开始 Agent` : "选择项目后开始 Agent"}</h2>
             <p>直接说明你要整理、核对或生成的业务结果。</p>
           </div>
@@ -304,7 +305,7 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
     }
     return (
       <div className="empty-chat">
-        <span className="empty-chat-mark">R</span>
+        <span className="empty-chat-mark"><ProjectRLogo /></span>
         <h2>{activeWorkspace ? `在「${activeWorkspace.name}」开始聊天` : "从一个问题开始"}</h2>
         <p>询问规范、整理资料，或把当前工作流交给 Project_R 梳理成可执行步骤。</p>
       </div>
@@ -348,7 +349,7 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
     return (
       <article className={`message-row message-row-${message.role} ${message.status === "failed" ? "message-row-failed" : ""}`} key={message.id}>
         {message.role === "assistant" ? (
-          <span className="message-avatar assistant-avatar is-text">R</span>
+          <span className="message-avatar assistant-avatar"><ProjectRLogo /></span>
         ) : (
           renderAvatar(currentUser?.avatar, currentUser?.nickname, 30, serverUrl)
         )}

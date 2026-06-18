@@ -44,6 +44,15 @@ function groupLabel(group: string) {
   return group === CUSTOMER_GROUP ? "CRM" : group;
 }
 
+function getWorkspaceAffiliationLabel(workspace: Workspace | undefined) {
+  if (!workspace) return "未选择";
+  if (workspace.workspace_kind === "user") return "个人";
+  if (workspace.workspace_kind === "customer") return "CRM";
+  if (workspace.is_default) return "私人";
+  if (workspace.is_hidden) return "隐藏";
+  return workspace.brand || "项目";
+}
+
 function workspaceKindFromGroup(group: string) {
   return group === CUSTOMER_GROUP ? "customer" : "project";
 }
@@ -323,32 +332,42 @@ export function WorkspaceSelector({ apiOptions, canCreateProject = false, onWork
   return (
     <div className="workspace-selector-area">
       <div className="workspace-section-header">
-        <button
-          className="workspace-section-toggle"
-          onClick={() => setIsOpen((current) => !current)}
-          title={activeWorkspace ? `当前工作区：${activeWorkspace.name}` : "未选择工作区"}
-          type="button"
-        >
-          <span className="workspace-section-title">
-            <WorkspaceIcon />
-            <span>{activeWorkspace?.name ?? "未选择工作区"}</span>
-          </span>
-          <ChevronDownIcon className={isOpen ? "workspace-chevron is-open" : "workspace-chevron"} />
-        </button>
-        <button
-          className="workspace-create-icon"
-          onClick={() => {
-            setDirectoryOpen(true);
-            setCreating(false);
-            setCreateError("");
-            setDirectoryQuery("");
-            setSelectedBrand(null);
-          }}
-          title="项目目录"
-          type="button"
-        >
-          <SearchIcon />
-        </button>
+        <div className="workspace-section-toggle workspace-section-bar">
+          <button
+            className="workspace-section-main"
+            onClick={() => setIsOpen((current) => !current)}
+            title={activeWorkspace ? `当前工作区：${activeWorkspace.name}` : "未选择工作区"}
+            type="button"
+          >
+            <span className="workspace-section-title">
+              <WorkspaceIcon />
+              <span>{activeWorkspace?.name ?? "未选择工作区"}</span>
+            </span>
+            <span className="workspace-default-badge">{getWorkspaceAffiliationLabel(activeWorkspace)}</span>
+          </button>
+          <button
+            className="workspace-create-icon"
+            onClick={() => {
+              setDirectoryOpen(true);
+              setCreating(false);
+              setCreateError("");
+              setDirectoryQuery("");
+              setSelectedBrand(null);
+            }}
+            title="项目目录"
+            type="button"
+          >
+            <SearchIcon />
+          </button>
+          <button
+            className="workspace-section-chevron-btn"
+            onClick={() => setIsOpen((current) => !current)}
+            title={activeWorkspace ? `当前工作区：${activeWorkspace.name}` : "未选择工作区"}
+            type="button"
+          >
+            <ChevronDownIcon className={isOpen ? "workspace-chevron is-open" : "workspace-chevron"} />
+          </button>
+        </div>
       </div>
 
       {isOpen ? (

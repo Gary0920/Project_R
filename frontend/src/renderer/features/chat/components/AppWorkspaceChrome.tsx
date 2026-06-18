@@ -1,9 +1,13 @@
 import { useEffect, type MouseEvent } from "react";
 
+import type { SkillResponse } from "../../../shared/api/types";
+
 import { APP_NAME } from "../../../shared/config/app";
 import { useContextMenu } from "../../../shared/components/ContextMenu";
+import { ProjectRLogo } from "../../../shared/components/ProjectRLogo";
 import { NotificationPopover } from "../../notifications/components/NotificationPopover";
 import { PromptPanel } from "../../prompts/components/PromptPanel";
+import { SkillsSidePanel } from "./SkillsSidePanel";
 import { ScratchPad } from "./ScratchPad";
 import { SearchDialog } from "./SearchDialog";
 import { SessionListItem } from "./SessionListItem";
@@ -15,7 +19,6 @@ import { WorkspaceSelector } from "../../workspace/components/WorkspaceSelector"
 import { WindowControls } from "../../../shared/components/WindowControls";
 import { renderMessageContent } from "../messageContent";
 import { SourcePreviewPanel } from "../../knowledge/components/SourcePreviewPanel";
-import { KnowledgeBrowserPanel } from "../../knowledge/components/KnowledgeBrowserPanel";
 import {
   AgentIcon,
   BellIcon,
@@ -31,6 +34,15 @@ import {
 export type AppWorkspaceChromeProps = {
   controller: Record<string, any>;
 };
+
+function workspaceAffiliationPath(workspace: any) {
+  if (!workspace) return "未选择工作区";
+  const name = String(workspace.name || "未命名工作区").trim();
+  if (workspace.workspace_kind === "user") return `个人 / ${name}`;
+  if (workspace.workspace_kind === "customer") return `CRM / ${name}`;
+  const brand = String(workspace.brand || "项目").trim() || "项目";
+  return `${brand} / ${name}`;
+}
 
 export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
   const {
@@ -62,7 +74,6 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     formatUpdateBytes,
     formatUpdateSpeed,
     getInitials,
-    getSkillScopeLabel,
     handleArchiveRestored,
     handleAuxiliaryPanelResizeStart,
     handleCloseTab,
@@ -113,6 +124,7 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     searchTerm,
     selectedPromptId,
     selectSession,
+    selectedSkill,
     serverUrl,
     sessionGroups,
     sessions,
@@ -129,7 +141,6 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     setRegenerateTarget,
     setRenameInput,
     setSearchTerm,
-    setDraft,
     setSettingsInitialAdminTab,
     setShowScratchPad,
     setShowSearch,
@@ -151,7 +162,6 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     startClientUpdateDownload,
     sourcePreview,
     tabs,
-    textareaRef,
     unreadNotificationCount,
     updateDialogOpen,
     updateError,
@@ -169,6 +179,7 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
   } = controller;
   const setMode = setActiveMode;
   const isCustomerWorkspace = activeWorkspace?.workspace_kind === "customer";
+  const workspacePath = workspaceAffiliationPath(activeWorkspace);
 
   useEffect(() => {
     if (!isCustomerWorkspace && (utilityPanel === "crm" || utilityPanel === "customer-intelligence")) {
@@ -191,44 +202,20 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
 
   function renderSkillsSidePanel() {
     return (
-      <aside
-        className={`utility-side-pane auxiliary-side-pane ${auxiliaryPanelResizing ? "is-resizing" : ""}`}
-        aria-label="Skills 面板"
-        ref={auxiliaryPanelRef}
-        style={{ flexBasis: auxiliaryPanelWidth, maxWidth: auxiliaryPanelMaxWidth(), width: auxiliaryPanelWidth }}
-      >
-        {renderUtilityResizeHandle(handleAuxiliaryPanelResizeStart, "调整 Skills 面板宽度")}
-        <header className="utility-side-header">
-          <div>
-            <h2>Skills</h2>
-            <p>选择后应用于本次发送</p>
-          </div>
-          <button
-            className="prompt-panel-close"
-            onClick={() => {
-              setSourcePreview(null);
-              setUtilityPanel(null);
-            }}
-            type="button"
-          >
-            ×
-          </button>
-        </header>
-        <div className="utility-side-body">
-          {skills.length > 0 ? (skills as any[]).map((skill: any) => (
-            <button className="skill-side-row" key={skill.name} onClick={() => handleSelectSkillFromSidePanel(skill)} type="button">
-              <span className="skill-side-icon">/</span>
-              <span className="skill-side-copy">
-                <strong>{skill.display_name}</strong>
-                <span>{skill.description}</span>
-              </span>
-              <small>{getSkillScopeLabel(skill)}</small>
-            </button>
-          )) : (
-            <div className="prompt-empty">暂无可用 Skill</div>
-          )}
-        </div>
-      </aside>
+      <SkillsSidePanel
+        auxiliaryPanelMaxWidth={auxiliaryPanelMaxWidth}
+        auxiliaryPanelRef={auxiliaryPanelRef}
+        auxiliaryPanelResizing={auxiliaryPanelResizing}
+        auxiliaryPanelWidth={auxiliaryPanelWidth}
+        onClose={() => {
+          setSourcePreview(null);
+          setUtilityPanel(null);
+        }}
+        onResizeStart={handleAuxiliaryPanelResizeStart}
+        onSelectSkill={handleSelectSkillFromSidePanel}
+        selectedSkillName={selectedSkill?.name}
+        skills={skills as SkillResponse[]}
+      />
     );
   }
 
@@ -260,22 +247,6 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
         </header>
         <SourcePreviewPanel preview={preview} />
       </aside>
-    );
-  }
-
-  function renderKnowledgeBrowserPanel() {
-    return (
-      <KnowledgeBrowserPanel
-        apiOptions={apiOptions}
-        workspace={activeWorkspace}
-        workspaceId={activeWorkspaceId}
-        onClose={() => setUtilityPanel(null)}
-        onUseQuery={(query: string) => {
-          setDraft(`/query ${query}`);
-          setUtilityPanel(null);
-          window.setTimeout(() => textareaRef?.current?.focus(), 0);
-        }}
-      />
     );
   }
 
@@ -372,9 +343,6 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     }
     if (utilityPanel === "source") {
       return renderSourceSidePanel();
-    }
-    if (utilityPanel === "knowledge") {
-      return renderKnowledgeBrowserPanel();
     }
     return null;
   }
@@ -480,7 +448,7 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
       >
         <div className="sidebar-top">
           <div className="sidebar-brand">
-            <span className="sidebar-brand-mark">R</span>
+            <span className="sidebar-brand-mark"><ProjectRLogo /></span>
             <span className="sidebar-brand-name">{APP_NAME}</span>
           </div>
 
@@ -591,18 +559,10 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
       <section className="chat-main">
         <header className="workbench-topbar">
           <div className="workbench-context">
-            <span className="workbench-context-label">当前工作区</span>
-            <strong>{activeWorkspace?.name ?? "未选择工作区"}</strong>
+            <span className="workbench-context-label">归属</span>
+            <strong title={workspacePath}>{workspacePath}</strong>
           </div>
           <nav className="workbench-business-nav" aria-label="业务导航">
-            <button
-              className={`business-tool-button ${utilityPanel === "knowledge" ? "is-active" : ""}`}
-              onClick={() => setUtilityPanel((value: string | null) => value === "knowledge" ? null : "knowledge")}
-              type="button"
-            >
-              <SearchIcon />
-              <span>知识库</span>
-            </button>
             {isCustomerWorkspace ? (
               <button
                 className={`business-tool-button ${utilityPanel === "crm" || utilityPanel === "customer-intelligence" ? "is-active" : ""}`}

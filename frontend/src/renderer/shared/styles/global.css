@@ -7,7 +7,6 @@
 @import "./dialogs.css";
 @import "../../features/auth/styles.css";
 @import "../../features/chat/styles.css";
-@import "../../features/knowledge/styles.css";
 @import "../../features/workspace/styles.css";
 @import "../../features/settings/styles.css";
 
@@ -1124,41 +1123,15 @@
 }
 
 .session-item {
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   min-height: 36px;
-  padding: 7px 7px 7px 9px;
+  padding: 8px;
 }
 
 .session-time {
   text-align: right;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  padding-right: 4px;
-}
-
-.session-more {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: hsl(var(--muted-foreground));
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.12s, background 0.12s, color 0.12s;
-}
-
-.session-item:hover .session-more,
-.session-more:focus-visible {
-  opacity: 1;
-}
-
-.session-more:hover {
-  background: hsl(var(--foreground) / 0.08);
-  color: hsl(var(--foreground));
 }
 
 .session-rename-input {
@@ -1267,6 +1240,7 @@
 .icon-button .iconoir-mask,
 .message-action-btn .iconoir-mask {
   font-size: 16px;
+  flex-shrink: 0;
 }
 
 .message-row-assistant {
@@ -1298,14 +1272,20 @@
   border-radius: 10px;
 }
 
+.project-r-logo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
 .assistant-avatar {
   width: 30px;
   height: 30px;
   border-radius: 8px;
-  background: hsl(210 30% 96%);
-  color: hsl(210 32% 30%);
-  font-size: 16px;
-  font-weight: 700;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
 }
 
 .message-row-user .message-bubble {
@@ -1771,7 +1751,8 @@
   width: 44px;
   height: 44px;
   border-radius: 11px;
-  font-size: 21px;
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
 }
 
 .icon-button.is-active,
@@ -1984,5 +1965,3 @@
     transition-duration: 0.001ms !important;
   }
 }
-
-

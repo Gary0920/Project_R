@@ -389,15 +389,61 @@
    ============================================================ */
 
 .workspace-section-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px;
-  align-items: center;
-  gap: 4px;
+  display: block;
 }
 
-.workspace-section-header .workspace-section-toggle {
-  width: auto;
+.workspace-section-bar.workspace-section-toggle {
+  width: 100%;
+  gap: 2px;
+  padding: 7px 4px 7px 9px;
+}
+
+.workspace-section-main {
+  flex: 1;
   min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.workspace-section-main .workspace-section-title {
+  min-width: 0;
+  justify-content: flex-start;
+}
+
+.workspace-section-main:hover {
+  opacity: 1;
+}
+
+.workspace-section-chevron-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  gap: 0;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.workspace-section-chevron-btn:hover {
+  opacity: 1;
+  background: hsl(var(--foreground) / 0.06);
 }
 
 .workspace-section-title small {
@@ -414,10 +460,13 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  gap: 0;
+  flex-shrink: 0;
   border: none;
-  border-radius: 8px;
+  border-radius: 6px;
   background: transparent;
   color: hsl(var(--muted-foreground));
   cursor: pointer;
@@ -568,6 +617,72 @@
   font-weight: 700;
 }
 
+.prompt-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+  padding: 0 6px;
+}
+
+.prompt-section-head .prompt-section-title {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.prompt-section-search {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 7px;
+  background: hsl(var(--background));
+  transition: border-color 0.12s ease;
+}
+
+.prompt-section-search:focus-within {
+  border-color: hsl(var(--control-active-border));
+}
+
+.prompt-section-search .iconoir-mask {
+  flex-shrink: 0;
+  font-size: 14px;
+  color: hsl(var(--muted-foreground));
+}
+
+.prompt-section-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font-size: 12px;
+  outline: none;
+}
+
+.prompt-section-search input::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.prompt-section-search input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
+.prompt-row-icon.is-slash-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  font-size: 15px;
+  font-weight: 800;
+  color: hsl(156 45% 30%);
+}
+
 .prompt-row {
   position: relative;
   isolation: isolate;
@@ -678,11 +793,17 @@
 
 .prompt-row-description {
   min-width: 0;
+  max-width: 100%;
   color: hsl(var(--muted-foreground));
   font-size: 12px;
   line-height: 1.45;
-  overflow: visible;
-  text-overflow: clip;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 0.15s ease;
+}
+
+.prompt-row.is-description-visible .prompt-row-description {
   white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;

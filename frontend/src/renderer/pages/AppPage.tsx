@@ -80,7 +80,6 @@ import {
   renderAvatar,
   resolveAvatarUrl,
 } from "../features/chat/sessionDisplay";
-import { getSkillScopeLabel } from "../features/chat/slashCommands";
 import { toModelOption } from "../features/chat/modelOptions";
 import { makeLocalMessage } from "../features/chat/localMessages";
 import { latestSessionTokenTotal } from "../features/chat/sessionMetrics";
@@ -966,7 +965,6 @@ export function AppPage() {
     clearSelectedSkillIfMissing,
     composerRef,
     formatAttachmentSize,
-    getSkillScopeLabel,
     handleSend,
     insertSlashCandidate,
     isLocalPrivatePendingAttachment,
@@ -1040,7 +1038,6 @@ export function AppPage() {
         formatUpdateBytes,
         formatUpdateSpeed,
         getInitials,
-        getSkillScopeLabel,
         handleArchiveRestored,
         handleAuxiliaryPanelResizeStart,
         handleCloseTab,
@@ -1093,6 +1090,7 @@ export function AppPage() {
         searchTerm,
         selectedPromptId,
         selectSession,
+        selectedSkill,
         serverUrl,
         sessionGroups,
         sessions,

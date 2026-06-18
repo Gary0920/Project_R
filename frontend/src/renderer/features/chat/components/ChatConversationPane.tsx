@@ -114,7 +114,6 @@ export function ChatConversationPane({ controller }: ChatConversationPaneProps) 
               </button>
             )}
             {sideBySideOpen ? <span className="chat-workspace-chip">{isActivePane ? "当前输入区" : "点击激活"}</span> : null}
-            {activeWorkspace && !sideBySideOpen ? <span className="chat-workspace-chip">{activeWorkspace.name}</span> : null}
           </div>
           <div className="chat-header-actions">
             <button

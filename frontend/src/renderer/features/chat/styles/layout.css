@@ -225,63 +225,6 @@
   padding: 0;
 }
 
-.skill-side-row {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  min-height: 52px;
-  margin-bottom: 7px;
-  border: 1px solid hsl(var(--border));
-  border-radius: 8px;
-  background: hsl(var(--card));
-  color: hsl(var(--foreground));
-  padding: 8px 9px;
-  cursor: pointer;
-  text-align: left;
-}
-
-.skill-side-row:hover {
-  background: hsl(var(--control-active-bg-hover));
-  border-color: hsl(var(--control-active-border));
-}
-
-.skill-side-icon {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: hsl(var(--control-active-bg));
-  color: hsl(var(--control-active-foreground));
-  font-weight: 800;
-}
-
-.skill-side-copy {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.skill-side-copy strong,
-.skill-side-copy span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.skill-side-copy strong {
-  font-size: 13px;
-}
-
-.skill-side-copy span,
-.skill-side-row small {
-  color: hsl(var(--muted-foreground));
-  font-size: 11px;
-}
-
 .source-preview-body {
   min-height: 0;
   overflow-y: auto;
