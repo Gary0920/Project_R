@@ -1,0 +1,120 @@
+diff --git a/src/core/think/gather.ts b/src/core/think/gather.ts
+index 11fcc3d..bd7366e 100644
+--- a/src/core/think/gather.ts
++++ b/src/core/think/gather.ts
+@@ -36,0 +37,4 @@ export interface ThinkGatherOpts {
++  /** Scalar source scope from MCP auth/source context. */
++  sourceId?: string;
++  /** Federated source scope from MCP OAuth auth context. Wins over sourceId. */
++  allowedSources?: string[];
+@@ -56,0 +61 @@ const RRF_K = 60;
++const MAX_GATHER_QUERY_VARIANTS = 3;
+@@ -91,0 +97,19 @@ function fuseRanked<T>(
++export function gatherQuestionVariants(question: string): string[] {
++  const base = question.trim();
++  if (base.length === 0) return [question];
++  const candidates = new Set<string>([base]);
++  const withoutPrefix = base
++    .replace(/^(请|麻烦)?(说明|解释|介绍|查询|检索|回答|帮我查一下|帮我查询)\s*/u, '')
++    .trim();
++  if (withoutPrefix && withoutPrefix !== base) candidates.add(withoutPrefix);
++  const titleLike = withoutPrefix
++    .replace(/[？?。.!！\s]+$/u, '')
++    .replace(/^(什么是|何为)\s*/u, '')
++    .replace(/\s*(是什么|是什麼|什么意思|是啥|如何操作|怎么做|怎麼做|有哪些要求|有什么要求)$/u, '')
++    .trim();
++  if (titleLike && titleLike !== base && titleLike.length >= 2) {
++    candidates.add(titleLike);
++  }
++  return Array.from(candidates).slice(0, MAX_GATHER_QUERY_VARIANTS);
++}
++
+@@ -107,0 +132,6 @@ export async function runGather(
++  const sourceScope: { sourceId?: string; sourceIds?: string[] } =
++    opts.allowedSources && opts.allowedSources.length > 0
++      ? { sourceIds: opts.allowedSources }
++      : opts.sourceId
++        ? { sourceId: opts.sourceId }
++        : {};
+@@ -109,5 +139,13 @@ export async function runGather(
+-  // Stream 1: hybrid page search (existing primitive).
+-  const pagesPromise = hybridSearch(engine, opts.question, {
+-    limit: gatherLimit,
+-    expansion: false,  // think provides its own anchor + graph context; no need for re-expansion
+-  }).catch((e) => {
++  // Stream 1: hybrid page search (existing primitive). For title-like CJK
++  // questions such as "书面化原则是什么", gather also tries the stripped title
++  // phrase so exact policy pages are not pushed out by the conversational suffix.
++  const pageQueries = gatherQuestionVariants(opts.question);
++  const pagesPromise = Promise.all(
++    pageQueries.map(q => hybridSearch(engine, q, {
++      limit: gatherLimit,
++      expansion: false,  // think provides its own anchor + graph context; no need for re-expansion
++      ...sourceScope,
++    })),
++  ).then((lists) => lists.reduce<SearchResult[]>((merged, list) => (
++    merged.length === 0 ? list : fuseRanked(merged, list, (r: SearchResult) => `${r.source_id ?? 'default'}::${r.slug}`)
++  ), [])).catch((e) => {
+@@ -121,0 +160 @@ export async function runGather(
++    ...sourceScope,
+@@ -131,0 +171 @@ export async function runGather(
++        ...sourceScope,
+@@ -140 +180 @@ export async function runGather(
+-    ? engine.traversePaths(opts.anchor, { depth: graphDepth, direction: 'both' })
++    ? engine.traversePaths(opts.anchor, { depth: graphDepth, direction: 'both', ...sourceScope })
+diff --git a/test/think-pipeline.serial.test.ts b/test/think-pipeline.serial.test.ts
+index d2e1a54..5760a22 100644
+--- a/test/think-pipeline.serial.test.ts
++++ b/test/think-pipeline.serial.test.ts
+@@ -7 +7 @@ import { resolveCitations, parseInlineCitations, normalizeStructuredCitations }
+-import { runGather } from '../src/core/think/gather.ts';
++import { gatherQuestionVariants, runGather } from '../src/core/think/gather.ts';
+@@ -11,0 +12,2 @@ let alicePageId: number;
++let scopedThinkAlphaPageId: number;
++let scopedThinkBetaPageId: number;
+@@ -25,0 +28,18 @@ beforeAll(async () => {
++  await engine.executeRaw(
++    `INSERT INTO sources (id, name, config)
++     VALUES ('think-scope-alpha', 'think-scope-alpha', '{}'::jsonb),
++            ('think-scope-beta', 'think-scope-beta', '{}'::jsonb)
++     ON CONFLICT (id) DO NOTHING`,
++  );
++  const scopedThinkAlpha = await engine.putPage('people/think-source-scope-fixture', {
++    title: 'Think Scoped Alpha', type: 'person', compiled_truth: 'Think scoped alpha page.',
++  }, { sourceId: 'think-scope-alpha' });
++  const scopedThinkBeta = await engine.putPage('people/think-source-scope-fixture', {
++    title: 'Think Scoped Beta', type: 'person', compiled_truth: 'Think scoped beta page.',
++  }, { sourceId: 'think-scope-beta' });
++  scopedThinkAlphaPageId = scopedThinkAlpha.id;
++  scopedThinkBetaPageId = scopedThinkBeta.id;
++  await engine.addTakesBatch([
++    { page_id: scopedThinkAlphaPageId, row_num: 1, claim: 'Think source scoped founder alpha', kind: 'take', holder: 'world', weight: 0.8 },
++    { page_id: scopedThinkBetaPageId, row_num: 1, claim: 'Think source scoped founder beta', kind: 'take', holder: 'world', weight: 0.8 },
++  ]);
+@@ -129,0 +150,5 @@ describe('runGather', () => {
++  test('generates conservative CJK title-like query variants', () => {
++    expect(gatherQuestionVariants('书面化原则是什么')).toContain('书面化原则');
++    expect(gatherQuestionVariants('请说明 项目归档有哪些要求？')).toContain('项目归档');
++  });
++
+@@ -141,0 +167,20 @@ describe('runGather', () => {
++
++  test('threads scalar sourceId into take retrieval', async () => {
++    const r = await runGather(engine, {
++      question: 'think source scoped founder',
++      sourceId: 'think-scope-alpha',
++    });
++
++    expect(r.takes.some(h => h.claim === 'Think source scoped founder alpha')).toBe(true);
++    expect(r.takes.some(h => h.claim === 'Think source scoped founder beta')).toBe(false);
++  });
++
++  test('threads federated allowedSources into take retrieval', async () => {
++    const r = await runGather(engine, {
++      question: 'think source scoped founder',
++      allowedSources: ['think-scope-beta'],
++    });
++
++    expect(r.takes.some(h => h.claim === 'Think source scoped founder beta')).toBe(true);
++    expect(r.takes.some(h => h.claim === 'Think source scoped founder alpha')).toBe(false);
++  });

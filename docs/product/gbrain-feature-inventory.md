@@ -1,8 +1,10 @@
 # GBrain 功能盘点矩阵
 
 状态：v0.1，Project_R 接入 GBrain 前置盘点。  
-来源：本地 `reference/gbrain-master`，`package.json` 版本 `0.41.26.0`，以及 GBrain README、docs、skills、`src/core/operations.ts` 等源码。  
+来源：本地 `reference/gbrain-master`，`package.json` 版本 `0.42.51.0`，以及 GBrain README、docs、skills、`src/core/operations.ts` 等源码。
 目的：后续 Project_R 的知识库、检索、纠错、维护、Skill 和 Agent 能力，默认先判断 GBrain 是否已有原生后处理能力；原始文件提炼已收口为 Project_R Agent / Skills 负责，GBrain 只接收 Project_R 生成的 Markdown source。原始资料进入 GBrain source 的具体操作流程见 `docs/specs/gbrain-ingest-workflow.md`；Project_R 对 GBrain 的真实开发进度见 `docs/milestones/gbrain-adaptation-progress.md`；边界决策见 `docs/adr/0009-pr-owned-extraction-to-gbrain-markdown.md`、`docs/adr/0010-source-scoped-knowledge-ingest-review-policy.md` 和 `docs/adr/0011-automatic-extractor-routing-by-file-type.md`。
+
+2026-06-20 升级状态：GBrain `0.42.51.0` 已完成本地正式切换，`reference/gbrain-master` 来自验证过的 `reference/gbrain-upstream-0.42.51` candidate，候选 commit 为 `9bf96db807c2f050449142f2f0b05726f58e5054`。`0001`、`0002`、`0003`、`0004`、`0005` 已 rebased，`0006` 已被 upstream absorbed，`0007` 已 rebased 但与 `0003` 在 `think/gather` 有维护重叠，`0008` 修复 Windows CRLF 下 doctor resolver false failure。切换后 `/health` 返回 `version=0.42.51.0`、`engine=pglite`，`doctor --fast --json` 为 warnings-only，`resolver_health=ok`。证据见 `docs/validation/gbrain-upgrade-0.42.51-cutover.md`、`docs/validation/gbrain-upgrade-0.42.51-switch-decision.md` 和 `docs/operations/gbrain-upgrade-0.42.51-cutover-runbook.md`。
 
 ## 分类
 
@@ -90,7 +92,7 @@ _preprocessed/
 
 ## 2026-05-28 本机准备状态
 
-- `reference/gbrain-master` 版本为 `0.41.26.0`；Windows 下普通 `bun install` 会被类 Unix `postinstall` 脚本拦截，本机使用 `bun install --frozen-lockfile --ignore-scripts` 完成依赖检查。
+- `reference/gbrain-master` 版本为 `0.42.51.0`；Windows 下普通 `bun install` 会被类 Unix `postinstall` 脚本拦截，本机使用 `bun install --frozen-lockfile --ignore-scripts` 完成依赖检查。
 - GBrain 运行目录固定为 `GBRAIN_HOME=backend/workspace_data/global/company-wiki`；GBrain 实际配置和 PGLite 数据库位于 `backend/workspace_data/global/company-wiki/.gbrain/`，仍在 `workspace_data/` 资料根下，不进入主 Git。
 - 本机已在 2026-05-29 按 GBrain PGLite 路径切换到本地免费 embedding：`gbrain reinit-pglite --embedding-model ollama:mxbai-embed-large --embedding-dimensions 1024`，当前 schema pack 为 `gbrain-base-v2`。Ollama 已安装并拉取 `mxbai-embed-large`，真实 embedding 已生成。
 - 本机 MVP 曾执行 `gbrain sources add company-wiki --path backend/workspace_data/global/company-wiki/derived --name "Project_R Company Wiki" --federated`；迁移后应改为 `_preprocessed/company/company-wiki/gbrain-ready` 路径。

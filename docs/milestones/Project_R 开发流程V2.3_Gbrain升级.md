@@ -15,12 +15,24 @@
 5. 升级后必须跑 Project_R 的 source scope、sync、query、think、citation、doctor 回归。
 6. 通过后再决定替换 `reference/gbrain-master`，或改成 fork/submodule 管理。
 
-## 当前基线
+## 当前状态
+
+2026-06-20 已完成本地正式切换：
+
+- `reference/gbrain-master` 当前运行版本：`0.42.51.0`
+- `/health` 返回 `status=ok`、`engine=pglite`
+- 正式 `backend/workspace_data/_gbrain` 已迁移 schema `107 -> 119`
+- `doctor --fast --json` 为 warnings-only：`health_score=90`、`brain_checks_score=100`、`resolver_health=ok`
+- 旧源码备份：`reference/gbrain-master.pre-0.42.51-20260620-124345`
+- 旧 runtime 备份：`backend/workspace_data/_gbrain_backup_pre_0.42.51_20260620-124345`
+- 切换记录：`docs/validation/gbrain-upgrade-0.42.51-cutover.md`
+
+## 原始基线
 
 本地：
-- `reference/gbrain-master/VERSION`：`0.41.26.0`
+- `reference/gbrain-master/VERSION`：升级前为 `0.41.26.0`
 - `reference/gbrain-master` 当前不是 Git repo/submodule。
-- Project_R 有 7 个本地 GBrain patch：
+- Project_R 有 9 个本地 GBrain patch：
   - `0001-ollama-local-embedding-limits.patch`
   - `0002-recursive-chunker-local-ollama-cap.patch`
   - `0003-think-source-scope-gather-and-takes.patch`
@@ -28,6 +40,8 @@
   - `0005-subagent-tool-source-scope.patch`
   - `0006-chat-tool-json-schema-wrapper.patch`
   - `0007-think-gather-title-query-variants.patch`
+  - `0008-doctor-resolver-health-windows-crlf.patch`
+  - `0009-windows-source-run-apply-migrations.patch`
 
 上游：
 - GitHub `garrytan/gbrain` 当前 `VERSION`：`0.42.51.0`
@@ -39,6 +53,24 @@
   - brain-resident skillpacks
   - `gbrain advisor`
   - sync / embed pacing 与成本控制增强
+
+## 2026-06-20 阶段 7-8 状态
+
+阶段 1-6 已完成阶段性验证并形成以下记录：
+
+- `docs/validation/gbrain-upgrade-0.42.51-preaudit.md`
+- `docs/validation/gbrain-upgrade-0.42.51-patch-audit.md`
+- `docs/validation/gbrain-upgrade-0.42.51-rebase.md`
+- `docs/validation/gbrain-upgrade-0.42.51-regression.md`
+- `docs/validation/gbrain-upgrade-0.42.51-cutover.md`
+- `patches/gbrain/0.42.51/`
+
+阶段 7 已完成切换方案决策：当前推荐 **方案 C：Project_R fork / pinned branch**，因为 `0003`、`0004`、`0005` 仍是 Project_R source scope / agent-bound OAuth / subagent source scope 的关键 patch，不能把后续维护继续依赖散落 patch 文件或直接覆盖上游源码。
+
+阶段 8 已完成本地正式切换。原阻塞点 `doctor --fast --json` 的 upstream resolver/skill hygiene `unhealthy` 已通过 `0008` 修复；后续全面检测发现并通过 `0009` 修复 Windows/source-run `apply-migrations` 依赖全局 `gbrain` 的兼容缺口。切换后 `resolver_health=ok`，剩余 `retrieval_reflex_health` warning 属于 host policy integration 未安装，不阻塞 Project_R 当前 GBrain runtime。
+
+- `docs/validation/gbrain-upgrade-0.42.51-switch-decision.md`
+- `docs/operations/gbrain-upgrade-0.42.51-cutover-runbook.md`
 
 ## 阶段 1：升级前只读审计
 
@@ -325,17 +357,17 @@ cd backend
 
 本任务完成必须满足：
 
-- [ ] 上游版本、commit、changelog 已记录。
-- [ ] 7 个 Project_R GBrain patch 都有明确结论。
-- [ ] 临时 `GBRAIN_HOME` 验证通过。
-- [ ] Project_R adapter 核心测试通过。
-- [ ] 个人/项目/客户三类 source scope 回归通过。
-- [ ] 普通 Chat 不自动查 GBrain 的边界未破坏。
-- [ ] 员工侧不暴露过多 GBrain 元数据。
-- [ ] 管理员 GBrain 状态/质量/维护入口仍可用。
-- [ ] 最终采用方案 A/B/C 之一，并记录原因。
-- [ ] 有明确回滚记录和备份路径。
-- [ ] 更新相关文档：
+- [x] 上游版本、commit、changelog 已记录。
+- [x] 8 个 Project_R GBrain patch 都有明确结论。
+- [x] 临时 `GBRAIN_HOME` 验证通过。
+- [x] Project_R adapter 核心测试通过。
+- [x] 个人/项目/客户三类 source scope 回归通过。
+- [x] 普通 Chat 不自动查 GBrain 的边界未破坏。
+- [ ] 员工侧不暴露过多 GBrain 元数据。（本轮未做前端人工验收；后续 UI 验收保留。）
+- [x] 管理员 GBrain 状态/质量/维护入口仍可用。
+- [x] 最终采用方案 A/B/C 之一，并记录原因。
+- [x] 有明确回滚记录和备份路径。
+- [x] 更新相关文档：
   - `docs/product/gbrain-feature-inventory.md`
   - `docs/milestones/gbrain-adaptation-progress.md`
   - `docs/validation/gbrain-upgrade-0.42.51-*.md`

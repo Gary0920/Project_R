@@ -12,6 +12,11 @@ Rules:
 
 Current patch set:
 
+0.42.51 rebased artifacts are recorded under `patches/gbrain/0.42.51/`.
+Use that directory for the current GBrain upgrade. The legacy root patch files
+below are the 2026-05-30 baseline records and some are not standard
+`git apply` patches.
+
 - `0001-ollama-local-embedding-limits.patch`: adds explicit Ollama embedding dimensions and a conservative local batch cap for `mxbai-embed-large`.
 - `0002-recursive-chunker-local-ollama-cap.patch`: lowers the default Markdown chunk hard cap for local Ollama embedding stability.
 - `0003-think-source-scope-gather-and-takes.patch`: threads `sourceId/allowedSources` through GBrain `think` gather, takes, and graph retrieval so source-scoped OAuth clients cannot leak cross-source evidence.
@@ -19,6 +24,8 @@ Current patch set:
 - `0005-subagent-tool-source-scope.patch`: makes subagent brain tools inherit the OAuth-bound source scope instead of falling back to `default`.
 - `0006-chat-tool-json-schema-wrapper.patch`: updates GBrain gateway tool schemas/messages for AI SDK v6 compatibility.
 - `0007-think-gather-title-query-variants.patch`: adds conservative CJK title-like query variants to `think` gather so questions like `书面化原则是什么` retrieve the exact policy page.
+- `0008-doctor-resolver-health-windows-crlf.patch`: fixes Windows CRLF skill frontmatter parsing, the missing `skill-optimizer` resolver row, and Windows path separator assertions so `doctor` resolver health can pass before cutover.
+- `0009-windows-source-run-apply-migrations.patch`: fixes Windows/source-run migration subprocesses so `apply-migrations` reuses the current CLI invocation instead of requiring a globally installed `gbrain`.
 
 These patches were recorded on 2026-05-30 after comparing Project_R's local `reference/gbrain-master` to upstream `garrytan/gbrain` commit `041d89b`.
 

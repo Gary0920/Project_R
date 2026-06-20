@@ -1,0 +1,440 @@
+diff --git a/src/commands/migrations/in-process.ts b/src/commands/migrations/in-process.ts
+index 784fea3..3c6cd46 100644
+--- a/src/commands/migrations/in-process.ts
++++ b/src/commands/migrations/in-process.ts
+@@ -21,7 +21,8 @@
+  * `getaddrinfo ENOTFOUND` line instead of the bare `Command failed: ...`.
+  */
+ 
+-import { execSync } from 'child_process';
++import { execFileSync, execSync } from 'child_process';
++import { existsSync } from 'fs';
+ 
+ import { loadConfig, toEngineConfig } from '../../core/config.ts';
+ import { createEngine } from '../../core/engine-factory.ts';
+@@ -49,6 +50,48 @@ export class MigrateOnlyError extends Error {
+   }
+ }
+ 
++function currentGbrainInvocation(args: string[]): { executable: string; args: string[] } {
++  let executable = process.execPath;
++  const script = process.argv[1];
++  let executableName = executable.replace(/\\/g, '/').split('/').pop()?.toLowerCase() ?? '';
++  if ((executableName === 'bun' || executableName === 'bun.exe') && !existsSync(executable)) {
++    const bunFromPath = Bun.which('bun');
++    if (bunFromPath) {
++      executable = bunFromPath;
++      executableName = executable.replace(/\\/g, '/').split('/').pop()?.toLowerCase() ?? '';
++    }
++  }
++  const isBun = executableName === 'bun' || executableName === 'bun.exe';
++  return {
++    executable,
++    args: isBun && script && existsSync(script)
++      ? ['run', script, ...args]
++      : args,
++  };
++}
++
++export function runGbrainCli(args: string[], opts?: { timeoutMs?: number }): string {
++  const invocation = currentGbrainInvocation(args);
++  try {
++    const out = execFileSync(invocation.executable, invocation.args, {
++      stdio: ['inherit', 'pipe', 'pipe'],
++      timeout: opts?.timeoutMs ?? MIGRATE_ONLY_TIMEOUT_MS,
++      env: process.env,
++      maxBuffer: SUBPROCESS_MAX_BUFFER,
++      encoding: 'utf-8',
++    });
++    return typeof out === 'string' ? out : '';
++  } catch (e: unknown) {
++    const err = e as { message?: string; stderr?: Buffer | string };
++    const stderrRaw = err?.stderr
++      ? (Buffer.isBuffer(err.stderr) ? err.stderr.toString('utf-8') : String(err.stderr))
++      : '';
++    const tail = stderrRaw.split('\n').filter(Boolean).slice(-10).join('\n');
++    const base = err?.message ?? String(e);
++    throw new Error(tail ? `${base}\n--- child stderr (tail) ---\n${tail}` : base);
++  }
++}
++
+ /**
+  * Bring the configured brain's schema to head, in-process. Mirrors what
+  * `gbrain init --migrate-only` did via subprocess: configureGateway →
+diff --git a/src/commands/migrations/v0_11_0.ts b/src/commands/migrations/v0_11_0.ts
+index db75df6..a2d0c8d 100644
+--- a/src/commands/migrations/v0_11_0.ts
++++ b/src/commands/migrations/v0_11_0.ts
+@@ -22,7 +22,7 @@
+ 
+ import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, lstatSync, statSync, realpathSync } from 'fs';
+ import { join, resolve, dirname } from 'path';
+-import { execSync } from 'child_process';
++import { execFileSync } from 'child_process';
+ import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
+ import { savePreferences, loadPreferences } from '../../core/preferences.ts';
+ // Bug 3 — appendCompletedMigration moved to the runner (apply-migrations.ts).
+@@ -38,6 +38,24 @@ function home(): string { return process.env.HOME || ''; }
+ function gbrainDir(): string { return join(home(), '.gbrain'); }
+ function pendingHostWorkPath(): string { return join(gbrainDir(), 'migrations', 'pending-host-work.jsonl'); }
+ 
++function runCurrentGbrain(args: string[], timeout: number): void {
++  let executable = process.execPath;
++  const script = process.argv[1];
++  let executableName = executable.replace(/\\/g, '/').split('/').pop()?.toLowerCase() ?? '';
++  if ((executableName === 'bun' || executableName === 'bun.exe') && !existsSync(executable)) {
++    const bunFromPath = Bun.which('bun');
++    if (bunFromPath) {
++      executable = bunFromPath;
++      executableName = executable.replace(/\\/g, '/').split('/').pop()?.toLowerCase() ?? '';
++    }
++  }
++  const isBun = executableName === 'bun' || executableName === 'bun.exe';
++  const argv = isBun && script && existsSync(script)
++    ? ['run', script, ...args]
++    : args;
++  execFileSync(executable, argv, { stdio: 'inherit', timeout, env: process.env });
++}
++
+ export interface PendingHostWorkEntry {
+   type: 'cron-handler-needs-host-registration' | 'agents-md-dispatcher-needs-host-review';
+   status: 'pending' | 'complete';
+@@ -82,7 +100,7 @@ async function phaseASchema(opts: OrchestratorOpts): Promise<OrchestratorPhaseRe
+ function phaseBSmoke(opts: OrchestratorOpts): OrchestratorPhaseResult {
+   if (opts.dryRun) return { name: 'smoke', status: 'skipped', detail: 'dry-run' };
+   try {
+-    execSync('gbrain jobs smoke', { stdio: 'inherit', timeout: 30_000, env: process.env });
++    runCurrentGbrain(['jobs', 'smoke'], 30_000);
+     return { name: 'smoke', status: 'complete' };
+   } catch (e) {
+     const msg = e instanceof Error ? e.message : String(e);
+@@ -403,7 +421,7 @@ function phaseFInstall(opts: OrchestratorOpts): OrchestratorPhaseResult {
+   if (opts.dryRun) return { name: 'install', status: 'skipped', detail: 'dry-run' };
+   if (opts.noAutopilotInstall) return { name: 'install', status: 'skipped', detail: '--no-autopilot-install' };
+   try {
+-    execSync('gbrain autopilot --install --yes', { stdio: 'inherit', timeout: 60_000, env: process.env });
++    runCurrentGbrain(['autopilot', '--install', '--yes'], 60_000);
+     return { name: 'install', status: 'complete' };
+   } catch (e) {
+     // Install is best-effort — log but don't fail the whole migration. User
+diff --git a/src/commands/migrations/v0_12_0.ts b/src/commands/migrations/v0_12_0.ts
+index 4aa64b9..575d98b 100644
+--- a/src/commands/migrations/v0_12_0.ts
++++ b/src/commands/migrations/v0_12_0.ts
+@@ -30,8 +30,7 @@
+  * fix manually.
+  */
+ 
+-import { execSync } from 'child_process';
+-import { runGbrainSubprocess } from './in-process.ts';
++import { runGbrainCli } from './in-process.ts';
+ import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
+ import { childGlobalFlags } from '../../core/cli-options.ts';
+ // Bug 3 — ledger writes moved to the runner (apply-migrations.ts).
+@@ -61,6 +60,10 @@ interface ConfigCheckResult {
+   raw?: string;
+ }
+ 
++function childGlobalArgs(): string[] {
++  return childGlobalFlags().trim().split(/\s+/).filter(Boolean);
++}
++
+ function phaseBConfigCheck(opts: OrchestratorOpts): OrchestratorPhaseResult & { autoLink: ConfigCheckResult } {
+   if (opts.dryRun) {
+     return { name: 'config', status: 'skipped', detail: 'dry-run', autoLink: { status: 'unknown' } };
+@@ -69,7 +72,7 @@ function phaseBConfigCheck(opts: OrchestratorOpts): OrchestratorPhaseResult & {
+   // Default behavior when unset = enabled (per isAutoLinkEnabled).
+   let raw = '';
+   try {
+-    raw = execSync('gbrain config get auto_link', { encoding: 'utf-8', timeout: 10_000, env: process.env }).trim();
++    raw = runGbrainCli(['config', 'get', 'auto_link'], { timeoutMs: 10_000 }).trim();
+   } catch {
+     // get exits non-zero when the key isn't set — that's fine, defaults to enabled.
+     raw = '';
+@@ -95,7 +98,7 @@ function phaseCBackfillLinks(opts: OrchestratorOpts): OrchestratorPhaseResult {
+     // --source db is idempotent: the UNIQUE constraint on
+     // (from_page_id, to_page_id, link_type) and ON CONFLICT DO NOTHING
+     // make re-runs cheap. Empty brains return 0/0 quickly.
+-    runGbrainSubprocess('gbrain extract links --source db' + childGlobalFlags(), { timeoutMs: 600_000 });
++    runGbrainCli(['extract', 'links', '--source', 'db', ...childGlobalArgs()], { timeoutMs: 600_000 });
+     return { name: 'backfill_links', status: 'complete' };
+   } catch (e) {
+     const msg = e instanceof Error ? e.message : String(e);
+@@ -106,7 +109,7 @@ function phaseCBackfillLinks(opts: OrchestratorOpts): OrchestratorPhaseResult {
+ function phaseDBackfillTimeline(opts: OrchestratorOpts): OrchestratorPhaseResult {
+   if (opts.dryRun) return { name: 'backfill_timeline', status: 'skipped', detail: 'dry-run' };
+   try {
+-    runGbrainSubprocess('gbrain extract timeline --source db' + childGlobalFlags(), { timeoutMs: 600_000 });
++    runGbrainCli(['extract', 'timeline', '--source', 'db', ...childGlobalArgs()], { timeoutMs: 600_000 });
+     return { name: 'backfill_timeline', status: 'complete' };
+   } catch (e) {
+     const msg = e instanceof Error ? e.message : String(e);
+@@ -124,16 +127,27 @@ interface StatsSnapshot {
+ 
+ function readStats(): StatsSnapshot | null {
+   try {
+-    const out = execSync('gbrain get_stats --json 2>/dev/null || gbrain stats', {
+-      encoding: 'utf-8', timeout: 30_000, env: process.env,
+-    });
+-    // The fallback `gbrain stats` prints human-readable output; parse loosely.
+-    const pages = parseInt((out.match(/Pages:\s+(\d+)/) || ['', '0'])[1], 10);
+-    const links = parseInt((out.match(/Links:\s+(\d+)/) || ['', '0'])[1], 10);
+-    const timeline = parseInt((out.match(/Timeline:\s+(\d+)/) || ['', '0'])[1], 10);
+-    return { page_count: pages, link_count: links, timeline_entry_count: timeline };
+-  } catch {
++    const out = runGbrainCli(['get_stats', '--json'], { timeoutMs: 30_000 });
++    const json = JSON.parse(out) as Partial<StatsSnapshot>;
++    if (typeof json.page_count === 'number') {
++      return {
++        page_count: json.page_count,
++        link_count: json.link_count ?? 0,
++        timeline_entry_count: json.timeline_entry_count ?? 0,
++      };
++    }
+     return null;
++  } catch {
++    try {
++      const out = runGbrainCli(['stats'], { timeoutMs: 30_000 });
++    // The fallback `gbrain stats` prints human-readable output; parse loosely.
++      const pages = parseInt((out.match(/Pages:\s+(\d+)/) || ['', '0'])[1], 10);
++      const links = parseInt((out.match(/Links:\s+(\d+)/) || ['', '0'])[1], 10);
++      const timeline = parseInt((out.match(/Timeline:\s+(\d+)/) || ['', '0'])[1], 10);
++      return { page_count: pages, link_count: links, timeline_entry_count: timeline };
++    } catch {
++      return null;
++    }
+   }
+ }
+ 
+diff --git a/src/commands/migrations/v0_12_2.ts b/src/commands/migrations/v0_12_2.ts
+index 1902566..03a1528 100644
+--- a/src/commands/migrations/v0_12_2.ts
++++ b/src/commands/migrations/v0_12_2.ts
+@@ -20,12 +20,15 @@
+  *   D. Record   — append completed.jsonl.
+  */
+ 
+-import { execSync } from 'child_process';
+-import { runGbrainSubprocess } from './in-process.ts';
++import { runGbrainCli } from './in-process.ts';
+ import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
+ import { childGlobalFlags } from '../../core/cli-options.ts';
+ // Bug 3 — ledger writes moved to the runner (apply-migrations.ts).
+ 
++function childGlobalArgs(): string[] {
++  return childGlobalFlags().trim().split(/\s+/).filter(Boolean);
++}
++
+ // ── Phase A — Schema ────────────────────────────────────────
+ 
+ async function phaseASchema(opts: OrchestratorOpts): Promise<OrchestratorPhaseResult> {
+@@ -48,7 +51,7 @@ function phaseBRepair(opts: OrchestratorOpts): OrchestratorPhaseResult {
+   if (opts.dryRun) return { name: 'jsonb_repair', status: 'skipped', detail: 'dry-run' };
+   try {
+     // stdio: 'inherit' — child's stderr progress streams straight through.
+-    runGbrainSubprocess('gbrain repair-jsonb' + childGlobalFlags(), { timeoutMs: 600_000 });
++    runGbrainCli(['repair-jsonb', ...childGlobalArgs()], { timeoutMs: 600_000 });
+     return { name: 'jsonb_repair', status: 'complete' };
+   } catch (e) {
+     const msg = e instanceof Error ? e.message : String(e);
+@@ -66,10 +69,7 @@ function phaseCVerify(opts: OrchestratorOpts): OrchestratorPhaseResult {
+     // Any accidental stdout progress from the child would break JSON.parse
+     // (per Codex review #12). NOTE: we deliberately do NOT pass
+     // --progress-json here — this child is parsed, not watched.
+-    const out = execSync('gbrain repair-jsonb --dry-run --json', {
+-      encoding: 'utf-8', timeout: 60_000, env: process.env,
+-      stdio: ['ignore', 'pipe', 'inherit'],
+-    });
++    const out = runGbrainCli(['repair-jsonb', '--dry-run', '--json'], { timeoutMs: 60_000 });
+     const parsed = JSON.parse(out) as { total_repaired?: number; engine?: string };
+     const remaining = parsed.total_repaired ?? 0;
+     if (remaining > 0) {
+diff --git a/src/commands/migrations/v0_13_0.ts b/src/commands/migrations/v0_13_0.ts
+index 6851033..aa522c3 100644
+--- a/src/commands/migrations/v0_13_0.ts
++++ b/src/commands/migrations/v0_13_0.ts
+@@ -25,8 +25,7 @@
+  * not one-time schema+backfill work.
+  */
+ 
+-import { execSync } from 'child_process';
+-import { runGbrainSubprocess } from './in-process.ts';
++import { runGbrainCli } from './in-process.ts';
+ import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
+ // Bug 3 — ledger writes moved to the runner (apply-migrations.ts). The
+ // orchestrator returns its result and the runner persists it.
+@@ -66,7 +65,7 @@ function phaseBBackfill(opts: OrchestratorOpts): OrchestratorPhaseResult {
+     // `--include-frontmatter` is the v0.13 flag that enables the canonical
+     // frontmatter link extractor. Default-OFF in the CLI for back-compat;
+     // the migration explicitly opts in because this is the canonical backfill.
+-    runGbrainSubprocess('gbrain extract links --source db --include-frontmatter', { timeoutMs: 1_800_000 });
++    runGbrainCli(['extract', 'links', '--source', 'db', '--include-frontmatter'], { timeoutMs: 1_800_000 });
+     return { name: 'frontmatter_backfill', status: 'complete' };
+   } catch (e) {
+     const msg = e instanceof Error ? e.message : String(e);
+@@ -87,9 +86,7 @@ function phaseCVerify(opts: OrchestratorOpts): OrchestratorPhaseResult {
+     // docs-only brains, and brains with no entity pages legitimately
+     // produce 0. Phase B's own stdout shows `Links: created N` which is
+     // the authoritative signal — user sees it during upgrade.
+-    const out = execSync('gbrain call get_stats', {
+-      encoding: 'utf-8', timeout: 60_000, env: process.env,
+-    });
++    const out = runGbrainCli(['call', 'get_stats'], { timeoutMs: 60_000 });
+     const parsed = JSON.parse(out) as { link_count?: number; page_count?: number };
+     const linkCount = parsed.link_count ?? 0;
+     const pageCount = parsed.page_count ?? 0;
+diff --git a/test/apply-migrations-pglite-spawn.serial.test.ts b/test/apply-migrations-pglite-spawn.serial.test.ts
+index 7e5e6e2..17dda55 100644
+--- a/test/apply-migrations-pglite-spawn.serial.test.ts
++++ b/test/apply-migrations-pglite-spawn.serial.test.ts
+@@ -17,7 +17,7 @@
+  * probe on PGLite (the warning is non-essential there). No DATABASE_URL
+  * needed; runs in standard unit CI.
+  *
+- * Single-test design: every `bun run <abs-path>/src/cli.ts` from a tmpdir
++ * Single-test design: every current-bun `run <abs-path>/src/cli.ts` from a tmpdir
+  * cwd pays a cold parse/transpile cost (no near-cwd .bun cache). On
+  * Ubuntu CI that's ~10-20s per spawn. Consolidating into one test with
+  * one shared tmpdir keeps wall-clock under the runner's default timeout.
+@@ -26,13 +26,22 @@
+  */
+ import { describe, test, expect } from 'bun:test';
+ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, chmodSync } from 'fs';
+-import { join } from 'path';
++import { delimiter, join } from 'path';
+ import { tmpdir } from 'os';
++import { spawnSync } from 'child_process';
+ 
+ const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
++const spawnTest = process.platform === 'win32' ? test.skip : test;
++
++function bunExecutable(): string {
++  if (existsSync(process.execPath)) {
++    return process.execPath;
++  }
++  return Bun.which('bun') ?? process.execPath;
++}
+ 
+ /**
+- * Make a shim `gbrain` binary that routes to `bun run <repo>/src/cli.ts`.
++ * Make a shim `gbrain` binary that routes to the current Bun executable.
+  *
+  * The v0.11.0 orchestrator chain spawns subprocesses via `execSync('gbrain
+  * jobs smoke')` and `execSync('gbrain init --migrate-only')` (the Postgres
+@@ -47,7 +56,7 @@ function makeGbrainShim(): { binDir: string; cleanup: () => void } {
+   const shimPath = join(binDir, 'gbrain');
+   writeFileSync(
+     shimPath,
+-    `#!/bin/sh\nexec bun run ${REPO}/src/cli.ts "$@"\n`,
++    `#!/bin/sh\nexec ${JSON.stringify(bunExecutable())} run ${JSON.stringify(`${REPO}/src/cli.ts`)} "$@"\n`,
+     { mode: 0o755 },
+   );
+   chmodSync(shimPath, 0o755);
+@@ -64,32 +73,26 @@ async function runCli(
+   env: Record<string, string>,
+   timeoutMs: number,
+ ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+-  const proc = Bun.spawn(['bun', 'run', `${REPO}/src/cli.ts`, ...args], {
++  const command = [bunExecutable(), 'run', `${REPO}/src/cli.ts`, ...args];
++  const result = spawnSync(command[0], command.slice(1), {
+     cwd: REPO,
+     env: { ...process.env, ...env },
+-    stdout: 'pipe',
+-    stderr: 'pipe',
++    encoding: 'utf8',
++    timeout: timeoutMs,
++    windowsHide: true,
+   });
+-  const killer = setTimeout(() => {
+-    try { proc.kill('SIGKILL'); } catch { /* already dead */ }
+-  }, timeoutMs);
+-  try {
+-    const [stdout, stderr, exitCode] = await Promise.all([
+-      new Response(proc.stdout).text(),
+-      new Response(proc.stderr).text(),
+-      proc.exited,
+-    ]);
+-    return { exitCode, stdout, stderr };
+-  } finally {
+-    clearTimeout(killer);
+-  }
++  return {
++    exitCode: result.status ?? 1,
++    stdout: result.stdout ?? '',
++    stderr: (result.stderr ?? '') + (result.error ? `\n${result.error.message}` : ''),
++  };
+ }
+ 
+ describe('apply-migrations on fresh PGLite (v0.36.1.x #1100)', () => {
+   // ONE test, ONE brain, ONE end-to-end pass through the lifecycle. The
+   // per-spawn cold-start on Ubuntu CI (~10-20s) is the dominant cost; we
+   // pay it 4 times here, not 8.
+-  test('init --migrate-only → apply-migrations --yes → re-run → --list (all exit 0)', async () => {
++  spawnTest('init --migrate-only → apply-migrations --yes → re-run → --list (all exit 0)', async () => {
+     const home = mkdtempSync(join(tmpdir(), 'gbrain-pglite-spawn-'));
+     const shim = makeGbrainShim();
+     try {
+@@ -109,12 +112,16 @@ describe('apply-migrations on fresh PGLite (v0.36.1.x #1100)', () => {
+       const env = {
+         HOME: home,
+         GBRAIN_HOME: home,
+-        PATH: `${shim.binDir}:${process.env.PATH ?? ''}`,
++        PATH: `${shim.binDir}${delimiter}${process.env.PATH ?? ''}`,
+       };
+ 
+       // Step 1: init --migrate-only seeds the schema. Pre-fix on PGLite this
+       // worked but the next step then deadlocked.
+       const init = await runCli(['init', '--migrate-only'], env, 90_000);
++      if (init.exitCode !== 0) {
++        console.error('--- init stdout ---\n' + init.stdout);
++        console.error('--- init stderr ---\n' + init.stderr);
++      }
+       expect(init.exitCode).toBe(0);
+       expect(init.stdout + init.stderr).toMatch(/Schema up to date|migration\(s\) applied/);
+ 
+diff --git a/test/fix-wave-structural.test.ts b/test/fix-wave-structural.test.ts
+index 1b73461..8ebb948 100644
+--- a/test/fix-wave-structural.test.ts
++++ b/test/fix-wave-structural.test.ts
+@@ -114,6 +114,41 @@ describe('v0.41.37.0 #1605 — v0.11.0 phaseASchema routes in-process for ALL en
+   });
+ });
+ 
++describe('Project_R 0.42.51 — v0.11.0 migration subprocesses reuse current CLI', () => {
++  test('v0_11_0 does not require a globally installed gbrain command', () => {
++    const src = readFileSync('src/commands/migrations/v0_11_0.ts', 'utf8');
++    expect(src).toMatch(/function runCurrentGbrain/);
++    expect(src).toMatch(/Bun\.which\('bun'\)/);
++    expect(src).toMatch(/execFileSync\(executable,\s*argv/);
++    expect(src).toMatch(/runCurrentGbrain\(\['jobs',\s*'smoke'\]/);
++    expect(src).toMatch(/runCurrentGbrain\(\['autopilot',\s*'--install',\s*'--yes'\]/);
++    expect(src).not.toContain("execSync('gbrain jobs smoke'");
++    expect(src).not.toContain("execSync('gbrain autopilot --install --yes'");
++  });
++});
++
++describe('Project_R 0.42.51 — migration subprocess helpers avoid bare PATH gbrain', () => {
++  test('in-process helper resolves the current CLI invocation', () => {
++    const src = readFileSync('src/commands/migrations/in-process.ts', 'utf8');
++    expect(src).toMatch(/export function runGbrainCli/);
++    expect(src).toMatch(/execFileSync\(invocation\.executable,\s*invocation\.args/);
++    expect(src).toMatch(/Bun\.which\('bun'\)/);
++  });
++
++  test('v0.12/v0.13 migrations call runGbrainCli with argv arrays', () => {
++    for (const file of [
++      'src/commands/migrations/v0_12_0.ts',
++      'src/commands/migrations/v0_12_2.ts',
++      'src/commands/migrations/v0_13_0.ts',
++    ]) {
++      const src = readFileSync(file, 'utf8');
++      expect(src).toMatch(/runGbrainCli\(\[/);
++      expect(src).not.toMatch(/execSync\('gbrain /);
++      expect(src).not.toMatch(/runGbrainSubprocess\('gbrain /);
++    }
++  });
++});
++
+ describe('v0.36.1.x #1124 — query --no-expand actually negates expand', () => {
+   test("cli.ts parseOpArgs handles --no-<key> as boolean negation", () => {
+     const src = readFileSync('src/cli.ts', 'utf8');

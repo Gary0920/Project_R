@@ -250,7 +250,7 @@ def send_message_use_case(
         ports.write_chat_audit(db, user.id, session_id, llm_user_content, False, detail)
         raise HTTPException(status_code=400, detail=detail)
     if selected_video_attachments:
-        detail = "当前版本暂未接入视频附件理解；如需处理会议视频，请使用会议工作流的转写能力。"
+        detail = "当前版本暂未接入视频/音频附件理解；如需处理会议视频，请使用会议工作流的转写能力。"
         ports.write_failed_assistant_message(db, user.id, session_id, detail, requested_model)
         ports.write_chat_audit(db, user.id, session_id, llm_user_content, False, detail)
         raise HTTPException(status_code=400, detail=detail)

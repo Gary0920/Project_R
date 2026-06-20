@@ -376,7 +376,7 @@ class KnowledgeSources:
             "ok": True,
             "status": "ok",
             "source_id": partial.get("source_id"),
-            "reply": answer or "GBrain think 未返回可用回答。",
+            "reply": self._append_think_source_summary(answer or "GBrain think 未返回可用回答。", sources),
             "sources": sources,
             "model": partial.get("model") or "think",
             "metadata": partial.get("metadata") or {},
@@ -403,11 +403,41 @@ class KnowledgeSources:
             "status": "ok",
             "source_id": project_partial.get("source_id"),
             "source_ids": [project_partial.get("source_id"), company_partial.get("source_id")],
-            "reply": answer or "GBrain think 未返回可用回答。",
+            "reply": self._append_think_source_summary(answer or "GBrain think 未返回可用回答。", merged_sources),
             "sources": merged_sources,
             "model": project_partial.get("model") or "think",
             "metadata": metadata,
         }
+
+    @staticmethod
+    def _append_think_source_summary(answer: str, sources: list[dict]) -> str:
+        source_lines: list[str] = []
+        diagnostic_lines: list[str] = []
+        for source in sources:
+            source_type = str(source.get("type") or "")
+            if source_type == "gbrain_think_citation":
+                source_index = len(source_lines) + 1
+                file_value = str(source.get("file") or "").strip()
+                section = str(source.get("section_path") or "").strip()
+                line = f"- 来源 {source_index}: {file_value or section or 'GBrain citation'}"
+                if section and section != file_value:
+                    line += f" ({section})"
+                source_lines.append(line)
+                continue
+            if source_type in {"gbrain_think_gap", "gbrain_think_conflict", "gbrain_think_warning"}:
+                title = str(source.get("source_title") or "").strip()
+                content = str(source.get("content") or "").strip()
+                if title or content:
+                    diagnostic_lines.append(f"- {title or source_type}: {content}".rstrip())
+
+        if not source_lines and not diagnostic_lines:
+            return answer
+        sections = [answer.rstrip()]
+        if source_lines:
+            sections.append("引用来源\n" + "\n".join(source_lines))
+        if diagnostic_lines:
+            sections.append("GBrain 诊断\n" + "\n".join(diagnostic_lines))
+        return "\n\n".join(sections)
 
     @staticmethod
     def _combine_project_company_answer(project_answer: str, company_answer: str) -> str:

@@ -1,5 +1,6 @@
 param(
     [switch]$Restart,
+    [switch]$Stop,
     [string]$BackendEnvPath = ""
 )
 
@@ -161,6 +162,18 @@ try {
     $existingByPort = @()
 }
 $existing = @($existingByCommand) + @($existingByPort) | Sort-Object -Property Id -Unique
+
+if ($Stop) {
+    if ($existing) {
+        foreach ($process in $existing) {
+            Stop-Process -Id $process.Id -Force
+        }
+        Write-Host "GBrain stopped on port $Port." -ForegroundColor Green
+    } else {
+        Write-Host "GBrain is not running on port $Port." -ForegroundColor Yellow
+    }
+    exit 0
+}
 
 if ($existing -and -not $Restart) {
     Write-Host "GBrain already appears to be running on port $Port." -ForegroundColor Green

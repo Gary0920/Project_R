@@ -1,0 +1,126 @@
+diff --git a/skills/RESOLVER.md b/skills/RESOLVER.md
+index 44cb82d..8fed466 100644
+--- a/skills/RESOLVER.md
++++ b/skills/RESOLVER.md
+@@ -61,6 +61,7 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
+ | Save or load reports | `skills/reports/SKILL.md` |
+ | "Create a skill", "improve this skill" | `skills/skill-creator/SKILL.md` |
+ | "Skillify this", "is this a skill?", "make this proper" | `skills/skillify/SKILL.md` |
++| "optimize this skill", "tune the skill against the benchmark", "make the skill better", "run skillopt", "skillopt for" | `skills/skill-optimizer/SKILL.md` |
+ | "Compress my resolver", "AGENTS.md too large", "RESOLVER.md too big", "functional area dispatcher", "shrink routing table" | `skills/functional-area-resolver/SKILL.md` |
+ | "Is gbrain healthy?", morning health check, skillpack-check | `skills/skillpack-check/SKILL.md` |
+ | "harvest this skill into gbrain", "publish this skill to gbrain", "lift this skill upstream", "share this skill with other gbrain clients", "promote my skill to gbrain" | `skills/skillpack-harvest/SKILL.md` |
+diff --git a/src/core/check-resolvable.ts b/src/core/check-resolvable.ts
+index a82b4a2..769d0a4 100644
+--- a/src/core/check-resolvable.ts
++++ b/src/core/check-resolvable.ts
+@@ -26,6 +26,7 @@ import {
+   findPrimaryResolverPath,
+   loadSkillTriggerIndex,
+ } from './skill-trigger-index.ts';
++import { parseSkillFrontmatter } from './skill-frontmatter.ts';
+ 
+ // ---------------------------------------------------------------------------
+ // Types
+@@ -219,15 +220,7 @@ export function parseResolverEntries(resolverContent: string): ResolverEntry[] {
+ 
+ /** Simple YAML frontmatter parser — extracts triggers array if present. */
+ function extractTriggers(skillContent: string): string[] {
+-  const fmMatch = skillContent.match(/^---\n([\s\S]*?)\n---/);
+-  if (!fmMatch) return [];
+-  const fm = fmMatch[1];
+-  const triggersMatch = fm.match(/^triggers:\s*\n((?:\s+-\s+.+\n?)*)/m);
+-  if (!triggersMatch) return [];
+-  return triggersMatch[1]
+-    .split('\n')
+-    .map(l => l.replace(/^\s+-\s+/, '').replace(/^["']|["']$/g, '').trim())
+-    .filter(Boolean);
++  return parseSkillFrontmatter(skillContent)?.triggers ?? [];
+ }
+ 
+ /**
+diff --git a/src/core/skill-frontmatter.ts b/src/core/skill-frontmatter.ts
+index 7263262..796e5bb 100644
+--- a/src/core/skill-frontmatter.ts
++++ b/src/core/skill-frontmatter.ts
+@@ -82,13 +82,13 @@ export interface ParsedFrontmatter {
+  * `readFileSync(path, 'utf-8')` at the boundary.
+  */
+ export function parseSkillFrontmatter(content: string): ParsedFrontmatter | null {
+-  const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
++  const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+   if (!fmMatch) return null;
+   const raw = fmMatch[1];
+   const out: ParsedFrontmatter = { raw };
+ 
+   // --- name ---
+-  const nameMatch = raw.match(/^name:\s*["']?([^"'\n]+?)["']?\s*$/m);
++  const nameMatch = raw.match(/^name:\s*["']?([^"'\r\n]+?)["']?\s*$/m);
+   if (nameMatch) out.name = nameMatch[1].trim();
+ 
+   // --- writes_pages / mutating (booleans) ---
+@@ -139,11 +139,11 @@ function parseArrayField(raw: string, field: string): string[] | undefined {
+       .filter(Boolean);
+   }
+   // Block form: `field:` + indented `- value` lines on subsequent lines.
+-  const blockRe = new RegExp(`^${field}:\\s*\\n((?:[ \\t]+-[ \\t]+[^\\n]+\\n?)+)`, 'm');
++  const blockRe = new RegExp(`^${field}:\\s*\\r?\\n((?:[ \\t]+-[ \\t]+[^\\r\\n]+(?:\\r?\\n|$))+)`, 'm');
+   const blockMatch = raw.match(blockRe);
+   if (blockMatch) {
+     return blockMatch[1]
+-      .split('\n')
++      .split(/\r?\n/)
+       .map(l => l.replace(/^[ \t]+-[ \t]+/, '').replace(/^["']|["']$/g, '').trim())
+       .filter(Boolean);
+   }
+diff --git a/test/check-resolvable-cli.test.ts b/test/check-resolvable-cli.test.ts
+index d8feaab..1e0ed30 100644
+--- a/test/check-resolvable-cli.test.ts
++++ b/test/check-resolvable-cli.test.ts
+@@ -17,6 +17,10 @@ import {
+ const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
+ const REPO_ROOT = resolve(import.meta.dir, '..');
+ 
++function expectSkillsDirSuffix(path: string | null): void {
++  expect(path?.replace(/\\/g, '/')).toMatch(/\/skills$/);
++}
++
+ // ---------------------------------------------------------------------------
+ // Fixture builders
+ // ---------------------------------------------------------------------------
+@@ -133,7 +137,7 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
+ 
+   it('resolves relative --skills-dir against cwd', () => {
+     const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: 'skills' });
+-    expect(r.dir).toMatch(/\/skills$/);
++    expectSkillsDirSuffix(r.dir);
+     expect(r.error).toBeNull();
+     expect(r.source).toBe('explicit');
+   });
+@@ -155,7 +159,7 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
+       const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null });
+       // Install-path fallback succeeds when test runs inside the gbrain repo.
+       expect(r.error).toBeNull();
+-      expect(r.dir).toMatch(/\/skills$/);
++      expectSkillsDirSuffix(r.dir);
+       expect(r.source).toBe('install_path');
+     } finally {
+       process.chdir(original);
+@@ -172,7 +176,7 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
+     // back-compat. See src/core/repo-root.ts.
+     const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null });
+     expect(r.error).toBeNull();
+-    expect(r.dir).toMatch(/\/skills$/);
++    expectSkillsDirSuffix(r.dir);
+     expect(r.source).toBe('cwd_walk_up');
+   });
+ 
+@@ -373,7 +377,7 @@ describe('gbrain check-resolvable CLI — integration', () => {
+     const r = run([]);
+     expect(r.status === 0 || r.status === 1).toBe(true);
+     expect(r.stdout).toContain('Auto-detected skills directory');
+-    expect(r.stdout).toContain('/skills');
++    expect(r.stdout.replace(/\\/g, '/')).toContain('/skills');
+   });
+ 
+   // v0.31.7 D6 regression guard: --fix must refuse install-path fallback.

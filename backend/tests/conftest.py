@@ -1,5 +1,6 @@
 import os
 import tempfile
+import time
 from pathlib import Path
 
 
@@ -45,4 +46,17 @@ def pytest_runtest_setup(item):
 
 def pytest_sessionfinish(session, exitstatus):
     if _TEMP_DB_PATH and _TEMP_DB_PATH.exists():
-        _TEMP_DB_PATH.unlink()
+        try:
+            from models import engine
+
+            engine.dispose()
+        except Exception:
+            pass
+        for attempt in range(5):
+            try:
+                _TEMP_DB_PATH.unlink()
+                break
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.2)
