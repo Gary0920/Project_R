@@ -1,4 +1,3 @@
-import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,14 +15,12 @@ from app.features.knowledge.gbrain import (
     project_source_id_for_workspace,
     project_source_paths_for_workspace,
 )
-from app.features.knowledge.gbrain.customer_sources import CUSTOMER_WORKSPACE_INGEST_MANIFEST_NAME, compile_customer_workspace_sources
 from app.features.knowledge.gbrain.graph import (
     apply_entity_merge_candidate_action,
     build_entity_merge_candidate_preview,
     build_entity_merge_candidates,
     build_source_graph,
 )
-from app.features.knowledge.gbrain.project_ingest import PROJECT_INGEST_MANIFEST_NAME, compile_project_workspace_sources
 from app.features.notifications.service import (
     notify_user,
     notify_workspace_bulk_delete_risk,
@@ -43,13 +40,11 @@ from app.features.workspaces.gbrain_graph import (
 )
 from app.features.workspaces import catalog as workspace_catalog
 from app.features.workspaces.knowledge_ingest_api import (
-    compile_customer_workspace_sources_for_request as _compile_customer_workspace_sources_for_request_core,
-    compile_project_workspace_sources_for_request as _compile_project_workspace_sources_for_request_core,
-    execute_workspace_knowledge_ingest as _execute_workspace_knowledge_ingest_core,
-    new_workspace_ingest_run_id as _new_workspace_ingest_run_id_core,
-    normalize_workspace_ingest_request as _normalize_workspace_ingest_request_core,
-    run_workspace_knowledge_ingest_job as _run_workspace_knowledge_ingest_job_core,
-    serialize_ingest_job as _serialize_ingest_job_core,
+    enqueue_workspace_knowledge_ingest_job,
+    execute_immediate_workspace_knowledge_ingest,
+    normalize_workspace_ingest_request,
+    run_workspace_knowledge_ingest_job,
+    serialize_ingest_job,
 )
 from app.features.workspaces import management as workspace_management
 from app.features.workspaces.schemas import (
@@ -127,18 +122,6 @@ from app.features.workspaces.registry import (
     sync_project_folders,
 )
 from app.features.workspaces.responses import workspace_response as _workspace_response
-from app.features.workspaces.ingest.agent_runs import (
-    create_queued_workspace_ingest_agent_run,
-    write_immediate_workspace_ingest_agent_run as _write_immediate_workspace_ingest_agent_run,
-)
-from app.features.workspaces.ingest.jobs import (
-    mark_workspace_ingest_job_queued,
-    workspace_ingest_job_run_id as _workspace_ingest_job_run_id,
-    workspace_ingest_request_label as _workspace_ingest_request_label,
-)
-from app.features.workspaces.ingest.notifications import (
-    notify_workspace_ingest_queued,
-)
 from app.features.workspaces.files.service import (
     DEFAULT_UNFILED_DIR,
     DEFAULT_PROJECT_WORKSPACE_TEMPLATE_DIRS,
@@ -158,7 +141,7 @@ from app.features.workspaces.files.service import (
     trash_target as _trash_target,
     upload_limit_for,
 )
-from models import SessionLocal, get_db
+from models import get_db
 from models.attachment import SessionAttachment
 from models.workspace import Workspace, WorkspaceMember, WorkspaceFile
 from models.workspace_ingest_job import WorkspaceIngestJob
@@ -854,16 +837,8 @@ def refresh_workspace_knowledge(
     _ensure_member(db, user.id, workspace_id)
     if workspace.workspace_kind not in {"project", "customer"}:
         raise HTTPException(status_code=400, detail="当前工作区类型暂不支持一键录入知识库")
-    ingest_request = _normalize_workspace_ingest_request(db, workspace, user, req)
-    payload = _execute_workspace_knowledge_ingest(
-        db,
-        workspace,
-        user.id,
-        source_path=ingest_request["path"],
-        recursive=ingest_request["recursive"],
-    )
-    agent_run = _write_immediate_workspace_ingest_agent_run(db, workspace, user.id, payload)
-    payload["agent_run"] = serialize_agent_run(db, agent_run)
+    ingest_request = normalize_workspace_ingest_request(db, workspace, user, req, storage_config=_storage_config())
+    payload = execute_immediate_workspace_knowledge_ingest(db, workspace, user, ingest_request)
     db.commit()
     return WorkspaceKnowledgeRefreshResponse(**payload)
 
@@ -882,29 +857,12 @@ def enqueue_workspace_knowledge_ingest(
     _ensure_member(db, user.id, workspace_id)
     if workspace.workspace_kind not in {"project", "customer"}:
         raise HTTPException(status_code=400, detail="当前工作区类型暂不支持一键录入知识库")
-    ingest_request = _normalize_workspace_ingest_request(db, workspace, user, req)
-    job = WorkspaceIngestJob(
-        workspace_id=workspace_id,
-        requested_by=user.id,
-        status="queued",
-        result_json=json.dumps({"request": ingest_request}, ensure_ascii=False),
-    )
-    db.add(job)
-    db.flush()
-    run_id = _workspace_ingest_job_run_id(job)
-    mark_workspace_ingest_job_queued(job, workspace=workspace, ingest_request=ingest_request, run_id=run_id)
-    create_queued_workspace_ingest_agent_run(db, job, workspace, ingest_request)
-    notify_workspace_ingest_queued(
-        db,
-        workspace=workspace,
-        actor_user_id=user.id,
-        job_id=job.id,
-        request_label=_workspace_ingest_request_label(ingest_request),
-    )
+    ingest_request = normalize_workspace_ingest_request(db, workspace, user, req, storage_config=_storage_config())
+    job = enqueue_workspace_knowledge_ingest_job(db, workspace, user, ingest_request)
     db.commit()
     db.refresh(job)
-    background_tasks.add_task(_run_workspace_knowledge_ingest_job, job.id)
-    return _serialize_ingest_job(db, job)
+    background_tasks.add_task(run_workspace_knowledge_ingest_job, job.id)
+    return serialize_ingest_job(db, job)
 
 
 @router.get("/{workspace_id}/knowledge/ingest/jobs/{job_id}", response_model=WorkspaceKnowledgeIngestJobResponse)
@@ -922,7 +880,7 @@ def get_workspace_knowledge_ingest_job(
     )
     if not job:
         raise HTTPException(status_code=404, detail="录入任务不存在")
-    return _serialize_ingest_job(db, job)
+    return serialize_ingest_job(db, job)
 
 
 @router.get("/{workspace_id}/knowledge/graph", response_model=WorkspaceKnowledgeGraphResponse)
@@ -1170,79 +1128,6 @@ def workspace_native_graph_context(
     )
     db.commit()
     return result
-
-
-def _normalize_workspace_ingest_request(
-    db: Session,
-    workspace: Workspace,
-    user: User,
-    req: WorkspaceKnowledgeIngestRequest | None,
-) -> dict:
-    return _normalize_workspace_ingest_request_core(
-        db,
-        workspace,
-        user,
-        req,
-        workspace_file_root=_workspace_file_root,
-        safe_relative_path=_safe_relative_path,
-        ensure_not_trash_path=_ensure_not_trash_path,
-        resolve_workspace_child=_resolve_workspace_child,
-        is_workspace_admin=_is_workspace_admin,
-    )
-
-
-def _compile_project_workspace_sources_for_request(workspace: Workspace, source_path: str, recursive: bool) -> dict:
-    return _compile_project_workspace_sources_for_request_core(
-        compile_project_workspace_sources, workspace, source_path, recursive
-    )
-
-
-def _compile_customer_workspace_sources_for_request(workspace: Workspace, source_path: str, recursive: bool) -> dict:
-    return _compile_customer_workspace_sources_for_request_core(
-        compile_customer_workspace_sources, workspace, source_path, recursive
-    )
-
-
-def _new_workspace_ingest_run_id(workspace: Workspace) -> str:
-    return _new_workspace_ingest_run_id_core(workspace)
-
-
-def _execute_workspace_knowledge_ingest(
-    db: Session,
-    workspace: Workspace,
-    actor_user_id: int,
-    *,
-    source_path: str = "",
-    recursive: bool = True,
-    run_id: str | None = None,
-    initial_status_history: list[dict] | None = None,
-) -> dict:
-    return _execute_workspace_knowledge_ingest_core(
-        db,
-        workspace,
-        actor_user_id,
-        compile_project=compile_project_workspace_sources,
-        compile_customer=compile_customer_workspace_sources,
-        adapter_factory=GBrainAdapter,
-        source_path=source_path,
-        recursive=recursive,
-        run_id=run_id,
-        initial_status_history=initial_status_history,
-    )
-
-
-def _run_workspace_knowledge_ingest_job(job_id: int) -> None:
-    return _run_workspace_knowledge_ingest_job_core(
-        job_id,
-        session_factory=SessionLocal,
-        compile_project=compile_project_workspace_sources,
-        compile_customer=compile_customer_workspace_sources,
-        adapter_factory=GBrainAdapter,
-    )
-
-
-def _serialize_ingest_job(db: Session, job: WorkspaceIngestJob) -> WorkspaceKnowledgeIngestJobResponse:
-    return _serialize_ingest_job_core(db, job)
 
 
 @router.put("/{workspace_id}", response_model=WorkspaceResponse)

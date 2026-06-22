@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -40,6 +39,11 @@ from app.features.knowledge.gbrain.ingest import (
     _sha256_file,
     _split_frontmatter,
     _write_markdown,
+)
+from app.features.knowledge.gbrain.preprocess_manifest import (
+    manifest_item_from_result,
+    summary_from_results,
+    write_manifest_with_git_status,
 )
 from app.features.preprocessing.meeting_quality import (
     detect_repeated_text,
@@ -234,25 +238,23 @@ def compile_project_workspace_sources(
         "started_at": started_at,
         "finished_at": _utc_now(),
         "environment_ok": environment["ok"],
-        "items": [_result_to_project_manifest_item(result, paths["root"], paths["gbrain_ready"]) for result in results],
-        "summary": {
-            "total": len(results),
-            "compiled": sum(1 for result in results if result.status == "compiled"),
-            "pending_extractor_capability": sum(
-                1 for result in results if result.status == "pending_extractor_capability"
-            ),
-            "pending_transcription": sum(1 for result in results if result.status == "pending_transcription"),
-            "skipped": sum(1 for result in results if result.status == "skipped"),
-            "failed": sum(1 for result in results if result.status == "failed"),
-        },
+        "items": [
+            manifest_item_from_result(result, source_root=paths["root"], target_root=paths["gbrain_ready"])
+            for result in results
+        ],
+        "summary": summary_from_results(
+            results,
+            status_keys=("compiled", "pending_extractor_capability", "pending_transcription", "skipped", "failed"),
+        ),
     }
     manifest_path = paths["manifests"] / PROJECT_INGEST_MANIFEST_NAME
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    git_status = _commit_derived_changes(paths["gbrain_ready"], manifest["summary"], settings.local_git_enabled)
-    manifest["local_git"] = git_status
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    return manifest
+    return write_manifest_with_git_status(
+        manifest,
+        manifest_path=manifest_path,
+        repo_path=paths["gbrain_ready"],
+        local_git_enabled=settings.local_git_enabled,
+        commit_changes=_commit_derived_changes,
+    )
 
 
 def _compile_project_source(
@@ -1104,20 +1106,6 @@ def _is_inside_runtime_dir(path: Path, paths: dict[str, Path], sidecar_dirs: lis
         except ValueError:
             continue
     return any(part in PROJECT_RUNTIME_DIRS for part in resolved.parts)
-
-
-def _result_to_project_manifest_item(result: ProjectCompiledSource, root: Path, derived_path: Path) -> dict[str, Any]:
-    item: dict[str, Any] = {
-        "source_file": _relative_posix(result.source_path, root),
-        "status": result.status,
-        "source_sha256": result.source_sha256,
-    }
-    if result.target_path is not None:
-        item["target_file"] = _relative_posix(result.target_path, derived_path)
-    if result.error:
-        item["error"] = result.error
-    item.update({key: value for key, value in result.metadata.items() if value not in (None, [], {})})
-    return item
 
 
 def _settings_for_paths(paths: dict[str, Path]) -> GBrainSettings:

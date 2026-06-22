@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -19,6 +18,11 @@ from app.features.knowledge.gbrain import (
     load_gbrain_settings,
 )
 from app.features.knowledge.gbrain.ingest import _commit_derived_changes, _relative_posix, _split_frontmatter, _write_markdown
+from app.features.knowledge.gbrain.preprocess_manifest import (
+    manifest_item_from_result,
+    status_summary_from_results,
+    write_manifest_with_git_status,
+)
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[4]
@@ -124,17 +128,19 @@ def compile_customer_reference_sources(root: Path | None = None) -> dict[str, An
         "finished_at": _utc_now(),
         "root": str(root.resolve()),
         "derived_path": str(derived.resolve()),
-        "items": [_manifest_item(result, root, derived) for result in results],
+        "items": [manifest_item_from_result(result, source_root=root, target_root=derived) for result in results],
         "summary": summary,
     }
     manifest_path = manifests / "customer-reference-ingest-manifest.json"
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
     settings = load_gbrain_settings()
-    git_status = _commit_derived_changes(derived, summary, settings.local_git_enabled)
-    manifest["local_git"] = git_status
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    return manifest
+    return write_manifest_with_git_status(
+        manifest,
+        manifest_path=manifest_path,
+        repo_path=derived,
+        local_git_enabled=settings.local_git_enabled,
+        commit_changes=_commit_derived_changes,
+    )
 
 
 def compile_customer_workspace_sources(
@@ -214,15 +220,17 @@ def compile_customer_workspace_sources(
         "runs_path": str(runs.resolve()),
         "manifests_path": str(manifests.resolve()),
         "environment_ok": environment["ok"],
-        "items": [_manifest_item(result, root, derived) for result in results],
+        "items": [manifest_item_from_result(result, source_root=root, target_root=derived) for result in results],
         "summary": summary,
     }
     manifest_path = manifests / CUSTOMER_WORKSPACE_INGEST_MANIFEST_NAME
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    git_status = _commit_derived_changes(derived, summary, settings.local_git_enabled)
-    manifest["local_git"] = git_status
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    return manifest
+    return write_manifest_with_git_status(
+        manifest,
+        manifest_path=manifest_path,
+        repo_path=derived,
+        local_git_enabled=settings.local_git_enabled,
+        commit_changes=_commit_derived_changes,
+    )
 
 
 def ensure_and_sync_customer_reference(*, full: bool = False, no_embed: bool = False) -> dict[str, Any]:
@@ -600,33 +608,20 @@ def _sha256(path: Path) -> str:
 
 
 def _summary(results: list[CustomerCompileResult]) -> dict[str, int]:
-    statuses = {result.status for result in results}
-    summary = {status: sum(1 for result in results if result.status == status) for status in sorted(statuses)}
-    summary["total"] = len(results)
-    summary["compiled"] = sum(1 for result in results if result.status == "compiled")
-    summary["skipped"] = 0
-    summary["failed"] = sum(1 for result in results if result.status == "failed")
-    return summary
+    return status_summary_from_results(
+        results,
+        defaults={
+            "compiled": 0,
+            "skipped": 0,
+            "failed": 0,
+        },
+    )
 
 
 def _ensure_local_git_repo(path: Path) -> None:
     if (path / ".git").exists():
         return
     subprocess.run(["git", "init"], cwd=path, capture_output=True, text=True, check=False)
-
-
-def _manifest_item(result: CustomerCompileResult, root: Path, derived: Path) -> dict[str, Any]:
-    item = {
-        "source_file": _relative_posix(result.source_path, root),
-        "status": result.status,
-        "source_sha256": result.source_sha256,
-        **result.metadata,
-    }
-    if result.target_path is not None:
-        item["target_file"] = _relative_posix(result.target_path, derived)
-    if result.error:
-        item["error"] = result.error
-    return item
 
 
 def _utc_now() -> str:

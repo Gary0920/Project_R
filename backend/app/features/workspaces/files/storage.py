@@ -10,6 +10,14 @@ from fastapi import HTTPException
 from app.features.workspaces.files.service import DEFAULT_PROJECT_WORKSPACE_TEMPLATE_DIRS, TRASH_DIRNAME
 from models.workspace import Workspace
 
+DEFAULT_WORKSPACES_ROOT = Path(__file__).resolve().parents[4] / "workspace_data"
+DEFAULT_PROJECT_ROOT_NAME = "project"
+DEFAULT_CUSTOMER_ROOT_NAME = "customer"
+DEFAULT_PROJECT_BRANDS = ("AURA", "BFI", "SPECWISE", "SYNOVA")
+DEFAULT_CUSTOMER_BRAND = "CUSTOMER"
+DEFAULT_CRM_WORKSPACE_SLUG = "CRM"
+DEFAULT_CRM_RAW_DIR = "raw"
+
 
 @dataclass(frozen=True)
 class WorkspaceStorageConfig:
@@ -20,6 +28,18 @@ class WorkspaceStorageConfig:
     customer_brand: str
     crm_workspace_slug: str
     crm_raw_dir: str
+
+
+def default_workspace_storage_config() -> WorkspaceStorageConfig:
+    return WorkspaceStorageConfig(
+        workspaces_root=DEFAULT_WORKSPACES_ROOT,
+        project_root_name=DEFAULT_PROJECT_ROOT_NAME,
+        customer_root_name=DEFAULT_CUSTOMER_ROOT_NAME,
+        project_brands=DEFAULT_PROJECT_BRANDS,
+        customer_brand=DEFAULT_CUSTOMER_BRAND,
+        crm_workspace_slug=DEFAULT_CRM_WORKSPACE_SLUG,
+        crm_raw_dir=DEFAULT_CRM_RAW_DIR,
+    )
 
 
 def slugify(name: str) -> str:

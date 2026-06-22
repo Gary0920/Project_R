@@ -4,7 +4,6 @@ import base64
 import json
 import os
 import re
-import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -17,20 +16,17 @@ from urllib.request import Request
 import urllib.request
 
 from .adapter_utils import (
-    discover_gbrain_service_pids,
     ensure_directory,
     ensure_local_git_repo,
     first_number,
     mcp_tool_invocation_succeeded,
     oauth_token_error_is_missing_client,
     path_status,
-    pid_exists,
-    should_retry_sync_with_service_restart,
     source_status_from_snapshot,
-    terminate_pid,
     timestamp_for_ui,
-    utc_now,
 )
+from .runtime import GBrainRuntime
+from .transport import GBrainTransport, parse_mcp_tool_payload
 
 try:
     from dotenv import load_dotenv
@@ -603,6 +599,17 @@ def customer_source_registration_plan(workspace: Any) -> dict[str, Any]:
 class GBrainAdapter:
     def __init__(self, settings: GBrainSettings | None = None):
         self.settings = settings or load_gbrain_settings()
+        self._runtime = GBrainRuntime(
+            self.settings,
+            ensure_environment=ensure_gbrain_environment,
+            apply_provider_env=_apply_gbrain_provider_env,
+            default_ollama_base_url=DEFAULT_OLLAMA_BASE_URL,
+        )
+        self._transport = GBrainTransport(
+            self.settings,
+            apply_provider_env=_apply_gbrain_provider_env,
+            default_ollama_base_url=DEFAULT_OLLAMA_BASE_URL,
+        )
         self._think_oauth_tokens: dict[str, tuple[str, float]] = {}
         self._agent_oauth_access_token = ""
         self._agent_oauth_expires_at = 0.0
@@ -1073,231 +1080,31 @@ class GBrainAdapter:
         }
 
     def _probe_service_health(self) -> dict[str, Any]:
-        if not self.settings.enabled:
-            return {"status": "disabled"}
-        if not self.settings.service_configured:
-            return {"status": "not_configured"}
-
-        url = self.settings.base_url.rstrip("/") + "/health"
-        headers = {"Accept": "application/json"}
-        if self.settings.service_bearer_token:
-            headers["Authorization"] = f"Bearer {self.settings.service_bearer_token}"
-        request = Request(url, headers=headers, method="GET")
-
-        try:
-            with urllib.request.urlopen(request, timeout=self.settings.timeout_seconds) as response:
-                raw = response.read().decode("utf-8", errors="replace")
-                body = json.loads(raw) if raw else {}
-                return {
-                    "status": "ok",
-                    "http_status": response.status,
-                    "body": body,
-                }
-        except HTTPError as exc:
-            return {
-                "status": "http_error",
-                "http_status": exc.code,
-                "error": exc.reason,
-            }
-        except (URLError, TimeoutError, OSError) as exc:
-            return {
-                "status": "unreachable",
-                "error": str(exc),
-            }
-        except json.JSONDecodeError as exc:
-            return {
-                "status": "invalid_response",
-                "error": str(exc),
-            }
+        return self._runtime.probe_service_health()
 
     def service_process_status(self) -> dict[str, Any]:
-        record = self._read_service_record()
-        pid = record.get("pid")
-        discovered_pids = discover_gbrain_service_pids(self.settings.http_port)
-        pid_alive = pid_exists(int(pid)) if isinstance(pid, int) else False
-        return {
-            "record_exists": bool(record),
-            "pid": pid,
-            "pid_alive": pid_alive or bool(discovered_pids),
-            "discovered_pids": discovered_pids,
-            "record": record,
-            "cli_workdir": str(self.settings.cli_workdir.resolve()),
-            "bun_executable": self.settings.bun_executable,
-            "port": self.settings.http_port,
-            "bind": self.settings.http_bind,
-            "log_path": str(self.settings.service_log_path.resolve()),
-        }
+        return self._runtime.service_process_status()
 
     def start_http_service(self) -> dict[str, Any]:
-        ensure_gbrain_environment(self.settings)
-        current_health = self._probe_service_health()
-        if current_health.get("status") == "ok":
-            return {"ok": True, "status": "already_running", "service": current_health}
-        self._clear_stale_pglite_state()
-
-        cli_file = self.settings.cli_workdir / "src" / "cli.ts"
-        if not cli_file.exists():
-            return {
-                "ok": False,
-                "status": "missing_gbrain_cli",
-                "error": f"GBrain CLI not found at {cli_file}",
-            }
-
-        env = _apply_gbrain_provider_env(os.environ.copy())
-        env["GBRAIN_HOME"] = str(self.settings.home_path.resolve())
-        env.setdefault("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
-        # Project_R uses DATABASE_URL for its own SQLite app DB; GBrain CLI
-        # interprets the same variable as its engine DB URL. Keep the brain on
-        # GBRAIN_HOME/.gbrain unless the operator explicitly configured it.
-        env.pop("DATABASE_URL", None)
-        args = [
-            self.settings.bun_executable,
-            "src/cli.ts",
-            "serve",
-            "--http",
-            "--port",
-            str(self.settings.http_port),
-            "--bind",
-            self.settings.http_bind,
-            "--suppress-bootstrap-token",
-        ]
-        try:
-            log_handle = self.settings.service_log_path.open("a", encoding="utf-8")
-            flags = 0
-            if os.name == "nt":
-                flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
-            process = subprocess.Popen(
-                args,
-                cwd=self.settings.cli_workdir,
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=log_handle,
-                stderr=subprocess.STDOUT,
-                creationflags=flags,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            return {"ok": False, "status": "start_failed", "error": str(exc)}
-        finally:
-            try:
-                log_handle.close()
-            except UnboundLocalError:
-                pass
-            except OSError:
-                pass
-
-        self._write_service_record(
-            {
-                "pid": process.pid,
-                "started_at": utc_now(),
-                "base_url": self.settings.base_url,
-                "workdir": str(self.settings.cli_workdir.resolve()),
-                "command": args,
-                "log_path": str(self.settings.service_log_path.resolve()),
-            }
-        )
-        time.sleep(1.5)
-        service = self._probe_service_health()
-        return {
-            "ok": service.get("status") == "ok",
-            "status": "started" if service.get("status") == "ok" else "started_but_not_ready",
-            "pid": process.pid,
-            "service": service,
-            "log_path": str(self.settings.service_log_path.resolve()),
-        }
+        return self._runtime.start_http_service()
 
     def stop_http_service(self) -> dict[str, Any]:
-        record = self._read_service_record()
-        pid = record.get("pid")
-        pids: list[int] = []
-        if isinstance(pid, int) and pid_exists(pid):
-            pids.append(pid)
-        for discovered_pid in discover_gbrain_service_pids(self.settings.http_port):
-            if discovered_pid not in pids:
-                pids.append(discovered_pid)
-
-        if not pids:
-            if isinstance(pid, int):
-                self._delete_service_record()
-                return {"ok": True, "status": "stale_record_removed", "pid": pid}
-            return {"ok": True, "status": "no_project_r_managed_process"}
-
-        stopped: list[int] = []
-        failed: list[int] = []
-        for target_pid in pids:
-            terminated = terminate_pid(target_pid)
-            if terminated:
-                stopped.append(target_pid)
-            else:
-                failed.append(target_pid)
-        time.sleep(0.8)
-        still_alive = [target_pid for target_pid in pids if pid_exists(target_pid)]
-        ok = not failed and not still_alive
-        if ok:
-            self._delete_service_record()
-            self._clear_stale_pglite_state()
-        return {
-            "ok": ok,
-            "status": "stopped" if ok else "stop_failed",
-            "pids": pids,
-            "stopped": stopped,
-            "failed": failed,
-            "still_alive": still_alive,
-        }
+        return self._runtime.stop_http_service()
 
     def restart_http_service(self) -> dict[str, Any]:
-        stopped = self.stop_http_service()
-        started = self.start_http_service()
-        return {
-            "ok": bool(started.get("ok")),
-            "status": "restarted" if started.get("ok") else "restart_failed",
-            "stop": stopped,
-            "start": started,
-        }
+        return self._runtime.restart_http_service()
 
     def _read_service_record(self) -> dict[str, Any]:
-        path = self.settings.service_record_path
-        if not path.exists():
-            return {}
-        try:
-            record = json.loads(path.read_text(encoding="utf-8-sig"))
-        except (OSError, json.JSONDecodeError):
-            return {}
-        return record if isinstance(record, dict) else {}
+        return self._runtime.read_service_record()
 
     def _write_service_record(self, record: dict[str, Any]) -> None:
-        self.settings.manifests_path.mkdir(parents=True, exist_ok=True)
-        self.settings.service_record_path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._runtime.write_service_record(record)
 
     def _delete_service_record(self) -> None:
-        try:
-            self.settings.service_record_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        self._runtime.delete_service_record()
 
     def _clear_stale_pglite_state(self) -> None:
-        brain_path = self.settings.home_path / ".gbrain" / "brain.pglite"
-        if not brain_path.exists():
-            return
-
-        lock_dir = brain_path / ".gbrain-lock"
-        lock_file = lock_dir / "lock"
-        lock_pid_alive = False
-        if lock_file.exists():
-            try:
-                lock = json.loads(lock_file.read_text(encoding="utf-8-sig"))
-                lock_pid = lock.get("pid")
-                lock_pid_alive = isinstance(lock_pid, int) and pid_exists(lock_pid)
-            except (OSError, json.JSONDecodeError):
-                lock_pid_alive = False
-            if not lock_pid_alive:
-                shutil.rmtree(lock_dir, ignore_errors=True)
-
-        postmaster_pid = brain_path / "postmaster.pid"
-        if postmaster_pid.exists() and not lock_pid_alive:
-            try:
-                postmaster_pid.unlink()
-            except OSError:
-                pass
+        self._runtime.clear_stale_pglite_state()
 
     def _local_config_status(self) -> dict[str, Any]:
         config_path = self.settings.home_path / ".gbrain" / "config.json"
@@ -1424,82 +1231,16 @@ class GBrainAdapter:
         bearer_token: str | None = None,
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
-        if not self.settings.enabled:
-            return {"status": "disabled"}
-        if not self.settings.service_configured:
-            return {"status": "not_configured"}
-        token = bearer_token or self.settings.service_bearer_token
-        if not token:
-            return {
-                "status": "auth_required",
-                "error": "GBrain bearer token is not configured",
-            }
-
-        payload = {
-            "jsonrpc": "2.0",
-            "method": "tools/call",
-            "params": {"name": name, "arguments": arguments or {}},
-            "id": 1,
-        }
-        request = Request(
-            self.settings.base_url.rstrip("/") + "/mcp",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Accept": "application/json, text/event-stream",
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
+        return self._transport.call_mcp_tool(
+            name,
+            arguments,
+            bearer_token=bearer_token,
+            timeout_seconds=timeout_seconds,
         )
-
-        try:
-            with urllib.request.urlopen(request, timeout=timeout_seconds or self.settings.timeout_seconds) as response:
-                raw = response.read().decode("utf-8", errors="replace")
-                return {
-                    "status": "ok",
-                    "http_status": response.status,
-                    "result": self._parse_mcp_tool_payload(raw),
-                }
-        except HTTPError as exc:
-            return {
-                "status": "http_error",
-                "http_status": exc.code,
-                "error": exc.reason,
-            }
-        except (URLError, TimeoutError, OSError) as exc:
-            return {
-                "status": "unreachable",
-                "error": str(exc),
-            }
-        except (json.JSONDecodeError, ValueError) as exc:
-            return {
-                "status": "invalid_response",
-                "error": str(exc),
-            }
 
     @staticmethod
     def _parse_mcp_tool_payload(raw: str) -> dict[str, Any]:
-        payload_text = raw.strip()
-        data_lines = [line.removeprefix("data:").strip() for line in raw.splitlines() if line.startswith("data:")]
-        if data_lines:
-            payload_text = data_lines[-1]
-
-        envelope = json.loads(payload_text)
-        if envelope.get("error"):
-            return {"error": envelope["error"]}
-
-        result = envelope.get("result", {})
-        content = result.get("content", []) if isinstance(result, dict) else []
-        if not content:
-            return result if isinstance(result, dict) else {}
-
-        first = content[0]
-        if not isinstance(first, dict):
-            return result if isinstance(result, dict) else {}
-        text = first.get("text")
-        if not isinstance(text, str) or not text.strip():
-            return result if isinstance(result, dict) else {}
-        return json.loads(text)
+        return parse_mcp_tool_payload(raw)
 
     def _think_allowed_sources(self) -> tuple[str, ...]:
         return self.settings.think_allowed_sources or (self.settings.company_source_id,)
@@ -2260,174 +2001,34 @@ class GBrainAdapter:
         no_embed: bool,
         mcp_response: dict[str, Any],
     ) -> dict[str, Any]:
-        cli_file = self.settings.cli_workdir / "src" / "cli.ts"
-        if not cli_file.exists():
-            return {
-                "status": "cli_unavailable",
-                "method": "cli",
-                "error": f"GBrain CLI not found at {cli_file}",
-                "mcp_response": mcp_response,
-            }
-
-        args = [
-            self.settings.bun_executable,
-            "src/cli.ts",
-            "sync",
-            "--source",
-            source_id,
-        ]
-        if full:
-            args.append("--full")
-        if no_pull:
-            args.append("--no-pull")
-        if no_embed:
-            args.append("--no-embed")
-
-        env = _apply_gbrain_provider_env(os.environ.copy())
-        env["GBRAIN_HOME"] = str(self.settings.home_path.resolve())
-        env.setdefault("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
-        env.pop("DATABASE_URL", None)
-        if self._probe_service_health().get("status") == "ok":
-            stopped = self.stop_http_service()
-            if not stopped.get("ok"):
-                restarted = self.start_http_service()
-                return {
-                    "status": "cli_error",
-                    "method": "cli",
-                    "error": "Unable to stop GBrain HTTP service for exclusive PGLite sync",
-                    "mcp_response": mcp_response,
-                    "service_restart": {
-                        "reason": "run_local_only_sync_with_exclusive_pglite",
-                        "stop": stopped,
-                        "start": restarted,
-                    },
-                }
-            self._clear_stale_pglite_state()
-            try:
-                result = self._run_sync_cli(args, env)
-            finally:
-                restarted = self.start_http_service()
-            return {
-                **result,
-                "method": "cli",
-                "mcp_response": mcp_response,
-                "service_restart": {
-                    "reason": "run_local_only_sync_with_exclusive_pglite",
-                    "stop": stopped,
-                    "start": restarted,
-                },
-            }
-
-        self._clear_stale_pglite_state()
-        first = self._run_sync_cli(args, env)
-        if first.get("status") == "ok" or not should_retry_sync_with_service_restart(first):
-            return {**first, "method": "cli", "mcp_response": mcp_response}
-
-        stopped = self.stop_http_service()
-        self._clear_stale_pglite_state()
-        retry = self._run_sync_cli(args, env)
-        restarted = self.start_http_service()
-        return {
-            **retry,
-            "method": "cli",
-            "mcp_response": mcp_response,
-            "service_restart": {
-                "reason": "retry_cli_sync_with_exclusive_pglite",
-                "first_error": first.get("error"),
-                "stop": stopped,
-                "start": restarted,
-            },
-        }
+        return self._transport.sync_source_via_cli(
+            source_id=source_id,
+            full=full,
+            no_pull=no_pull,
+            no_embed=no_embed,
+            mcp_response=mcp_response,
+            probe_service_health=self._probe_service_health,
+            stop_http_service=self.stop_http_service,
+            start_http_service=self.start_http_service,
+            clear_stale_pglite_state=self._clear_stale_pglite_state,
+        )
 
     def _run_cli_exclusive(self, args: list[str], *, reason: str, timeout: int) -> dict[str, Any]:
-        env = _apply_gbrain_provider_env(os.environ.copy())
-        env["GBRAIN_HOME"] = str(self.settings.home_path.resolve())
-        env.setdefault("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
-        env.pop("DATABASE_URL", None)
-        service_restart: dict[str, Any] | None = None
-        if self._probe_service_health().get("status") == "ok":
-            stopped = self.stop_http_service()
-            if not stopped.get("ok"):
-                restarted = self.start_http_service()
-                return {
-                    "status": "cli_error",
-                    "error": "Unable to stop GBrain HTTP service for exclusive CLI operation",
-                    "service_restart": {
-                        "reason": reason,
-                        "stop": stopped,
-                        "start": restarted,
-                    },
-                }
-            self._clear_stale_pglite_state()
-            try:
-                result = self._run_gbrain_cli(args, env, timeout)
-            finally:
-                restarted = self.start_http_service()
-            service_restart = {"reason": reason, "stop": stopped, "start": restarted}
-            return {**result, "service_restart": service_restart}
-
-        self._clear_stale_pglite_state()
-        return self._run_gbrain_cli(args, env, timeout)
+        return self._transport.run_cli_exclusive(
+            args,
+            reason=reason,
+            timeout=timeout,
+            probe_service_health=self._probe_service_health,
+            stop_http_service=self.stop_http_service,
+            start_http_service=self.start_http_service,
+            clear_stale_pglite_state=self._clear_stale_pglite_state,
+        )
 
     def _run_gbrain_cli(self, args: list[str], env: dict[str, str], timeout: int) -> dict[str, Any]:
-        try:
-            completed = subprocess.run(
-                args,
-                cwd=self.settings.cli_workdir,
-                env=env,
-                check=False,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            return {
-                "status": "cli_error",
-                "error": str(exc),
-            }
-
-        ok = completed.returncode == 0
-        return {
-            "status": "ok" if ok else "cli_error",
-            "result": {
-                "returncode": completed.returncode,
-                "stdout": (completed.stdout or "")[-4000:],
-                "stderr": (completed.stderr or "")[-4000:],
-            },
-            "error": None if ok else (completed.stderr or completed.stdout or "gbrain cli failed").strip()[-1000:],
-        }
+        return self._transport.run_gbrain_cli(args, env, timeout)
 
     def _run_sync_cli(self, args: list[str], env: dict[str, str]) -> dict[str, Any]:
-        try:
-            completed = subprocess.run(
-                args,
-                cwd=self.settings.cli_workdir,
-                env=env,
-                check=False,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=600,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            return {
-                "status": "cli_error",
-                "error": str(exc),
-            }
-
-        ok = completed.returncode == 0
-        return {
-                "status": "ok" if ok else "cli_error",
-                "result": {
-                    "returncode": completed.returncode,
-                    "stdout": (completed.stdout or "")[-4000:],
-                    "stderr": (completed.stderr or "")[-4000:],
-                },
-            "error": None if ok else (completed.stderr or completed.stdout or "gbrain sync failed").strip()[-1000:],
-        }
+        return self._transport.run_sync_cli(args, env)
 
     def doctor(self) -> dict[str, Any]:
         return self._call_mcp_tool("run_doctor", {})

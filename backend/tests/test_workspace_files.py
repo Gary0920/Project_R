@@ -2,12 +2,15 @@ import os
 import tempfile
 import unittest
 import base64
+import json
 from pathlib import Path
 
 os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.NamedTemporaryFile(delete=False).name}"
 
 import api.workspaces as workspaces_api
 from fastapi import HTTPException
+from app.features.knowledge.gbrain.project_ingest import PROJECT_INGEST_MANIFEST_NAME
+from app.features.workspaces import knowledge_ingest_api as workspace_ingest_api
 from app.features.workspaces.ingest.projection import update_workspace_file_rag_statuses_from_manifest
 from models import Base, SessionLocal, engine
 from models.audit_log import AuditLog
@@ -1137,12 +1140,12 @@ class WorkspaceFileTreeTests(unittest.TestCase):
             def sync_project_source(self, workspace, **kwargs):
                 return {"status": "ok", "result": {"chunksCreated": 1}}
 
-        original_adapter = workspaces_api.GBrainAdapter
-        workspaces_api.GBrainAdapter = _FakeGBrainAdapter
+        original_adapter = workspace_ingest_api.GBrainAdapter
+        workspace_ingest_api.GBrainAdapter = _FakeGBrainAdapter
         try:
             response = workspaces_api.refresh_workspace_knowledge(workspace.id, self.user, self.db)
         finally:
-            workspaces_api.GBrainAdapter = original_adapter
+            workspace_ingest_api.GBrainAdapter = original_adapter
 
         self.assertTrue(response.ok)
         self.assertEqual(response.indexed_files, 1)
@@ -1184,12 +1187,12 @@ class WorkspaceFileTreeTests(unittest.TestCase):
             def sync_customer_source(self, workspace, **kwargs):
                 return {"status": "ok", "result": {"chunksCreated": 1}}
 
-        original_adapter = workspaces_api.GBrainAdapter
-        workspaces_api.GBrainAdapter = _FakeGBrainAdapter
+        original_adapter = workspace_ingest_api.GBrainAdapter
+        workspace_ingest_api.GBrainAdapter = _FakeGBrainAdapter
         try:
             response = workspaces_api.refresh_workspace_knowledge(workspace.id, self.user, self.db)
         finally:
-            workspaces_api.GBrainAdapter = original_adapter
+            workspace_ingest_api.GBrainAdapter = original_adapter
 
         self.assertTrue(response.ok)
         self.assertEqual(response.indexed_files, 1)
@@ -1231,12 +1234,12 @@ class WorkspaceFileTreeTests(unittest.TestCase):
             def sync_customer_source(self, workspace, **kwargs):
                 raise AssertionError("GBrain customer source should not sync when nothing compiled")
 
-        original_adapter = workspaces_api.GBrainAdapter
-        workspaces_api.GBrainAdapter = _FakeGBrainAdapter
+        original_adapter = workspace_ingest_api.GBrainAdapter
+        workspace_ingest_api.GBrainAdapter = _FakeGBrainAdapter
         try:
             response = workspaces_api.refresh_workspace_knowledge(workspace.id, self.user, self.db)
         finally:
-            workspaces_api.GBrainAdapter = original_adapter
+            workspace_ingest_api.GBrainAdapter = original_adapter
 
         self.assertTrue(response.ok)
         self.assertEqual(response.indexed_files, 0)
@@ -1635,15 +1638,15 @@ class WorkspaceFileTreeTests(unittest.TestCase):
             def sync_project_source(self, workspace, **kwargs):
                 raise AssertionError("GBrain source should not sync when nothing compiled")
 
-        original_compile = workspaces_api.compile_project_workspace_sources
-        original_adapter = workspaces_api.GBrainAdapter
-        workspaces_api.compile_project_workspace_sources = fake_compile
-        workspaces_api.GBrainAdapter = _FakeGBrainAdapter
+        original_compile = workspace_ingest_api.compile_project_workspace_sources
+        original_adapter = workspace_ingest_api.GBrainAdapter
+        workspace_ingest_api.compile_project_workspace_sources = fake_compile
+        workspace_ingest_api.GBrainAdapter = _FakeGBrainAdapter
         try:
             response = workspaces_api.refresh_workspace_knowledge(workspace.id, self.user, self.db)
         finally:
-            workspaces_api.compile_project_workspace_sources = original_compile
-            workspaces_api.GBrainAdapter = original_adapter
+            workspace_ingest_api.compile_project_workspace_sources = original_compile
+            workspace_ingest_api.GBrainAdapter = original_adapter
 
         self.assertTrue(response.ok)
         self.assertEqual(response.indexed_files, 0)
@@ -1724,10 +1727,10 @@ class WorkspaceFileTreeTests(unittest.TestCase):
             def sync_project_source(self, workspace, **kwargs):
                 return {"status": "ok"}
 
-        original_compile = workspaces_api.compile_project_workspace_sources
-        original_adapter = workspaces_api.GBrainAdapter
-        workspaces_api.compile_project_workspace_sources = fake_compile
-        workspaces_api.GBrainAdapter = _FakeGBrainAdapter
+        original_compile = workspace_ingest_api.compile_project_workspace_sources
+        original_adapter = workspace_ingest_api.GBrainAdapter
+        workspace_ingest_api.compile_project_workspace_sources = fake_compile
+        workspace_ingest_api.GBrainAdapter = _FakeGBrainAdapter
         try:
             response = workspaces_api.refresh_workspace_knowledge(
                 workspace.id,
@@ -1736,8 +1739,8 @@ class WorkspaceFileTreeTests(unittest.TestCase):
                 workspaces_api.WorkspaceKnowledgeIngestRequest(path=uploaded.path, recursive=False),
             )
         finally:
-            workspaces_api.compile_project_workspace_sources = original_compile
-            workspaces_api.GBrainAdapter = original_adapter
+            workspace_ingest_api.compile_project_workspace_sources = original_compile
+            workspace_ingest_api.GBrainAdapter = original_adapter
 
         self.assertTrue(response.ok)
         self.assertEqual(response.ingest_path, uploaded.path)
@@ -1803,28 +1806,28 @@ class WorkspaceFileTreeTests(unittest.TestCase):
             def sync_project_source(self, workspace, **kwargs):
                 return {"status": "ok"}
 
-        original_compile = workspaces_api.compile_project_workspace_sources
-        original_adapter = workspaces_api.GBrainAdapter
-        workspaces_api.compile_project_workspace_sources = fake_compile
-        workspaces_api.GBrainAdapter = _FakeGBrainAdapter
+        original_compile = workspace_ingest_api.compile_project_workspace_sources
+        original_adapter = workspace_ingest_api.GBrainAdapter
+        workspace_ingest_api.compile_project_workspace_sources = fake_compile
+        workspace_ingest_api.GBrainAdapter = _FakeGBrainAdapter
         try:
-            workspaces_api._run_workspace_knowledge_ingest_job(job.id)
+            workspace_ingest_api.run_workspace_knowledge_ingest_job(job.id)
         finally:
-            workspaces_api.compile_project_workspace_sources = original_compile
-            workspaces_api.GBrainAdapter = original_adapter
+            workspace_ingest_api.compile_project_workspace_sources = original_compile
+            workspace_ingest_api.GBrainAdapter = original_adapter
 
         self.db.expire_all()
         refreshed_job = self.db.query(WorkspaceIngestJob).filter(WorkspaceIngestJob.id == job.id).one()
         self.assertEqual(refreshed_job.status, "succeeded")
         self.assertIn('"indexed_files": 1', refreshed_job.result_json)
-        result = workspaces_api.json.loads(refreshed_job.result_json)
+        result = json.loads(refreshed_job.result_json)
         self.assertEqual(result["run_status"], "synced")
         self.assertEqual(result["manifest"]["run_status"], "synced")
         self.assertEqual(result["manifest"]["items"][0]["preprocess_status"], "compiled")
         self.assertEqual(result["manifest"]["items"][0]["run_status"], "synced")
         self.assertEqual(result["manifest"]["items"][0]["sync_status"], "synced")
         self.assertTrue(result["manifest"]["run"]["status_history"])
-        serialized = workspaces_api._serialize_ingest_job(self.db, refreshed_job)
+        serialized = workspace_ingest_api.serialize_ingest_job(self.db, refreshed_job)
         self.assertIsNotNone(serialized.agent_run)
         self.assertEqual(serialized.agent_run.status, "completed")
         self.assertEqual(serialized.result["run_status"], "synced")
@@ -1883,16 +1886,16 @@ class WorkspaceFileTreeTests(unittest.TestCase):
             def sync_project_source(self, workspace, **kwargs):
                 return {"status": "cli_error", "error": "sync boom"}
 
-        original_compile = workspaces_api.compile_project_workspace_sources
-        original_adapter = workspaces_api.GBrainAdapter
-        workspaces_api.compile_project_workspace_sources = fake_compile
-        workspaces_api.GBrainAdapter = _FakeGBrainAdapter
+        original_compile = workspace_ingest_api.compile_project_workspace_sources
+        original_adapter = workspace_ingest_api.GBrainAdapter
+        workspace_ingest_api.compile_project_workspace_sources = fake_compile
+        workspace_ingest_api.GBrainAdapter = _FakeGBrainAdapter
         try:
             workspace_model = self.db.query(Workspace).filter(Workspace.id == workspace.id).one()
-            payload = workspaces_api._execute_workspace_knowledge_ingest(self.db, workspace_model, self.user.id)
+            payload = workspace_ingest_api.execute_workspace_knowledge_ingest(self.db, workspace_model, self.user.id)
         finally:
-            workspaces_api.compile_project_workspace_sources = original_compile
-            workspaces_api.GBrainAdapter = original_adapter
+            workspace_ingest_api.compile_project_workspace_sources = original_compile
+            workspace_ingest_api.GBrainAdapter = original_adapter
 
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["run_status"], "sync_pending")
@@ -1904,10 +1907,10 @@ class WorkspaceFileTreeTests(unittest.TestCase):
         self.assertEqual(manifest["items"][0]["sync_status"], "sync_pending")
         self.assertEqual(manifest["items"][0]["gbrain_ready_file"], "meetings/sync-pending.md")
         run_manifest_path = runs_path / f"{payload['run_id']}.json"
-        latest_manifest_path = manifests_path / workspaces_api.PROJECT_INGEST_MANIFEST_NAME
+        latest_manifest_path = manifests_path / PROJECT_INGEST_MANIFEST_NAME
         self.assertTrue(run_manifest_path.exists())
         self.assertTrue(latest_manifest_path.exists())
-        persisted = workspaces_api.json.loads(run_manifest_path.read_text(encoding="utf-8"))
+        persisted = json.loads(run_manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(persisted["run_status"], "sync_pending")
         meta = self.db.query(WorkspaceFile).filter(WorkspaceFile.id == uploaded.file_id).first()
         self.assertEqual(meta.rag_status, "sync_pending")

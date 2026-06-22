@@ -9,31 +9,64 @@ from typing import Callable
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.features.agents.events import serialize_agent_run
 from app.features.knowledge.gbrain import GBrainAdapter
+from app.features.knowledge.gbrain.customer_sources import compile_customer_workspace_sources
+from app.features.knowledge.gbrain.project_ingest import compile_project_workspace_sources
 from app.features.workspaces.audit import audit_detail, write_workspace_audit
+from app.features.workspaces.files.service import resolve_workspace_child, safe_relative_path
+from app.features.workspaces.files.storage import (
+    WorkspaceStorageConfig,
+    default_workspace_storage_config,
+    ensure_not_trash_path,
+    workspace_file_root,
+)
 from app.features.workspaces.ingest.agent_runs import (
     add_workspace_ingest_result_event,
     add_workspace_ingest_started_event,
+    create_queued_workspace_ingest_agent_run,
     fail_workspace_ingest_agent_run,
     finish_workspace_ingest_agent_run,
     get_or_create_workspace_ingest_agent_run,
     serialize_workspace_ingest_agent_run,
+    write_immediate_workspace_ingest_agent_run,
 )
 from app.features.workspaces.ingest.audit import workspace_ingest_audit_fields
 from app.features.workspaces.ingest.executor import execute_workspace_ingest_core
 from app.features.workspaces.ingest.jobs import (
+    mark_workspace_ingest_job_queued,
     mark_workspace_ingest_job_completed,
     mark_workspace_ingest_job_failed,
     mark_workspace_ingest_job_running,
+    workspace_ingest_request_label,
     workspace_ingest_request_from_job,
+    workspace_ingest_job_run_id,
     workspace_ingest_run_id_from_job,
 )
-from app.features.workspaces.ingest.notifications import notify_workspace_ingest_failed, notify_workspace_ingest_finished
+from app.features.workspaces.ingest.notifications import (
+    notify_workspace_ingest_failed,
+    notify_workspace_ingest_finished,
+    notify_workspace_ingest_queued,
+)
 from app.features.workspaces.ingest.run import workspace_ingest_status_event
+from app.features.workspaces.permissions import is_workspace_admin
 from app.features.workspaces.schemas import WorkspaceKnowledgeIngestJobResponse, WorkspaceKnowledgeIngestRequest
+from models import SessionLocal
 from models.workspace import Workspace, WorkspaceFile
 from models.workspace_ingest_job import WorkspaceIngestJob
 from models.user import User
+
+
+def _compile_project_default() -> Callable:
+    return compile_project_workspace_sources
+
+
+def _compile_customer_default() -> Callable:
+    return compile_customer_workspace_sources
+
+
+def _adapter_factory_default() -> Callable[[], GBrainAdapter]:
+    return GBrainAdapter
 
 
 def normalize_workspace_ingest_request(
@@ -42,18 +75,22 @@ def normalize_workspace_ingest_request(
     user: User,
     req: WorkspaceKnowledgeIngestRequest | None,
     *,
-    workspace_file_root: Callable[[Workspace], Path],
-    safe_relative_path: Callable[[str], Path],
-    ensure_not_trash_path: Callable[[Path], None],
-    resolve_workspace_child: Callable[[Path, Path], Path],
-    is_workspace_admin: Callable[[Session, User, int], bool],
+    storage_config: WorkspaceStorageConfig | None = None,
+    workspace_file_root_func: Callable[[Workspace], Path] | None = None,
+    safe_relative_path_func: Callable[[str], Path] = safe_relative_path,
+    ensure_not_trash_path_func: Callable[[Path], None] = ensure_not_trash_path,
+    resolve_workspace_child_func: Callable[[Path, Path], Path] = resolve_workspace_child,
+    is_workspace_admin_func: Callable[[Session, User, int], bool] = is_workspace_admin,
 ) -> dict:
     requested_path = (req.path if req else "").replace("\\", "/").strip("/")
     recursive = True if req is None else bool(req.recursive)
-    root = workspace_file_root(workspace)
-    rel = safe_relative_path(requested_path) if requested_path else Path()
-    ensure_not_trash_path(rel)
-    target = resolve_workspace_child(root, rel)
+    storage_config = storage_config or default_workspace_storage_config()
+    if workspace_file_root_func is None:
+        workspace_file_root_func = lambda value: workspace_file_root(value, storage_config)
+    root = workspace_file_root_func(workspace)
+    rel = safe_relative_path_func(requested_path) if requested_path else Path()
+    ensure_not_trash_path_func(rel)
+    target = resolve_workspace_child_func(root, rel)
     if not target.exists():
         raise HTTPException(status_code=404, detail="录入路径不存在")
     rel_path = target.relative_to(root).as_posix()
@@ -64,7 +101,7 @@ def normalize_workspace_ingest_request(
     if not is_file and not is_directory:
         raise HTTPException(status_code=400, detail="录入路径不是文件或文件夹")
 
-    is_admin = is_workspace_admin(db, user, workspace.id)
+    is_admin = is_workspace_admin_func(db, user, workspace.id)
     if workspace.workspace_kind == "customer" and not is_admin:
         raise HTTPException(status_code=403, detail="客户资料录入仅允许系统管理员或客户工作区管理员执行")
     if workspace.workspace_kind == "project":
@@ -131,9 +168,9 @@ def execute_workspace_knowledge_ingest(
     workspace: Workspace,
     actor_user_id: int,
     *,
-    compile_project: Callable,
-    compile_customer: Callable,
-    adapter_factory: Callable[[], GBrainAdapter],
+    compile_project: Callable | None = None,
+    compile_customer: Callable | None = None,
+    adapter_factory: Callable[[], GBrainAdapter] | None = None,
     source_path: str = "",
     recursive: bool = True,
     run_id: str | None = None,
@@ -144,6 +181,9 @@ def execute_workspace_knowledge_ingest(
     status_history = list(initial_status_history or [])
     if not any(item.get("status") == "preprocessing" for item in status_history if isinstance(item, dict)):
         status_history.append(workspace_ingest_status_event("preprocessing", "开始预处理源文件", started_at))
+    compile_project = compile_project or _compile_project_default()
+    compile_customer = compile_customer or _compile_customer_default()
+    adapter_factory = adapter_factory or _adapter_factory_default()
     payload = execute_workspace_ingest_core(
         db,
         workspace,
@@ -186,14 +226,69 @@ def execute_workspace_knowledge_ingest(
     return payload
 
 
+def execute_immediate_workspace_knowledge_ingest(
+    db: Session,
+    workspace: Workspace,
+    user: User,
+    ingest_request: dict,
+    *,
+    compile_project: Callable | None = None,
+    compile_customer: Callable | None = None,
+    adapter_factory: Callable[[], GBrainAdapter] | None = None,
+) -> dict:
+    payload = execute_workspace_knowledge_ingest(
+        db,
+        workspace,
+        user.id,
+        compile_project=compile_project,
+        compile_customer=compile_customer,
+        adapter_factory=adapter_factory,
+        source_path=str(ingest_request.get("path") or ""),
+        recursive=bool(ingest_request.get("recursive", True)),
+    )
+    agent_run = write_immediate_workspace_ingest_agent_run(db, workspace, user.id, payload)
+    payload["agent_run"] = serialize_agent_run(db, agent_run)
+    return payload
+
+
+def enqueue_workspace_knowledge_ingest_job(
+    db: Session,
+    workspace: Workspace,
+    user: User,
+    ingest_request: dict,
+) -> WorkspaceIngestJob:
+    job = WorkspaceIngestJob(
+        workspace_id=workspace.id,
+        requested_by=user.id,
+        status="queued",
+        result_json=json.dumps({"request": ingest_request}, ensure_ascii=False),
+    )
+    db.add(job)
+    db.flush()
+    run_id = workspace_ingest_job_run_id(job)
+    mark_workspace_ingest_job_queued(job, workspace=workspace, ingest_request=ingest_request, run_id=run_id)
+    create_queued_workspace_ingest_agent_run(db, job, workspace, ingest_request)
+    notify_workspace_ingest_queued(
+        db,
+        workspace=workspace,
+        actor_user_id=user.id,
+        job_id=job.id,
+        request_label=workspace_ingest_request_label(ingest_request),
+    )
+    return job
+
+
 def run_workspace_knowledge_ingest_job(
     job_id: int,
     *,
-    session_factory: Callable[[], Session],
-    compile_project: Callable,
-    compile_customer: Callable,
-    adapter_factory: Callable[[], GBrainAdapter],
+    session_factory: Callable[[], Session] = SessionLocal,
+    compile_project: Callable | None = None,
+    compile_customer: Callable | None = None,
+    adapter_factory: Callable[[], GBrainAdapter] | None = None,
 ) -> None:
+    compile_project = compile_project or _compile_project_default()
+    compile_customer = compile_customer or _compile_customer_default()
+    adapter_factory = adapter_factory or _adapter_factory_default()
     db = session_factory()
     try:
         job = db.query(WorkspaceIngestJob).filter(WorkspaceIngestJob.id == job_id).first()

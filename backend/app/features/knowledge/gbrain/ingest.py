@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 import subprocess
@@ -14,6 +13,12 @@ import yaml
 
 from app.features.preprocessing.docx_text import preprocess_docx_text
 from app.features.knowledge.gbrain import GBrainSettings, ensure_gbrain_environment, load_gbrain_settings, resolve_gbrain_source_paths
+from app.features.knowledge.gbrain.preprocess_manifest import (
+    manifest_item_from_result,
+    relative_posix,
+    summary_from_results,
+    write_manifest_with_git_status,
+)
 from app.features.preprocessing.meeting_structured import (
     MeetingStructuredExtractionResult,
     PROMPT_VERSION as MEETING_PROMPT_VERSION,
@@ -116,21 +121,20 @@ def compile_company_wiki_sources(
         "runs_path": str(source_paths.runs.resolve()),
         "manifests_path": str(settings.manifests_path.resolve()),
         "environment_ok": environment["ok"],
-        "items": [_result_to_manifest_item(result, settings) for result in results],
-        "summary": {
-            "total": len(results),
-            "compiled": sum(1 for result in results if result.status == "compiled"),
-            "skipped": sum(1 for result in results if result.status == "skipped"),
-            "failed": sum(1 for result in results if result.status == "failed"),
-        },
+        "items": [
+            manifest_item_from_result(result, source_root=settings.raw_path, target_root=settings.derived_path)
+            for result in results
+        ],
+        "summary": summary_from_results(results, status_keys=("compiled", "skipped", "failed")),
     }
     manifest_path = settings.manifests_path / "company-wiki-ingest-manifest.json"
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    git_status = _commit_derived_changes(settings.derived_path, manifest["summary"], settings.local_git_enabled)
-    manifest["local_git"] = git_status
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    return manifest
+    return write_manifest_with_git_status(
+        manifest,
+        manifest_path=manifest_path,
+        repo_path=settings.derived_path,
+        local_git_enabled=settings.local_git_enabled,
+        commit_changes=_commit_derived_changes,
+    )
 
 
 def _compile_one_source(
@@ -521,21 +525,7 @@ def _sha256_file(path: Path) -> str:
 
 
 def _relative_posix(path: Path, root: Path) -> str:
-    return path.resolve().relative_to(root.resolve()).as_posix()
-
-
-def _result_to_manifest_item(result: CompiledSource, settings: GBrainSettings) -> dict[str, Any]:
-    item: dict[str, Any] = {
-        "source_file": _relative_posix(result.source_path, settings.raw_path),
-        "status": result.status,
-        "source_sha256": result.source_sha256,
-    }
-    if result.target_path is not None:
-        item["target_file"] = _relative_posix(result.target_path, settings.derived_path)
-    if result.error:
-        item["error"] = result.error
-    item.update({key: value for key, value in result.metadata.items() if value not in (None, [], {})})
-    return item
+    return relative_posix(path, root)
 
 
 def _iter_raw_source_files(
