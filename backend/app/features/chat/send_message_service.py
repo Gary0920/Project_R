@@ -326,7 +326,6 @@ def send_message_use_case(
                 llm_messages=llm_messages,
                 system_prompt=system_prompt,
                 thinking=req.thinking,
-                temperature=req.temperature,
                 session_factory=ports.session_factory,
                 session_id=session.id,
                 user_id=user.id,
@@ -467,7 +466,6 @@ def _complete_standard(
             llm_messages,
             system_prompt=system_prompt,
             thinking=req.thinking,
-            temperature=req.temperature,
         )
     except ports.llm_configuration_error as exc:
         ports.write_failed_assistant_message(db, user.id, session_id, str(exc), requested_model)

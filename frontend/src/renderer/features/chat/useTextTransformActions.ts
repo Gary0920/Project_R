@@ -22,7 +22,6 @@ type TextTransformActionsOptions = {
   setDraft: (text: string) => void;
   setError: (message: string) => void;
   setMessageActionBusyId: (id: number | null) => void;
-  temperature: number | undefined;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   thinkingEnabled: boolean;
 };
@@ -36,7 +35,6 @@ export function useTextTransformActions({
   setDraft,
   setError,
   setMessageActionBusyId,
-  temperature,
   textareaRef,
   thinkingEnabled,
 }: TextTransformActionsOptions) {
@@ -57,7 +55,6 @@ export function useTextTransformActions({
         targetLanguage: defaults.targetLanguage,
         tone: defaults.tone,
         thinking: thinkingEnabled,
-        temperature,
       });
       setTextTransformResult(textTransformResultFromResponse(message.id, result));
       textareaRef.current?.focus();

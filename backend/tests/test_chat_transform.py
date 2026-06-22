@@ -38,7 +38,6 @@ class ChatTransformTests(unittest.TestCase):
                     text="Please review this email.",
                     target_language="English",
                     tone="professional",
-                    temperature=0.2,
                 ),
                 get_llm_client=lambda provider=None: client,
             )
@@ -46,7 +45,7 @@ class ChatTransformTests(unittest.TestCase):
             self.assertEqual(response.provider, "mock")
             self.assertIn("Please review this email.", client.messages[-1]["content"])
             self.assertIs(client.thinking, False)
-            self.assertEqual(client.temperature, 0.2)
+            self.assertIsNone(client.temperature)
             self.assertTrue(client.system_prompt)
 
     def test_transform_rejects_unknown_action(self):

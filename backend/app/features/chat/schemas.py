@@ -54,7 +54,6 @@ class SendMessageRequest(BaseModel):
     thinking: bool = False
     web_search: bool = False
     system_prompt: str | None = None
-    temperature: float | None = Field(default=None, ge=0, le=2)
 
 
 class RegenerateMessageRequest(BaseModel):
@@ -63,7 +62,6 @@ class RegenerateMessageRequest(BaseModel):
     thinking: bool = False
     web_search: bool = False
     system_prompt: str | None = None
-    temperature: float | None = Field(default=None, ge=0, le=2)
 
 
 class EditMessageRequest(BaseModel):
@@ -83,7 +81,6 @@ class TransformTextRequest(BaseModel):
     target_language: str | None = None
     tone: str | None = None
     thinking: bool = False
-    temperature: float | None = Field(default=None, ge=0, le=2)
 
 
 class TransformTextResponse(BaseModel):

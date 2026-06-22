@@ -435,6 +435,7 @@
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  flex-shrink: 0;
 }
 
 .notification-button {
@@ -464,42 +465,26 @@
   color: hsl(var(--foreground));
 }
 
-.workbench-topbar {
-  flex: 0 0 var(--workbench-topbar-height);
-  height: var(--workbench-topbar-height);
-  display: grid;
-  grid-template-columns: minmax(0, max-content) minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 0 0 0 12px;
-  border-bottom: 1px solid hsl(var(--border));
-  background: hsl(var(--card) / 0.92);
-  -webkit-app-region: drag;
-}
-
-.workbench-context {
-  min-width: 0;
-  max-width: min(42vw, 520px);
+.workbench-titlebar {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  color: hsl(var(--muted-foreground));
-  font-size: 12px;
-}
-
-.workbench-context strong {
-  min-width: 0;
+  align-items: flex-end;
+  height: var(--workbench-topbar-height);
+  flex: 0 0 var(--workbench-topbar-height);
+  border-bottom: 1px solid hsl(var(--border));
+  background: hsl(var(--muted));
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+  user-select: none;
   overflow: hidden;
-  color: hsl(var(--foreground));
-  font-size: 13px;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.workbench-context-label {
-  flex: 0 0 auto;
-  font-weight: 600;
+.workbench-titlebar-leading {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 4px 0 8px;
+  align-self: center;
+  -webkit-app-region: no-drag;
 }
 
 .workbench-business-nav,
@@ -511,12 +496,22 @@
 }
 
 .workbench-business-nav {
-  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .workbench-system-tools {
-  justify-self: end;
   align-self: stretch;
+  align-items: center;
+  flex-shrink: 0;
+  padding-right: 0;
+}
+
+.workbench-titlebar .workbench-system-tools .notification-button {
+  margin-right: 2px;
+  padding-right: 6px;
+  border-right: 1px solid hsl(var(--border));
 }
 
 .business-tool-button {
@@ -643,29 +638,19 @@
 }
 
 /* ============================================================
-   Tab Bar
+   Tab Bar (merged into workbench-titlebar)
    ============================================================ */
-
-.tab-bar {
-  display: flex;
-  align-items: flex-end;
-  height: var(--app-topbar-height);
-  border-bottom: 1px solid hsl(var(--border));
-  background: hsl(var(--muted));
-  flex-shrink: 0;
-  -webkit-app-region: drag;
-  user-select: none;
-  overflow: hidden;
-}
 
 .tab-strip {
   display: flex;
   align-items: flex-end;
   height: 100%;
   min-width: 0;
+  max-width: min(100%, 72vw);
   padding-left: 6px;
   gap: 2px;
   overflow-x: auto;
+  flex-shrink: 1;
 }
 
 .tab-strip::-webkit-scrollbar {
@@ -733,9 +718,24 @@
 }
 
 .tab-item-title {
-  max-width: 140px;
+  max-width: 120px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tab-item-affiliation {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--muted));
+  border-radius: 5px;
+  padding: 1px 4px;
+  line-height: 1.3;
+}
+
+.tab-item.is-active .tab-item-affiliation {
+  background: hsl(var(--card));
 }
 
 .tab-item-close {
@@ -788,7 +788,7 @@
   background: hsl(var(--accent));
 }
 
-.tab-drag-spacer {
+.titlebar-drag-spacer {
   flex: 1;
   align-self: stretch;
   min-width: 24px;
@@ -829,12 +829,12 @@
   font-size: 13px;
 }
 
-.workbench-system-tools .window-controls {
+.workbench-titlebar .workbench-system-tools .window-controls {
   align-self: center;
   height: 32px;
-  margin-left: 4px;
-  padding-left: 6px;
-  border-left: 1px solid hsl(var(--border));
+  margin-left: 0;
+  padding-left: 0;
+  border-left: none;
 }
 
 .workbench-system-tools .window-control-btn {
@@ -876,7 +876,7 @@
 
 .notification-popover {
   position: fixed;
-  top: 50px;
+  top: calc(var(--workbench-topbar-height) + 8px);
   right: 16px;
   z-index: var(--layer-popover);
   width: min(560px, calc(100vw - 32px));

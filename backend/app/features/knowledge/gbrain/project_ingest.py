@@ -68,6 +68,7 @@ from app.features.preprocessing.pdf_structured import (
     PDFStructuredExtractionResult,
     PROMPT_VERSION as PDF_PROMPT_VERSION,
     SKILL_NAME as PDF_PREPROCESS_SKILL,
+    STANDARD_SKILL_NAME as STANDARD_PDF_PREPROCESS_SKILL,
     SKILL_VERSION as PDF_PREPROCESS_VERSION,
     extract_pdf_structured_markdown,
 )
@@ -351,8 +352,8 @@ def _compile_project_source(
                 metadata={
                     **classifier_metadata,
                     "extraction_status": result.extraction_status,
-                    "review_status": "approved",
-                    "source_scope_review_policy": "project_no_admin_review",
+                    "review_status": _pdf_review_status(result),
+                    "source_scope_review_policy": _pdf_source_scope_review_policy(result),
                     "extractor_review_status": result.review_status,
                     "extractor": result.extractor,
                     "language_policy": result.language_policy,
@@ -759,13 +760,13 @@ def _compile_project_pdf_structured_source(
         "source_file": _relative_posix(source_path, paths["root"]),
         "source_file_sha256": source_hash,
         "source_file_type": "pdf",
-        "preprocess_skill": _pdf_preprocess_skill_for_classification(classification),
+        "preprocess_skill": _pdf_preprocess_skill_for_classification(classification, extraction),
         "preprocess_version": PDF_PREPROCESS_VERSION,
         "preprocess_status": "succeeded",
         "prompt_version": PDF_PROMPT_VERSION,
         "extraction_status": extraction.extraction_status,
-        "review_status": "approved",
-        "source_scope_review_policy": "project_no_admin_review",
+        "review_status": _pdf_review_status(extraction),
+        "source_scope_review_policy": _pdf_source_scope_review_policy(extraction),
         "extractor_review_status": extraction.review_status,
         "extractor": extraction.extractor,
         "language_policy": extraction.language_policy,
@@ -782,10 +783,27 @@ def _compile_project_pdf_structured_source(
     _write_markdown(target_path, frontmatter, extraction.markdown)
 
 
-def _pdf_preprocess_skill_for_classification(classification: ExtractorClassification) -> str:
+def _pdf_preprocess_skill_for_classification(
+    classification: ExtractorClassification,
+    extraction: PDFStructuredExtractionResult | None = None,
+) -> str:
+    if extraction is not None and extraction.pdf_subkind == "general_pdf":
+        return STANDARD_PDF_PREPROCESS_SKILL
     if classification.extraction_complexity == "vision_required":
         return DRAWING_PDF_PREPROCESS_SKILL
     return PDF_PREPROCESS_SKILL
+
+
+def _pdf_review_status(extraction: PDFStructuredExtractionResult) -> str:
+    if extraction.pdf_subkind == "general_pdf":
+        return extraction.review_status
+    return "approved"
+
+
+def _pdf_source_scope_review_policy(extraction: PDFStructuredExtractionResult) -> str:
+    if extraction.pdf_subkind == "general_pdf":
+        return "project_markdown_pending_review"
+    return "project_no_admin_review"
 
 
 def _preprocess_failure_metadata(exc: Exception) -> dict[str, Any]:

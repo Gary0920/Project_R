@@ -28,6 +28,7 @@ import {
   WorkspaceIcon,
 } from "../../../shared/icons/LineIcons";
 import { WorkspaceMemberManagementPanel } from "./WorkspaceMemberManagementPanel";
+import { getWorkspaceAffiliationLabel } from "../workspaceAffiliation";
 
 export type WorkspaceSelectorProps = {
   apiOptions: ReturnType<typeof createApiOptions>;
@@ -42,15 +43,6 @@ type DirectoryWorkspace = WorkspaceSearchResult;
 
 function groupLabel(group: string) {
   return group === CUSTOMER_GROUP ? "CRM" : group;
-}
-
-function getWorkspaceAffiliationLabel(workspace: Workspace | undefined) {
-  if (!workspace) return "未选择";
-  if (workspace.workspace_kind === "user") return "个人";
-  if (workspace.workspace_kind === "customer") return "CRM";
-  if (workspace.is_default) return "私人";
-  if (workspace.is_hidden) return "隐藏";
-  return workspace.brand || "项目";
 }
 
 function workspaceKindFromGroup(group: string) {

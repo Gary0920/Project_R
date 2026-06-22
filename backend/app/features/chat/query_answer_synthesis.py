@@ -92,5 +92,4 @@ def synthesize_query_answer(
         [{"role": "user", "content": knowledge_query.strip() or think_draft.strip() or "请根据知识库资料回答。"}],
         system_prompt=system_prompt,
         thinking=thinking,
-        temperature=getattr(req, "temperature", None),
     )

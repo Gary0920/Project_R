@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>对话加载动画</title>
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --bg: #0e1219;
+  --blue-1: #9ec7f2;
+  --blue-2: #6e9ed4;
+  --blue-3: #426c9f;
+  --text: #91a9c6;
+  --orbit: 30px;
+  --dot: 14px;
+  --gap: 24px;
+  --cycle: 20s;
+  --gravity: cubic-bezier(0.1, 0, 0.9, 1);
+  --soft-out: cubic-bezier(0.32, 0, 0.67, 0);
+  --soft-in: cubic-bezier(0.22, 1, 0.36, 1);
+  --generate: cubic-bezier(0.2, 1.4, 0.42, 1);
+}
+
+body {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: var(--bg);
+  font-family: "Microsoft YaHei UI", system-ui, sans-serif;
+}
+
+.loader {
+  position: relative;
+  width: 200px;
+  height: 200px;
+}
+
+.pos {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+  animation-duration: var(--cycle);
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+.ball {
+  display: block;
+  width: var(--dot);
+  height: var(--dot);
+  margin: calc(var(--dot) / -2) 0 0 calc(var(--dot) / -2);
+  border-radius: 50%;
+  will-change: transform, opacity;
+  animation-duration: var(--cycle);
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+.pos1 { animation-name: p1; }
+.pos2 { animation-name: p2; }
+.pos3 { animation-name: p3; }
+
+.ball1 {
+  background: var(--blue-1);
+  box-shadow:
+    0 0 8px rgba(158, 199, 242, 0.58),
+    0 0 20px rgba(158, 199, 242, 0.24);
+  animation-name: behave1;
+}
+
+.ball2 {
+  background: var(--blue-2);
+  box-shadow:
+    0 0 8px rgba(110, 158, 212, 0.58),
+    0 0 20px rgba(110, 158, 212, 0.24);
+  animation-name: behave2;
+}
+
+.ball3 {
+  background: var(--blue-3);
+  box-shadow:
+    0 0 8px rgba(66, 108, 159, 0.58),
+    0 0 20px rgba(66, 108, 159, 0.24);
+  animation-name: behave3;
+}
+
+/* 位置层：20s 周期
+   0-35%  级联重力旋转
+   35-40% 圆周到水平行
+   40-95% 水平行保持
+   95-100% 水平行回顶部圆周
+*/
+@keyframes p1 {
+  0% {
+    transform: rotate(0deg) translateY(calc(var(--orbit) * -1));
+    animation-timing-function: var(--gravity);
+  }
+  11.6667% {
+    transform: rotate(360deg) translateY(calc(var(--orbit) * -1));
+    animation-timing-function: var(--gravity);
+  }
+  23.3333% {
+    transform: rotate(720deg) translateY(calc(var(--orbit) * -1));
+    animation-timing-function: var(--gravity);
+  }
+  35% {
+    transform: rotate(1080deg) translateY(calc(var(--orbit) * -1));
+    animation-timing-function: var(--soft-out);
+  }
+  36.8% {
+    transform: translate(-8px, -18px);
+    animation-timing-function: step-end;
+  }
+  37% {
+    transform: translate(calc(var(--gap) * -1), 0);
+    animation-timing-function: var(--generate);
+  }
+  39.2% {
+    transform: translate(-26px, -2px);
+    animation-timing-function: ease-out;
+  }
+  40% {
+    transform: translate(calc(var(--gap) * -1), 0);
+    animation-timing-function: ease-out;
+  }
+  65% {
+    transform: translate(calc(var(--gap) * -1), 0);
+    animation-timing-function: var(--soft-out);
+  }
+  67.5% {
+    transform: translate(-10px, -5px);
+    animation-timing-function: step-end;
+  }
+  70% {
+    transform: translate(calc(var(--gap) * -1), 0);
+    animation-timing-function: var(--generate);
+  }
+  95% {
+    transform: translate(calc(var(--gap) * -1), 0);
+    animation-timing-function: var(--soft-out);
+  }
+  96.8% {
+    transform: translate(-10px, -9px);
+    animation-timing-function: step-end;
+  }
+  97% {
+    transform: rotate(0deg) translateY(calc(var(--orbit) * -1));
+    animation-timing-function: var(--generate);
+  }
+  99.2% {
+    transform: translate(-2px, -31px);
+    animation-timing-function: ease-out;
+  }
+  100% {
+    transform: rotate(0deg) translateY(calc(var(--orbit) * -1));
+  }
+}
+
+@keyframes p2 {
+  0%, 2% {
+    transform: rotate(0deg) translateY(calc(var(--orbit) * -1));
+    animation-timing-function: var(--gravity);
+  }
+  12.6071% {
+    transform: rotate(360deg) translateY(calc(var(--orbit) * -1));
+    animation-timing-function: var(--gravity);
+  }
+  23.2143% {
+    transform: rotate(720deg) translateY(calc(var(--orbit) * -1));
+    animation-timing-function: var(--gravity);
+  }
+  33.8214% {
+    transform: rotate(1080deg) translateY(calc(var(--orbit) * -1));
+    animation-timing-function: var(--gravity);
+  }
+  35% {
+    transform: rotate(1120deg) translateY(calc(var(--orbit) * -1));
+    animation-timing-function: var(--soft-out);
+  }
+  36.8% {
+    transform: translate(0, -18px);
+    animation-timing-function: step-end;
+  }
+  37% {
+    transform: translate(0, 0);
+    animation-timing-function: var(--generate);
+  }
+  39.2% {
+    transform: translate(0, -2px);
+    animation-timing-function: ease-out;
+  }
+  40% {
+    transform: translate(0, 0);
+    animation-timing-function: ease-out;
+  }
+  65% {
+    transform: translate(0, 0);
+    animation-timing-function: var(--soft-out);
+  }
+  67.5% {
+    transform: translate(0, -6px);
+    animation-timing-function: step-end;
+  }
+  70% {
+    transform: translate(0, 0);
+    animation-timing-function: var(--generate);
+  }
+  95% {
+    transform: translate(0, 0);
+    animation-timing-function: var(--soft-out);
+  }
+  96.8% {
+    transform: translate(0, -10px);
+    animation-timing-function: step-end;
+  }
+  97% {
+    transform: rotate(0deg) translateY(calc(var(--orbit) * -1));
+    animation-timing-function: var(--generate);
+  }
+  99.2% {
+    transform: translate(0, -32px);
+    animation-timing-function: ease-out;
+  }
+  100% {
+    transform: rotate(0deg) translateY(calc(var(--orbit) * -1));
+  }
+}
+
+@keyframes p3 {
+  0%, 4% {
+    transform: rotate(0deg) translateY(calc(var(--orbit) * -1));
+    animation-timing-function: var(--gravity);
+  }
+  13.6207% {
+    transform: rotate(360deg) translateY(calc(var(--orbit) * -1));
+    animation-timing-function: var(--gravity);
+  }
+  23.2414% {
+    transform: rotate(720deg) translateY(calc(var(--orbit) * -1));
+    animation-timing-function: var(--gravity);
+  }
+  32.8621% {
+    transform: rotate(1080deg) translateY(calc(var(--orbit) * -1));
+    animation-timing-function: var(--gravity);
+  }
+  35% {
+    transform: rotate(1160deg) translateY(calc(var(--orbit) * -1));
+    animation-timing-function: var(--soft-out);
+  }
+  36.8% {
+    transform: translate(8px, -18px);
+    animation-timing-function: step-end;
+  }
+  37% {
+    transform: translate(var(--gap), 0);
+    animation-timing-function: var(--generate);
+  }
+  39.2% {
+    transform: translate(26px, -2px);
+    animation-timing-function: ease-out;
+  }
+  40% {
+    transform: translate(var(--gap), 0);
+    animation-timing-function: ease-out;
+  }
+  65% {
+    transform: translate(var(--gap), 0);
+    animation-timing-function: var(--soft-out);
+  }
+  67.5% {
+    transform: translate(10px, -5px);
+    animation-timing-function: step-end;
+  }
+  70% {
+    transform: translate(var(--gap), 0);
+    animation-timing-function: var(--generate);
+  }
+  95% {
+    transform: translate(var(--gap), 0);
+    animation-timing-function: var(--soft-out);
+  }
+  96.8% {
+    transform: translate(10px, -9px);
+    animation-timing-function: step-end;
+  }
+  97% {
+    transform: rotate(0deg) translateY(calc(var(--orbit) * -1));
+    animation-timing-function: var(--generate);
+  }
+  99.2% {
+    transform: translate(2px, -31px);
+    animation-timing-function: ease-out;
+  }
+  100% {
+    transform: rotate(0deg) translateY(calc(var(--orbit) * -1));
+  }
+}
+
+/* 行为层：阶段切换同步收缩/生成，阶段内部再做左右错位。 */
+@keyframes behave1 {
+  0%, 35% { transform: scale(1); opacity: 1; animation-timing-function: var(--soft-out); }
+  36.5%, 37% { transform: scale(0.08); opacity: 0; animation-timing-function: step-end; }
+  38.5% { transform: scale(1.14); opacity: 1; animation-timing-function: var(--generate); }
+  40% { transform: scale(1); opacity: 1; animation-timing-function: ease-in-out; }
+  42%, 46%, 50% { transform: translateY(-24px); opacity: 1; animation-timing-function: ease-in-out; }
+  44%, 48%, 52% { transform: translateY(0); opacity: 1; animation-timing-function: ease-in-out; }
+  56% { transform: translateY(-12px); opacity: 1; animation-timing-function: ease-in-out; }
+  59% { transform: translateY(0); opacity: 1; animation-timing-function: ease-in-out; }
+  62% { transform: translateY(-4px); opacity: 1; animation-timing-function: ease-in-out; }
+  65% { transform: scale(1); opacity: 1; animation-timing-function: var(--soft-out); }
+  66.7%, 67.5% { transform: scale(0.08); opacity: 0; animation-timing-function: step-end; }
+  69% { transform: scale(1.1); opacity: 1; animation-timing-function: var(--generate); }
+  70% { transform: scale(1); opacity: 1; animation-timing-function: ease-in-out; }
+  72.5%, 77.5%, 82.5%, 87.5%, 92.5% { transform: scale(1.2); opacity: 1; animation-timing-function: ease-in-out; }
+  75%, 80%, 85%, 90% { transform: scale(0.4); opacity: 0.28; animation-timing-function: ease-in-out; }
+  95% { transform: scale(1); opacity: 1; animation-timing-function: var(--soft-out); }
+  96.7%, 97% { transform: scale(0.08); opacity: 0; animation-timing-function: step-end; }
+  98.7% { transform: scale(1.12); opacity: 1; animation-timing-function: var(--generate); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes behave2 {
+  0%, 35% { transform: scale(1); opacity: 1; animation-timing-function: var(--soft-out); }
+  36.5%, 37% { transform: scale(0.08); opacity: 0; animation-timing-function: step-end; }
+  38.5% { transform: scale(1.14); opacity: 1; animation-timing-function: var(--generate); }
+  40% { transform: scale(1); opacity: 1; animation-timing-function: ease-in-out; }
+  43%, 47%, 51% { transform: translateY(-24px); opacity: 1; animation-timing-function: ease-in-out; }
+  45%, 49%, 53% { transform: translateY(0); opacity: 1; animation-timing-function: ease-in-out; }
+  57% { transform: translateY(-12px); opacity: 1; animation-timing-function: ease-in-out; }
+  60% { transform: translateY(0); opacity: 1; animation-timing-function: ease-in-out; }
+  63% { transform: translateY(-4px); opacity: 1; animation-timing-function: ease-in-out; }
+  65% { transform: scale(1); opacity: 1; animation-timing-function: var(--soft-out); }
+  66.7%, 67.5% { transform: scale(0.08); opacity: 0; animation-timing-function: step-end; }
+  69% { transform: scale(1.1); opacity: 1; animation-timing-function: var(--generate); }
+  70% { transform: scale(1); opacity: 1; animation-timing-function: ease-in-out; }
+  73.4%, 78.4%, 83.4%, 88.4%, 93.4% { transform: scale(1.2); opacity: 1; animation-timing-function: ease-in-out; }
+  75.9%, 80.9%, 85.9%, 90.9% { transform: scale(0.4); opacity: 0.28; animation-timing-function: ease-in-out; }
+  95% { transform: scale(1); opacity: 1; animation-timing-function: var(--soft-out); }
+  96.7%, 97% { transform: scale(0.08); opacity: 0; animation-timing-function: step-end; }
+  98.7% { transform: scale(1.12); opacity: 1; animation-timing-function: var(--generate); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes behave3 {
+  0%, 35% { transform: scale(1); opacity: 1; animation-timing-function: var(--soft-out); }
+  36.5%, 37% { transform: scale(0.08); opacity: 0; animation-timing-function: step-end; }
+  38.5% { transform: scale(1.14); opacity: 1; animation-timing-function: var(--generate); }
+  40% { transform: scale(1); opacity: 1; animation-timing-function: ease-in-out; }
+  44%, 48%, 52% { transform: translateY(-24px); opacity: 1; animation-timing-function: ease-in-out; }
+  46%, 50%, 54% { transform: translateY(0); opacity: 1; animation-timing-function: ease-in-out; }
+  58% { transform: translateY(-12px); opacity: 1; animation-timing-function: ease-in-out; }
+  61% { transform: translateY(0); opacity: 1; animation-timing-function: ease-in-out; }
+  64% { transform: translateY(-4px); opacity: 1; animation-timing-function: ease-in-out; }
+  65% { transform: scale(1); opacity: 1; animation-timing-function: var(--soft-out); }
+  66.7%, 67.5% { transform: scale(0.08); opacity: 0; animation-timing-function: step-end; }
+  69% { transform: scale(1.1); opacity: 1; animation-timing-function: var(--generate); }
+  70% { transform: scale(1); opacity: 1; animation-timing-function: ease-in-out; }
+  74.3%, 79.3%, 84.3%, 89.3%, 94.3% { transform: scale(1.2); opacity: 1; animation-timing-function: ease-in-out; }
+  76.8%, 81.8%, 86.8%, 91.8% { transform: scale(0.4); opacity: 0.28; animation-timing-function: ease-in-out; }
+  95% { transform: scale(1); opacity: 1; animation-timing-function: var(--soft-out); }
+  96.7%, 97% { transform: scale(0.08); opacity: 0; animation-timing-function: step-end; }
+  98.7% { transform: scale(1.12); opacity: 1; animation-timing-function: var(--generate); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.lbl {
+  position: absolute;
+  left: 0;
+  bottom: 34px;
+  width: 200px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text);
+  letter-spacing: 0;
+  animation-duration: var(--cycle);
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+.lbl1 { animation-name: label-understand; }
+.lbl2 { animation-name: label-organize; }
+.lbl3 { animation-name: label-generate; }
+
+@keyframes label-understand {
+  0%, 33% { opacity: 1; }
+  37%, 95% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+@keyframes label-organize {
+  0%, 38% { opacity: 0; }
+  42%, 63% { opacity: 1; }
+  67%, 100% { opacity: 0; }
+}
+
+@keyframes label-generate {
+  0%, 68% { opacity: 0; }
+  72%, 93% { opacity: 1; }
+  97%, 100% { opacity: 0; }
+}
+
+</style>
+</head>
+<body>
+  <div class="loader" aria-label="对话加载中" role="status">
+    <div class="pos pos1"><div class="ball ball1"></div></div>
+    <div class="pos pos2"><div class="ball ball2"></div></div>
+    <div class="pos pos3"><div class="ball ball3"></div></div>
+
+    <span class="lbl lbl1">正在理解问题</span>
+    <span class="lbl lbl2">整理信息中</span>
+    <span class="lbl lbl3">生成回答</span>
+  </div>
+</body>
+</html>

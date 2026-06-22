@@ -202,7 +202,6 @@ def regenerate_message(
             llm_messages,
             system_prompt=system_prompt,
             thinking=req.thinking,
-            temperature=req.temperature,
         )
     except LLMConfigurationError as exc:
         _api()._write_chat_audit(db, user.id, session_id, target.content, False, str(exc))

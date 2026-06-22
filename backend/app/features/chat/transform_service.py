@@ -27,7 +27,6 @@ def transform_chat_text(
         [{"role": "user", "content": _build_user_prompt(action, text, req)}],
         system_prompt=_system_prompt(action),
         thinking=req.thinking,
-        temperature=req.temperature,
     )
 
 

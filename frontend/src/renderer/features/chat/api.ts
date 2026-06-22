@@ -63,7 +63,6 @@ export function regenerateChatMessage(
     systemPrompt?: string | null;
     thinking?: boolean;
     webSearch?: boolean;
-    temperature?: number;
   },
 ) {
   return apiRequest<RegenerateMessageResponse>(
@@ -77,7 +76,6 @@ export function regenerateChatMessage(
         system_prompt: data.systemPrompt ?? null,
         thinking: Boolean(data.thinking),
         web_search: Boolean(data.webSearch),
-        temperature: data.temperature ?? null,
       }),
     },
   );
@@ -175,7 +173,6 @@ export function sendChatMessage(
   forceKnowledgeQuery?: boolean,
   thinking?: boolean,
   webSearch?: boolean,
-  temperature?: number,
   signal?: AbortSignal,
 ) {
   return apiRequest<SendChatMessageResponse>(options, `/chat/sessions/${sessionId}/messages`, {
@@ -192,7 +189,6 @@ export function sendChatMessage(
       force_knowledge_query: Boolean(forceKnowledgeQuery),
       thinking: Boolean(thinking),
       web_search: Boolean(webSearch),
-      temperature: temperature ?? null,
     }),
   });
 }
@@ -207,7 +203,6 @@ export function transformChatText(
     targetLanguage?: string | null;
     tone?: string | null;
     thinking?: boolean;
-    temperature?: number;
   },
 ) {
   return apiRequest<TransformTextResponse>(options, "/chat/transform", {
@@ -220,7 +215,6 @@ export function transformChatText(
       target_language: data.targetLanguage ?? null,
       tone: data.tone ?? null,
       thinking: Boolean(data.thinking),
-      temperature: data.temperature ?? null,
     }),
   });
 }
@@ -257,7 +251,6 @@ export async function sendChatMessageStream(
   forceKnowledgeQuery: boolean | undefined,
   thinking: boolean | undefined,
   webSearch: boolean | undefined,
-  temperature: number | undefined,
   signal: AbortSignal | undefined,
   onDelta: (text: string) => void,
 ): Promise<ChatStreamDelta> {
@@ -281,7 +274,6 @@ export async function sendChatMessageStream(
       force_knowledge_query: Boolean(forceKnowledgeQuery),
       thinking: Boolean(thinking),
       web_search: Boolean(webSearch),
-      temperature: temperature ?? null,
       stream: true,
     }),
   });

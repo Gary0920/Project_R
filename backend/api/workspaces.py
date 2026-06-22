@@ -1,7 +1,6 @@
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-import shutil
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
@@ -14,12 +13,6 @@ from app.features.knowledge.gbrain import (
     customer_source_paths_for_workspace,
     project_source_id_for_workspace,
     project_source_paths_for_workspace,
-)
-from app.features.knowledge.gbrain.graph import (
-    apply_entity_merge_candidate_action,
-    build_entity_merge_candidate_preview,
-    build_entity_merge_candidates,
-    build_source_graph,
 )
 from app.features.notifications.service import (
     notify_user,
@@ -34,11 +27,8 @@ from app.features.workspaces.audit import (
     write_workspace_audit as _write_workspace_audit,
     write_workspace_file_agent_run as _write_workspace_file_agent_run,
 )
-from app.features.workspaces.gbrain_graph import (
-    workspace_gbrain_graph_scope as _workspace_gbrain_graph_scope,
-    workspace_profile_cards as _workspace_profile_cards,
-)
 from app.features.workspaces import catalog as workspace_catalog
+from app.features.workspaces import knowledge_graph as workspace_knowledge_graph_feature
 from app.features.workspaces.knowledge_ingest_api import (
     enqueue_workspace_knowledge_ingest_job,
     execute_immediate_workspace_knowledge_ingest,
@@ -82,6 +72,7 @@ from app.features.workspaces.schemas import (
 from app.features.workspaces.files.signature import (
     record_file_signature as _record_file_signature,
 )
+from app.features.workspaces.files.attachments import save_attachment_to_workspace as _save_attachment_to_workspace
 from app.features.workspaces.files import browser as workspace_file_browser
 from app.features.workspaces.files import lifecycle as workspace_file_lifecycle
 from app.features.workspaces.files import paths as workspace_file_paths
@@ -123,7 +114,6 @@ from app.features.workspaces.registry import (
 )
 from app.features.workspaces.responses import workspace_response as _workspace_response
 from app.features.workspaces.files.service import (
-    DEFAULT_UNFILED_DIR,
     DEFAULT_PROJECT_WORKSPACE_TEMPLATE_DIRS,
     DEFAULT_WORKSPACE_DIRS,
     MAX_WORKSPACE_ADMIN_UPLOAD_BYTES,
@@ -142,7 +132,6 @@ from app.features.workspaces.files.service import (
     upload_limit_for,
 )
 from models import get_db
-from models.attachment import SessionAttachment
 from models.workspace import Workspace, WorkspaceMember, WorkspaceFile
 from models.workspace_ingest_job import WorkspaceIngestJob
 from models.user import User
@@ -630,65 +619,15 @@ def save_attachment_to_workspace(
     if not workspace:
         raise HTTPException(status_code=404, detail="项目不存在")
     _ensure_member(db, user.id, workspace_id)
-    attachment = (
-        db.query(SessionAttachment)
-        .filter(
-            SessionAttachment.id == req.attachment_id,
-            SessionAttachment.session_id == req.session_id,
-            SessionAttachment.user_id == user.id,
-        )
-        .first()
-    )
-    if not attachment:
-        raise HTTPException(status_code=404, detail="附件不存在")
-    source = Path(attachment.stored_path)
-    if not source.exists() or not source.is_file():
-        raise HTTPException(status_code=404, detail="附件文件不存在")
-    root = _workspace_file_root(workspace)
-    target_dir = _resolve_workspace_child(root, Path(DEFAULT_UNFILED_DIR))
-    target_dir.mkdir(exist_ok=True)
-    filename = _safe_name(attachment.original_name)
-    conflict_path = _resolve_conflict_path(target_dir, filename, req.conflict_strategy)
-    if conflict_path is None:
-        skipped_path = f"{DEFAULT_UNFILED_DIR}/{filename}"
-        agent_run = _write_workspace_file_agent_run(
-            db,
-            user_id=user.id,
-            workspace=workspace,
-            source_type="workspace_attachment_save",
-            title="保存会话附件到项目",
-            path=skipped_path,
-            status="cancelled",
-            detail="目标位置已存在同名文件，按策略跳过",
-            result={"attachment_id": attachment.id, "rag_status": "skipped"},
-        )
-        db.commit()
-        return WorkspaceFileMutationResponse(ok=False, path=skipped_path, rag_status="skipped", agent_run=serialize_agent_run(db, agent_run))
-    target = _resolve_workspace_child(root, conflict_path.relative_to(root))
-    shutil.copy2(source, target)
-    rel_path = target.relative_to(root).as_posix()
-    meta = _upsert_workspace_file(
+    response = _save_attachment_to_workspace(
         db,
-        workspace_id,
-        user.id,
-        rel_path,
-        target.name,
-        attachment.content_type,
-        target.stat().st_size,
-        target,
-    )
-    _write_workspace_audit(db, user.id, "workspace_attachment_save", _audit_detail(workspace_id, rel_path, meta.id, actor_id=user.id, attachment_id=attachment.id))
-    agent_run = _write_workspace_file_agent_run(
-        db,
-        user_id=user.id,
         workspace=workspace,
-        source_type="workspace_attachment_save",
-        title="保存会话附件到项目",
-        path=rel_path,
-        result={"file_id": meta.id, "attachment_id": attachment.id, "rag_status": meta.rag_status},
+        user=user,
+        req=req,
+        storage_config=_storage_config(),
     )
     db.commit()
-    return WorkspaceFileMutationResponse(ok=True, path=rel_path, file_id=meta.id, rag_status=meta.rag_status, agent_run=serialize_agent_run(db, agent_run))
+    return response
 
 
 @router.post("/{workspace_id}/generated-files/save", response_model=WorkspaceFileMutationResponse)
@@ -895,52 +834,13 @@ def workspace_knowledge_graph(
     workspace = db.query(Workspace).filter(Workspace.id == workspace_id, Workspace.is_archived == False).first()
     if not workspace:
         raise HTTPException(status_code=404, detail="工作区不存在")
-    _ensure_can_open_workspace(db, user, workspace)
-    scope = _workspace_gbrain_graph_scope(workspace)
-    source_id = str(scope["source_id"])
-    derived_path = scope["derived_path"]
-    if not isinstance(derived_path, Path):
-        raise HTTPException(status_code=500, detail="工作区 GBrain 路径配置错误")
-    graph = build_source_graph(
-        source_id,
-        derived_path=derived_path,
+    return workspace_knowledge_graph_feature.workspace_knowledge_graph(
+        db,
+        workspace=workspace,
+        user=user,
         focus=focus,
         entity_type=entity_type,
         limit=limit,
-    )
-    _write_workspace_audit(
-        db,
-        user.id,
-        "workspace_gbrain_graph_view",
-        _audit_detail(
-            workspace.id,
-            "knowledge/graph",
-            actor_id=user.id,
-            workspace_kind=workspace.workspace_kind,
-            source_id=source_id,
-            nodes=len(graph.get("nodes") or []),
-            edges=len(graph.get("edges") or []),
-            events=len(graph.get("events") or []),
-        ),
-    )
-    db.commit()
-    return WorkspaceKnowledgeGraphResponse(
-        ok=bool(graph.get("ok")),
-        workspace_id=workspace.id,
-        workspace_name=workspace.name,
-        workspace_kind=workspace.workspace_kind,
-        source_id=source_id,
-        source_scope=str(scope["source_scope"]),
-        intelligence_kind=str(scope["intelligence_kind"]),
-        derived_path=str(graph.get("derived_path") or derived_path),
-        focus=focus,
-        entity_type=entity_type,
-        nodes=list(graph.get("nodes") or []),
-        edges=list(graph.get("edges") or []),
-        events=list(graph.get("events") or []),
-        profile_cards=_workspace_profile_cards(graph),
-        stats=graph.get("stats") if isinstance(graph.get("stats"), dict) else None,
-        warnings=[str(item) for item in graph.get("warnings") or []],
     )
 
 
@@ -955,40 +855,12 @@ def workspace_entity_merge_candidates(
     workspace = db.query(Workspace).filter(Workspace.id == workspace_id, Workspace.is_archived == False).first()
     if not workspace:
         raise HTTPException(status_code=404, detail="工作区不存在")
-    if not _is_workspace_admin(db, user, workspace_id):
-        raise HTTPException(status_code=403, detail="仅系统管理员或工作区管理员可查看实体候选")
-    scope = _workspace_gbrain_graph_scope(workspace)
-    source_id = str(scope["source_id"])
-    derived_path = scope["derived_path"]
-    if not isinstance(derived_path, Path):
-        raise HTTPException(status_code=500, detail="工作区 GBrain 路径配置错误")
-    result = build_entity_merge_candidates(source_id, derived_path=derived_path, focus=focus, limit=limit)
-    _write_workspace_audit(
+    return workspace_knowledge_graph_feature.workspace_entity_merge_candidates(
         db,
-        user.id,
-        "workspace_gbrain_entity_merge_candidates_view",
-        _audit_detail(
-            workspace.id,
-            "knowledge/entity-merge-candidates",
-            actor_id=user.id,
-            workspace_kind=workspace.workspace_kind,
-            source_id=source_id,
-            candidates=len(result.get("candidates") or []),
-        ),
-    )
-    db.commit()
-    return WorkspaceEntityMergeCandidatesResponse(
-        ok=bool(result.get("ok")),
-        workspace_id=workspace.id,
-        workspace_name=workspace.name,
-        workspace_kind=workspace.workspace_kind,
-        source_id=source_id,
-        source_scope=str(scope["source_scope"]),
-        derived_path=str(result.get("derived_path") or derived_path),
+        workspace=workspace,
+        user=user,
         focus=focus,
-        candidates=list(result.get("candidates") or []),
-        stats=result.get("stats") if isinstance(result.get("stats"), dict) else None,
-        warnings=[str(item) for item in result.get("warnings") or []],
+        limit=limit,
     )
 
 
@@ -1002,52 +874,13 @@ def workspace_entity_merge_candidate_action(
     workspace = db.query(Workspace).filter(Workspace.id == workspace_id, Workspace.is_archived == False).first()
     if not workspace:
         raise HTTPException(status_code=404, detail="工作区不存在")
-    if not _is_workspace_admin(db, user, workspace_id):
-        raise HTTPException(status_code=403, detail="仅系统管理员或工作区管理员可处理实体候选")
-    if request.action not in {"create_entity_page", "dismiss", "record_alias", "apply_relink_changes"}:
-        raise HTTPException(status_code=400, detail="实体候选操作不合法")
-    scope = _workspace_gbrain_graph_scope(workspace)
-    source_id = str(scope["source_id"])
-    derived_path = scope["derived_path"]
-    if not isinstance(derived_path, Path):
-        raise HTTPException(status_code=500, detail="工作区 GBrain 路径配置错误")
-    result = apply_entity_merge_candidate_action(
-        source_id,
-        request.candidate_id,
-        request.action,
-        derived_path=derived_path,
-        actor=user.username,
-    )
-    sync_result: dict | None = None
-    if result.get("ok") and result.get("status") in {
-        "created",
-        "already_exists",
-        "alias_recorded",
-        "alias_already_exists",
-        "relink_applied",
-    }:
-        sync_result = GBrainAdapter().sync_source(source_id=source_id, repo_path=derived_path, no_pull=True)
-        result["sync"] = sync_result
-    _write_workspace_audit(
+    return workspace_knowledge_graph_feature.workspace_entity_merge_candidate_action(
         db,
-        user.id,
-        "workspace_gbrain_entity_merge_candidate_action",
-        _audit_detail(
-            workspace.id,
-            "knowledge/entity-merge-candidates/action",
-            actor_id=user.id,
-            workspace_kind=workspace.workspace_kind,
-            source_id=source_id,
-            action=request.action,
-            status=result.get("status"),
-            candidate_id=request.candidate_id[:160],
-            sync=(sync_result or {}).get("status") or "",
-        ),
+        workspace=workspace,
+        user=user,
+        request=request,
+        adapter_cls=GBrainAdapter,
     )
-    db.commit()
-    if not result.get("ok"):
-        raise HTTPException(status_code=400, detail=result.get("error") or "实体候选操作失败")
-    return result
 
 
 @router.get("/{workspace_id}/knowledge/entity-merge-candidates/preview")
@@ -1060,33 +893,12 @@ def workspace_entity_merge_candidate_preview(
     workspace = db.query(Workspace).filter(Workspace.id == workspace_id, Workspace.is_archived == False).first()
     if not workspace:
         raise HTTPException(status_code=404, detail="工作区不存在")
-    if not _is_workspace_admin(db, user, workspace_id):
-        raise HTTPException(status_code=403, detail="仅系统管理员或工作区管理员可预览实体候选")
-    scope = _workspace_gbrain_graph_scope(workspace)
-    source_id = str(scope["source_id"])
-    derived_path = scope["derived_path"]
-    if not isinstance(derived_path, Path):
-        raise HTTPException(status_code=500, detail="工作区 GBrain 路径配置错误")
-    result = build_entity_merge_candidate_preview(source_id, candidate_id, derived_path=derived_path)
-    _write_workspace_audit(
+    return workspace_knowledge_graph_feature.workspace_entity_merge_candidate_preview(
         db,
-        user.id,
-        "workspace_gbrain_entity_merge_candidate_preview",
-        _audit_detail(
-            workspace.id,
-            "knowledge/entity-merge-candidates/preview",
-            actor_id=user.id,
-            workspace_kind=workspace.workspace_kind,
-            source_id=source_id,
-            status=result.get("status"),
-            candidate_id=candidate_id[:160],
-            changes=((result.get("stats") or {}).get("planned_relink_changes") or 0),
-        ),
+        workspace=workspace,
+        user=user,
+        candidate_id=candidate_id,
     )
-    db.commit()
-    if not result.get("ok"):
-        raise HTTPException(status_code=400, detail=result.get("error") or "实体候选预览失败")
-    return result
 
 
 @router.get("/{workspace_id}/knowledge/graph/native-context")
@@ -1102,32 +914,16 @@ def workspace_native_graph_context(
     workspace = db.query(Workspace).filter(Workspace.id == workspace_id, Workspace.is_archived == False).first()
     if not workspace:
         raise HTTPException(status_code=404, detail="工作区不存在")
-    _ensure_can_open_workspace(db, user, workspace)
-    scope = _workspace_gbrain_graph_scope(workspace)
-    source_id = str(scope["source_id"])
-    result = GBrainAdapter().graph_context(
-        slug,
-        source_id=source_id,
+    return workspace_knowledge_graph_feature.workspace_native_graph_context(
+        db,
+        workspace=workspace,
+        user=user,
+        slug=slug,
         depth=depth,
         direction=direction,
         link_type=link_type,
+        adapter_cls=GBrainAdapter,
     )
-    _write_workspace_audit(
-        db,
-        user.id,
-        "workspace_gbrain_native_graph_context",
-        _audit_detail(
-            workspace.id,
-            "knowledge/graph/native-context",
-            actor_id=user.id,
-            workspace_kind=workspace.workspace_kind,
-            source_id=source_id,
-            slug=slug[:160],
-            status=result.get("status"),
-        ),
-    )
-    db.commit()
-    return result
 
 
 @router.put("/{workspace_id}", response_model=WorkspaceResponse)

@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import type { Tab } from "../tabs-state";
 import { ChatIcon, NoteIcon, PlusIcon, XmarkIcon } from "../../../shared/icons/LineIcons";
 
@@ -5,15 +7,32 @@ export type TabBarProps = {
   tabs: Tab[];
   activeTabId: string;
   scratchOpen: boolean;
+  workspaceAffiliationLabel: string;
+  workspaceAffiliationPath: string;
+  leadingSlot?: ReactNode;
+  trailingSlot?: ReactNode;
   onSelectTab: (id: string) => void;
   onCloseTab: (id: string) => void;
   onAddChat: () => void;
   onOpenScratch: () => void;
 };
 
-export function TabBar({ tabs, activeTabId, scratchOpen, onSelectTab, onCloseTab, onAddChat, onOpenScratch }: TabBarProps) {
+export function TabBar({
+  tabs,
+  activeTabId,
+  scratchOpen,
+  workspaceAffiliationLabel,
+  workspaceAffiliationPath,
+  leadingSlot,
+  trailingSlot,
+  onSelectTab,
+  onCloseTab,
+  onAddChat,
+  onOpenScratch,
+}: TabBarProps) {
   return (
-    <div className="tab-bar">
+    <header className="workbench-titlebar" aria-label="工作台标题栏">
+      {leadingSlot ? <div className="workbench-titlebar-leading">{leadingSlot}</div> : null}
       <div className="tab-strip titlebar-no-drag" role="tablist" aria-label="标签页">
         <button
           className={`tab-note-btn ${scratchOpen ? "is-active" : ""}`}
@@ -32,10 +51,14 @@ export function TabBar({ tabs, activeTabId, scratchOpen, onSelectTab, onCloseTab
               role="tab"
               aria-selected={isActive}
               onClick={() => onSelectTab(tab.id)}
+              title={isActive ? workspaceAffiliationPath : undefined}
             >
               <span className="tab-item-icon">
                 <ChatIcon />
               </span>
+              {isActive ? (
+                <span className="tab-item-affiliation">{workspaceAffiliationLabel}</span>
+              ) : null}
               <span className="tab-item-title">
                 {tab.title}
               </span>
@@ -56,7 +79,12 @@ export function TabBar({ tabs, activeTabId, scratchOpen, onSelectTab, onCloseTab
           <PlusIcon />
         </button>
       </div>
-      <div className="tab-drag-spacer" aria-hidden="true" />
-    </div>
+      <div className="titlebar-drag-spacer" aria-hidden="true" />
+      {trailingSlot ? (
+        <div className="workbench-system-tools titlebar-no-drag" aria-label="系统工具">
+          {trailingSlot}
+        </div>
+      ) : null}
+    </header>
   );
 }

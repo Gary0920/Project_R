@@ -83,7 +83,6 @@ type UseChatSendOrchestratorOptions = {
   quotedMessage: { sessionId: number; messageId: number; content: string; role: string } | null;
   sessions: ChatSessionResponse[];
   thinkingEnabled: boolean;
-  temperature: number | undefined;
   typeAssistantReply: (sessionId: number, message: ChatMessage, fullText: string) => void;
   updateStreamPlaceholder: (sessionId: number, placeholderId: number, content: string) => void;
   uploadPendingAttachmentForSend: (attachment: PendingSessionAttachment, sessionId: number) => Promise<PendingSessionAttachment>;
@@ -195,7 +194,6 @@ export function useChatSendOrchestrator(options: UseChatSendOrchestratorOptions)
           forceKnowledgeQuery,
           options.thinkingEnabled,
           options.webSearchEnabled,
-          options.temperature,
           abortController.signal,
         );
         if (
@@ -258,7 +256,6 @@ export function useChatSendOrchestrator(options: UseChatSendOrchestratorOptions)
         forceKnowledgeQuery,
         options.thinkingEnabled,
         options.webSearchEnabled,
-        options.temperature,
         abortController.signal,
         (delta) => {
           accumulatedText += delta;

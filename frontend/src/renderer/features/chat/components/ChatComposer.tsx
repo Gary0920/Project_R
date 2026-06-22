@@ -86,8 +86,6 @@ export function ChatComposer({ controller }: ChatComposerProps) {
     textareaRef,
     textTransformResult,
     toggleWebSearch,
-    temperature,
-    setTemperature,
     thinkingEnabled,
     utilityPanel,
     webSearchEnabled,
@@ -424,19 +422,6 @@ export function ChatComposer({ controller }: ChatComposerProps) {
                     <GlobeIcon />
                     <span className="composer-button-label">联网搜索</span>
                   </button>
-                </div>
-                <div className="composer-temp-slider">
-                  <input
-                    aria-label="创意度"
-                    className="composer-temp-input"
-                    max="2"
-                    min="0"
-                    onChange={(e) => setTemperature(parseFloat(e.target.value))}
-                    step="0.1"
-                    title={`创意度: ${temperature ?? 0.7}`}
-                    type="range"
-                    value={temperature ?? 0.7}
-                  />
                 </div>
               </div>
             </div>

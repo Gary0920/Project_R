@@ -16,6 +16,10 @@ import { TabBar } from "./TabBar";
 import { WorkspaceFilePanel } from "../../workspace/components/WorkspaceFilePanel";
 import { CrmWorkbenchPanel } from "../../workspace/components/CrmWorkbenchPanel";
 import { WorkspaceSelector } from "../../workspace/components/WorkspaceSelector";
+import {
+  getWorkspaceAffiliationLabel,
+  getWorkspaceAffiliationPath,
+} from "../../workspace/workspaceAffiliation";
 import { WindowControls } from "../../../shared/components/WindowControls";
 import { renderMessageContent } from "../messageContent";
 import { SourcePreviewPanel } from "../../knowledge/components/SourcePreviewPanel";
@@ -34,15 +38,6 @@ import {
 export type AppWorkspaceChromeProps = {
   controller: Record<string, any>;
 };
-
-function workspaceAffiliationPath(workspace: any) {
-  if (!workspace) return "未选择工作区";
-  const name = String(workspace.name || "未命名工作区").trim();
-  if (workspace.workspace_kind === "user") return `个人 / ${name}`;
-  if (workspace.workspace_kind === "customer") return `CRM / ${name}`;
-  const brand = String(workspace.brand || "项目").trim() || "项目";
-  return `${brand} / ${name}`;
-}
 
 export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
   const {
@@ -179,7 +174,8 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
   } = controller;
   const setMode = setActiveMode;
   const isCustomerWorkspace = activeWorkspace?.workspace_kind === "customer";
-  const workspacePath = workspaceAffiliationPath(activeWorkspace);
+  const workspaceAffiliationLabel = getWorkspaceAffiliationLabel(activeWorkspace);
+  const workspaceAffiliationPath = getWorkspaceAffiliationPath(activeWorkspace);
 
   useEffect(() => {
     if (!isCustomerWorkspace && (utilityPanel === "crm" || utilityPanel === "customer-intelligence")) {
@@ -521,6 +517,22 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
             <span className="sidebar-user-name">{currentUser?.nickname ?? "未登录"}</span>
             <span className="sidebar-user-role">{currentUser?.role === "admin" ? "管理员" : "员工"}</span>
           </div>
+          <div className="sidebar-user-actions">
+            <button
+              className="icon-button"
+              onClick={() => {
+                setSettingsInitialAdminTab(null);
+                setShowSettings(true);
+              }}
+              title="设置"
+              type="button"
+            >
+              <SettingsIcon />
+            </button>
+            <button className="icon-button" onClick={handleLogout} title="登出" type="button">
+              <LogoutIcon />
+            </button>
+          </div>
         </div>
         <div
           aria-orientation="vertical"
@@ -557,46 +569,44 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
       ) : null}
 
       <section className="chat-main">
-        <header className="workbench-topbar">
-          <div className="workbench-context">
-            <span className="workbench-context-label">归属</span>
-            <strong title={workspacePath}>{workspacePath}</strong>
-          </div>
-          <nav className="workbench-business-nav" aria-label="业务导航">
-            {isCustomerWorkspace ? (
-              <button
-                className={`business-tool-button ${utilityPanel === "crm" || utilityPanel === "customer-intelligence" ? "is-active" : ""}`}
-                onClick={() => setUtilityPanel((value: string | null) => value === "crm" ? null : "crm")}
-                type="button"
-              >
-                <BrainIcon />
-                <span>CRM</span>
-              </button>
-            ) : null}
-          </nav>
-          <div className="workbench-system-tools" aria-label="系统工具">
-            <button
-              aria-expanded={notificationPanelOpen}
-              className={`icon-button notification-button ${unreadNotificationCount > 0 ? "has-unread" : ""}`}
-              onClick={() => setNotificationPanelOpen((value: boolean) => !value)}
-              ref={notificationButtonRef}
-              title="通知中心"
-              type="button"
-            >
-              <BellIcon />
-              {unreadNotificationCount > 0 ? (
-                <span className="notification-badge">{unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}</span>
-              ) : null}
-            </button>
-            <button className="icon-button" onClick={() => { setSettingsInitialAdminTab(null); setShowSettings(true); }} title="设置" type="button"><SettingsIcon /></button>
-            <button className="icon-button" onClick={handleLogout} title="登出" type="button"><LogoutIcon /></button>
-            <WindowControls />
-          </div>
-        </header>
         <TabBar
           tabs={tabs}
           activeTabId={activeTabId}
           scratchOpen={showScratchPad}
+          workspaceAffiliationLabel={workspaceAffiliationLabel}
+          workspaceAffiliationPath={workspaceAffiliationPath}
+          leadingSlot={
+            isCustomerWorkspace ? (
+              <nav className="workbench-business-nav" aria-label="业务导航">
+                <button
+                  className={`business-tool-button ${utilityPanel === "crm" || utilityPanel === "customer-intelligence" ? "is-active" : ""}`}
+                  onClick={() => setUtilityPanel((value: string | null) => value === "crm" ? null : "crm")}
+                  type="button"
+                >
+                  <BrainIcon />
+                  <span>CRM</span>
+                </button>
+              </nav>
+            ) : null
+          }
+          trailingSlot={
+            <>
+              <button
+                aria-expanded={notificationPanelOpen}
+                className={`icon-button notification-button ${unreadNotificationCount > 0 ? "has-unread" : ""}`}
+                onClick={() => setNotificationPanelOpen((value: boolean) => !value)}
+                ref={notificationButtonRef}
+                title="通知中心"
+                type="button"
+              >
+                <BellIcon />
+                {unreadNotificationCount > 0 ? (
+                  <span className="notification-badge">{unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}</span>
+                ) : null}
+              </button>
+              <WindowControls />
+            </>
+          }
           onSelectTab={handleSelectTab}
           onCloseTab={handleCloseTab}
           onAddChat={handleCreateSession}

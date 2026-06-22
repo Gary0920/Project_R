@@ -21,8 +21,9 @@ DEFAULT_TEMPERATURE = 0.1
 LANGUAGE_POLICY = "bilingual_zh_en_aligned"
 SUPPORTED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 SKILL_NAME = "pdf-structured-preprocess"
+STANDARD_SKILL_NAME = "standard-pdf-preprocess"
 SKILL_VERSION = "1.0.0"
-PROMPT_VERSION = "rules-pdf-structured-v1"
+PROMPT_VERSION = "rules-standard-pdf-structured-v3"
 
 # Phase 4: PDF subkind detection patterns
 _PDF_SUBKIND_RULES: list[tuple[re.Pattern, str, str]] = [
@@ -46,6 +47,27 @@ SYSTEM_PROMPT = """你是 Project_R 的 PDF 结构化资料提炼 Agent。
 - 对无法确认、疑似表格错位、图示依赖、OCR/抽取异常的内容，必须放入“待审核问题”。
 - 不能编造 PDF 中没有的事实。
 - 输出 Markdown 正文，不要输出 YAML frontmatter，不要包裹代码块。
+"""
+
+STANDARD_SYSTEM_PROMPT = """你是 Project_R 的标准规范 PDF 规范知识库预处理 Agent。
+
+你的任务是把整份标准 PDF 转换成一份结构化的规范知识库，专用于 RAG 检索和 AI 问答。
+
+定位：Standard Knowledge Base（规范知识库）。不是项目执行手册、不是经验库、不是行业指导。
+
+硬性要求：
+- 所有内容必须保持客观、可追溯、可检索。不加入任何个人判断、项目经验或实施建议。
+- 禁止出现"项目建议""实施建议""风险提示""常见做法""推荐做法""项目经验""行业经验""设计建议""施工建议"等主观内容。
+- 知识库仅保留：标准要求、标准定义、标准参数、标准公式、标准表格、标准验算方法。
+- 每条知识必须标注来源：标准编号 + 条款号。不得出现无法追溯来源的内容。
+- 同一知识点只允许存在一个权威事实来源。如果某知识点已在其他条款完整描述，其他位置仅保留引用关系（Refer to Clause X.X），不重复复制。
+- 一个知识块（Chunk）只允许描述一个知识点。禁止超长章节。
+- 数学公式必须使用 LaTeX 格式：简单变量用 `$...$` 行内，复杂公式用 `$$...$$` 独立块。
+- 关键表格必须完整保留行列数值，不得用"见原表"替代。参数数据必须用 Markdown 表格格式。
+- 正文写中文，专业术语和标准编号保留英文。不得只写"见 p. X"；页码和条款号只能作为证据标注，正文必须包含具体内容。
+- 不要逐段复制原文；只允许短语级引用。必须用自己的话做结构化归纳。
+- 无法确认、OCR/版式不可靠、表格错位或视觉页不足的信息，必须放入"待审核问题 / Review Questions"。
+- 输出 Markdown 正文，不输出 YAML frontmatter，不包裹代码块。
 """
 
 
@@ -88,7 +110,7 @@ def validate_pdf_extraction(
     """Validate PDF extraction quality.
 
     Returns dict with:
-        review_status: "approved" | "needs_review"
+        review_status: "approved" | "pending_review" | "needs_review"
         warnings: list[str]
         checks: dict of check_name → bool
     """
@@ -96,7 +118,10 @@ def validate_pdf_extraction(
     warnings: list[str] = []
     md_lower = markdown.lower()
 
-    if subkind == "drawing_window_schedule":
+    if subkind == "general_pdf":
+        checks["standard_pdf_pending_review"] = True
+
+    elif subkind == "drawing_window_schedule":
         has_window_id = bool(re.search(r"w\d+", md_lower))
         has_dimension = bool(re.search(r"(width|height|宽|高|尺寸)", md_lower))
         has_page_ref = bool(re.search(r"p\.?\s*\d+|第\d+页|page\s*\d+", md_lower))
@@ -126,7 +151,10 @@ def validate_pdf_extraction(
         if not has_page_ref:
             warnings.append("Drawing: no page references found")
 
-    review_status = "needs_review" if warnings else "approved"
+    if subkind == "general_pdf":
+        review_status = "pending_review"
+    else:
+        review_status = "needs_review" if warnings else "approved"
     return {
         "review_status": review_status,
         "warnings": warnings,
@@ -211,6 +239,9 @@ def extract_pdf_structured_markdown(
             f"PDF structured extraction model profile is not configured: {options.model_profile}"
         )
     ensure_mimo_v2_5_model(client.settings, route_name=SKILL_NAME)
+    pdf_subkind, _ = _detect_pdf_subkind(source_path.name)
+    is_standard_pdf = pdf_subkind == "general_pdf"
+    system_prompt = STANDARD_SYSTEM_PROMPT if is_standard_pdf else SYSTEM_PROMPT
 
     pages = _read_pdf_pages(source_path)
     selected_pages = pages[: options.max_pages] if options.max_pages > 0 else pages
@@ -223,9 +254,14 @@ def extract_pdf_structured_markdown(
     usage = {"input_tokens": 0, "output_tokens": 0}
 
     for batch in batches:
+        batch_prompt = (
+            _standard_batch_prompt(source_path.name, batch, len(batches))
+            if is_standard_pdf
+            else _batch_prompt(source_path.name, batch, len(batches))
+        )
         response = client.complete(
-            [{"role": "user", "content": _batch_prompt(source_path.name, batch, len(batches))}],
-            system_prompt=SYSTEM_PROMPT,
+            [{"role": "user", "content": batch_prompt}],
+            system_prompt=system_prompt,
             temperature=options.temperature,
         )
         summaries.append(_strip_markdown_wrapper(response.text))
@@ -241,14 +277,24 @@ def extract_pdf_structured_markdown(
         client.settings.supports_vision,
         warnings,
     )
-    final_prompt = _final_prompt(
-        source_path.name,
-        page_count=len(pages),
-        pages_analyzed=len(selected_pages),
-        summaries=summaries,
-        used_vision=bool(image_inputs),
-        vision_pages=vision_pages,
-    )
+    if is_standard_pdf:
+        final_prompt = _standard_final_prompt(
+            source_path.name,
+            page_count=len(pages),
+            pages_analyzed=len(selected_pages),
+            summaries=summaries,
+            used_vision=bool(image_inputs),
+            vision_pages=vision_pages,
+        )
+    else:
+        final_prompt = _final_prompt(
+            source_path.name,
+            page_count=len(pages),
+            pages_analyzed=len(selected_pages),
+            summaries=summaries,
+            used_vision=bool(image_inputs),
+            vision_pages=vision_pages,
+        )
     final_message: dict[str, Any] = {"role": "user", "content": final_prompt}
     if image_inputs:
         final_message["content"] = _build_vision_content_blocks(final_prompt, image_inputs, client.settings.provider)
@@ -256,7 +302,7 @@ def extract_pdf_structured_markdown(
     try:
         final_response = client.complete(
             [final_message],
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             temperature=options.temperature,
         )
     except Exception as exc:
@@ -265,15 +311,13 @@ def extract_pdf_structured_markdown(
         warnings.append(f"vision-assisted final synthesis failed and retried without images: {exc}")
         final_response = client.complete(
             [{"role": "user", "content": final_prompt}],
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             temperature=options.temperature,
         )
     _merge_usage(usage, final_response.usage)
     markdown = _normalize_final_markdown(_strip_markdown_wrapper(final_response.text), source_path.stem)
     _assert_bilingual_markdown(markdown)
 
-    # Phase 4: Subkind detection + validation
-    pdf_subkind, prompt_key = _detect_pdf_subkind(source_path.name)
     validation = validate_pdf_extraction(markdown, source_path, pdf_subkind)
     all_warnings = list(warnings) + validation.get("warnings", [])
     review_status = validation.get("review_status", "pending_review")
@@ -296,6 +340,31 @@ def extract_pdf_structured_markdown(
 
 
 def _read_pdf_pages(source_path: Path) -> list[PDFPageText]:
+    pypdf_pages: list[PDFPageText] = []
+    pypdf_error: Exception | None = None
+    try:
+        pypdf_pages = _read_pdf_pages_with_pypdf(source_path)
+    except Exception as exc:
+        pypdf_error = exc
+
+    fitz_pages: list[PDFPageText] = []
+    try:
+        fitz_pages = _read_pdf_pages_with_fitz(source_path)
+    except Exception:
+        fitz_pages = []
+
+    if _page_text_score(fitz_pages) > _page_text_score(pypdf_pages):
+        return fitz_pages
+    if pypdf_pages:
+        return pypdf_pages
+    if fitz_pages:
+        return fitz_pages
+    if pypdf_error is not None:
+        raise pypdf_error
+    raise ValueError("PDF reader returned no pages")
+
+
+def _read_pdf_pages_with_pypdf(source_path: Path) -> list[PDFPageText]:
     reader = PdfReader(str(source_path))
     pages: list[PDFPageText] = []
     for page_number, page in enumerate(reader.pages, start=1):
@@ -304,6 +373,28 @@ def _read_pdf_pages(source_path: Path) -> list[PDFPageText]:
             text = "[No selectable text was extracted from this page; use vision/OCR evidence where available.]"
         pages.append(PDFPageText(page_number, text))
     return pages
+
+
+def _read_pdf_pages_with_fitz(source_path: Path) -> list[PDFPageText]:
+    import fitz  # type: ignore
+
+    document = fitz.open(str(source_path))
+    pages: list[PDFPageText] = []
+    try:
+        for page_index in range(document.page_count):
+            page_number = page_index + 1
+            text = _clean_page_text(document.load_page(page_index).get_text("text") or "")
+            if not text:
+                text = "[No selectable text was extracted from this page; use vision/OCR evidence where available.]"
+            pages.append(PDFPageText(page_number, text))
+    finally:
+        document.close()
+    return pages
+
+
+def _page_text_score(pages: list[PDFPageText]) -> int:
+    placeholder = "[No selectable text was extracted from this page; use vision/OCR evidence where available.]"
+    return sum(len(page.text) for page in pages if page.text != placeholder)
 
 
 def _clean_page_text(text: str) -> str:
@@ -358,6 +449,63 @@ def _build_batches(pages: list[PDFPageText], batch_max_chars: int) -> list[_Batc
             )
         )
     return batches
+
+
+def _standard_batch_prompt(file_name: str, batch: _Batch, batch_count: int) -> str:
+    return f"""请对下面 PDF 页文本做"规范知识块抽取"。每个知识块只描述一个知识点，必须标注来源。
+
+文件名：{file_name}
+批次：{batch.index}/{batch_count}
+页码范围：p. {batch.start_page} - p. {batch.end_page}
+
+抽取原则：
+- 每个知识块只描述一个知识点，禁止合并多个条款。
+- 必须标注：标准编号、条款号、页码。
+- 正文写中文，术语和条款号保留英文。
+- 数学公式用 LaTeX 格式。
+- 关键表格完整保留行列数值，用 Markdown 表格格式。
+- 禁止出现"项目建议""实施建议""风险提示""推荐做法"等主观内容。
+- 只基于本批次内容抽取，不要编造。
+
+请输出以下类型的独立知识块：
+
+### 定义块 / Definition Block
+- **术语 / Term**: X
+- **符号 / Symbol**: X（如有）
+- **定义 / Definition**: ...
+- **来源 / Source**: Clause X.X (p. X)
+
+### 要求块 / Requirement Block
+- **参数 / Parameter**: X
+- **要求 / Requirement**: 具体数值或条件
+- **单位 / Unit**: X
+- **适用条件 / Applicability**: ...
+- **来源 / Source**: Clause X.X (p. X)
+
+### 公式块 / Formula Block
+- **公式名 / Formula Name**: X
+- **表达式 / Expression**: $...$
+- **参数定义 / Parameters**: 逐个列出符号、含义、单位
+- **来源 / Source**: Clause X.X (p. X)
+
+### 表格块 / Table Block
+- **表格编号 / Table Number**: X
+- **表格名 / Table Name**: X
+- **表格内容 / Content**: 完整保留行列数值
+- **来源 / Source**: Clause X.X (p. X)
+
+### 验证方法块 / Verification Block
+- **验证项 / Verification Item**: X
+- **方法 / Method**: 具体验证手段
+- **判定规则 / Pass/Fail Rule**: ...
+- **来源 / Source**: Clause X.X (p. X)
+
+## 待审核问题 / Review Questions
+
+<pdf_page_text>
+{batch.text}
+</pdf_page_text>
+"""
 
 
 def _batch_prompt(file_name: str, batch: _Batch, batch_count: int) -> str:
@@ -429,6 +577,118 @@ def _select_vision_pages(pages: list[PDFPageText], limit: int) -> tuple[int, ...
             break
 
     return tuple(sorted(selected[:limit]))
+
+
+def _standard_final_prompt(
+    file_name: str,
+    *,
+    page_count: int,
+    pages_analyzed: int,
+    summaries: list[str],
+    used_vision: bool,
+    vision_pages: tuple[int, ...],
+) -> str:
+    joined_summaries = "\n\n---\n\n".join(
+        f"## Batch {index}\n{summary}" for index, summary in enumerate(summaries, start=1)
+    )
+    vision_page_note = ", ".join(str(page) for page in vision_pages) if vision_pages else "none"
+    vision_note = (
+        f"已附加选定页面图片（页码：{vision_page_note}），请结合图片检查封面、目录、表格或版式。"
+        if used_vision
+        else f"本次未附加页面图片（请求页码：{vision_page_note}）；请基于文本中间提炼结果输出，并标注版式/表格不确定性。"
+    )
+    return f"""请把各批次规范知识块合成为一份结构化的"规范知识库"。
+
+这不是解读文档、不是项目手册、不是经验库。这是专用于 RAG 检索和 AI 问答的规范知识库。
+
+文件名：{file_name}
+总页数：{page_count}
+已分析页数：{pages_analyzed}
+视觉辅助：{vision_note}
+
+语言规则：
+- 正文写中文，专业术语和标准编号保留英文。
+- 数学公式用 LaTeX 格式。
+- 所有内容必须可追溯：标准编号 + 条款号。
+- 禁止出现"项目建议""实施建议""风险提示""推荐做法"等主观内容。
+
+整体结构要求（按以下 11 个分区组织）：
+
+# {Path(file_name).stem}
+
+## 01 Scope / 适用范围
+标准覆盖的产品类型、建筑类型、应用场景和排除项。
+
+## 02 Referenced Standards / 引用标准
+用表格列出本标准引用的所有核心标准：
+| 标准编号 / Standard | 名称 / Name | 用途 / Purpose | 涉及条款 / Clauses |
+
+## 03 Definitions / 定义
+标准中定义的所有术语，逐条列出：
+- **术语 / Term**: X
+- **定义 / Definition**: ...
+- **来源 / Source**: Clause X.X
+
+## 04 Terms Library / 术语库
+所有专业术语单独整理，每条独立：
+- **术语 / Term**: X
+- **符号 / Symbol**: X（如有）
+- **定义 / Definition**: ...
+- **来源 / Source**: Clause X.X
+
+## 05 Symbols Library / 符号库
+所有符号单独整理：
+- **符号 / Symbol**: X
+- **含义 / Meaning**: ...
+- **单位 / Unit**: X
+- **来源 / Source**: Clause X.X
+
+## 06 Requirements Library / 要求库
+所有技术要求、限值、阈值逐条整理：
+- **参数 / Parameter**: X
+- **要求 / Requirement**: 具体数值或条件
+- **单位 / Unit**: X
+- **适用条件 / Applicability**: ...
+- **来源 / Source**: Clause X.X
+
+## 07 Formula Library / 公式库
+所有公式独立存储，每个公式一个条目：
+- **公式名 / Formula Name**: X
+- **表达式 / Expression**: $...$
+- **参数定义 / Parameters**: 逐个列出符号、含义、单位
+- **来源 / Source**: Clause X.X
+
+## 08 Parameter Library / 参数库
+所有参数、限值、阈值统一整理为表格：
+| 参数 / Parameter | 要求 / Requirement | 单位 / Unit | 适用条件 / Applicability | 来源 / Source |
+
+## 09 Table Library / 表格库
+所有标准表格单独整理，不嵌入正文：
+- **表格编号 / Table Number**: X
+- **表格名 / Table Name**: X
+- **表格内容 / Content**: 完整保留行列数值
+- **来源 / Source**: Clause X.X (p. X)
+
+## 10 Verification Methods / 验证方法
+所有验算方法、测试方法逐条整理：
+- **验证项 / Verification Item**: X
+- **方法 / Method**: 具体验证手段
+- **判定规则 / Pass/Fail Rule**: ...
+- **来源 / Source**: Clause X.X
+
+## 11 Source Mapping / 来源映射
+列出本知识库覆盖的所有条款及其对应分区：
+| 条款号 / Clause | 条款名 / Title | 对应分区 / Section | 页码 / Page |
+
+## 待审核问题 / Review Questions
+列出所有不确定、OCR/版式风险、缺少视觉证据的内容。
+
+不要输出 YAML frontmatter。不要输出代码块。不要以大段原文替代结构化知识库。
+
+<batch_summaries>
+{joined_summaries}
+</batch_summaries>
+"""
 
 
 def _final_prompt(
@@ -648,9 +908,26 @@ def _normalize_final_markdown(markdown: str, title: str) -> str:
 
 def _assert_bilingual_markdown(markdown: str) -> None:
     has_cjk = re.search(r"[\u4e00-\u9fff]", markdown) is not None
-    english_markers = len(re.findall(r"\bEnglish\b|English Equivalent|Review Status|Key Conclusions", markdown))
-    chinese_markers = len(re.findall(r"中文|中英|审核状态|核心结论", markdown))
-    if not has_cjk or english_markers < 3 or chinese_markers < 3:
+    legacy_english_markers = len(re.findall(r"\bEnglish\b|English Equivalent|Review Status|Key Conclusions", markdown))
+    legacy_chinese_markers = len(re.findall(r"中文|中英|审核状态|核心结论", markdown))
+    standard_english_markers = len(
+        re.findall(
+            r"Scope|Referenced Standards|Definitions|Terms Library|Symbols Library|"
+            r"Requirements Library|Formula Library|Parameter Library|Table Library|"
+            r"Verification Methods|Source Mapping|Review Questions",
+            markdown,
+        )
+    )
+    standard_chinese_markers = len(
+        re.findall(
+            r"适用范围|引用标准|定义|术语库|符号库|要求库|公式库|参数库|"
+            r"表格库|验证方法|来源映射|待审核",
+            markdown,
+        )
+    )
+    legacy_ok = legacy_english_markers >= 3 and legacy_chinese_markers >= 3
+    standard_ok = standard_english_markers >= 6 and standard_chinese_markers >= 6
+    if not has_cjk or not (legacy_ok or standard_ok):
         raise ValueError("PDF structured extraction did not satisfy bilingual zh/en alignment policy")
 
 

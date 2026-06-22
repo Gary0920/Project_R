@@ -22,6 +22,7 @@
 | `markdown-source-preprocess` | Markdown、TXT、Notion/Obsidian 导出文本 | 规则清洗 + DeepSeek 按需整理 | 保留结构、清理噪音、补来源和证据 |
 | `docx-text-preprocess` | Word `.docx` 文档、会议纪要、文本记录、表格文本 | python-docx 确定性抽取 | 段落、表格、轻量时间线信号和证据 |
 | `pdf-structured-preprocess` | 所有 PDF | 文本抽取作辅助证据 + MiMo V2.5 | 结构化 Markdown、页码证据、不确定点 |
+| `standard-pdf-preprocess` | 标准、规范、测试方法类 general PDF | 文本抽取作辅助证据 + MiMo V2.5 | 11 分区规范知识库、条款来源、公式、参数表和待审核问题 |
 | `drawing-pdf-vision-preprocess` | 图纸 PDF、楼层图、总平图、技术版式 PDF | MiMo V2.5 | 图纸/版式语义、关键标注、风险和证据 |
 | `image-screenshot-preprocess` | 图片、截图、审批流、表格图片、现场照片 | MiMo V2.5 | 图片内容、可见文字、区域说明、待确认点 |
 | `meeting-audio-video-preprocess` | 已有 transcript 的会议资料、无 transcript 的音频/视频、VTT/SRT | transcript sidecar 或 MiMo V2.5 转写 + 结构化提炼 | transcript 过程文件、会议决策、行动项、风险、证据和待审核问题 |

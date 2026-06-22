@@ -401,7 +401,7 @@ class ChatPhase6Tests(unittest.TestCase):
         response = chat_api.regenerate_message(
             self.session.id,
             target.id,
-            chat_api.RegenerateMessageRequest(temperature=0.9),
+            chat_api.RegenerateMessageRequest(),
             self.user,
             self.db,
         )

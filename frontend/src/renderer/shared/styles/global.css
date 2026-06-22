@@ -1899,7 +1899,7 @@
   font-size: 11px;
 }
 
-:root[data-theme="dark"] .workbench-topbar,
+:root[data-theme="dark"] .workbench-titlebar,
 :root[data-theme="dark"] .business-tool-button,
 :root[data-theme="dark"] .crm-workbench-hero,
 :root[data-theme="dark"] .crm-workbench-flow span,
@@ -1940,27 +1940,35 @@
 }
 
 @media (max-width: 900px) {
-  .workbench-topbar {
-    grid-template-columns: minmax(0, 1fr) auto;
+  .workbench-titlebar {
+    flex-wrap: wrap;
     height: auto;
     min-height: var(--workbench-topbar-height);
-    align-content: center;
-    padding-block: 6px;
+    align-items: center;
+    padding-block: 4px;
+  }
+
+  .workbench-titlebar-leading {
+    order: 1;
+  }
+
+  .tab-strip {
+    order: 2;
+    max-width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .titlebar-drag-spacer {
+    display: none;
+  }
+
+  .workbench-titlebar .workbench-system-tools {
+    order: 3;
+    margin-left: auto;
   }
 
   .workbench-business-nav {
-    grid-column: 1 / -1;
-    order: 3;
-    width: 100%;
-    overflow-x: auto;
-  }
-
-  .workbench-system-tools {
-    justify-self: end;
-  }
-
-  .workbench-context-label {
-    display: none;
+    width: auto;
   }
 
   .message-agent-plan-grid {

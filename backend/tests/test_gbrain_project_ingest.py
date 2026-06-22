@@ -279,6 +279,7 @@ class GBrainProjectIngestTests(unittest.TestCase):
                     model_profile="test-profile",
                     provider="test-provider",
                     model="test-model",
+                    pdf_subkind="drawing_general_arrangement",
                 )
 
             manifest = compile_project_workspace_sources(
@@ -295,7 +296,7 @@ class GBrainProjectIngestTests(unittest.TestCase):
             self.assertEqual(frontmatter["content_kind"], "project_pdf_structured_extract")
             self.assertEqual(frontmatter["preprocess_skill"], "drawing-pdf-vision-preprocess")
             self.assertEqual(frontmatter["source_file_type"], "pdf")
-            self.assertEqual(frontmatter["prompt_version"], "rules-pdf-structured-v1")
+            self.assertEqual(frontmatter["prompt_version"], "rules-standard-pdf-structured-v3")
             self.assertEqual(frontmatter["preprocess_status"], "succeeded")
             self.assertEqual(frontmatter["review_status"], "approved")
             self.assertEqual(frontmatter["source_scope_review_policy"], "project_no_admin_review")
@@ -304,6 +305,52 @@ class GBrainProjectIngestTests(unittest.TestCase):
             self.assertIn("The frame colour is black", body)
             self.assertEqual(manifest["items"][0]["target_file"], "technical/Drawing.md")
             self.assertEqual(manifest["items"][0]["review_status"], "approved")
+
+    def test_project_standard_pdf_uses_standard_preprocess_skill_and_pending_review(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "project" / "BFI" / "BG007"
+            pdf = root / "02-图纸与技术资料" / "AS 2047.pdf"
+            pdf.parent.mkdir(parents=True)
+            pdf.write_bytes(b"%PDF-1.4\nnot a real pdf")
+
+            def fake_pdf_extractor(path: Path) -> PDFStructuredExtractionResult:
+                self.assertEqual(path, pdf)
+                return PDFStructuredExtractionResult(
+                    markdown=(
+                        "# AS 2047\n\n"
+                        "## 01 Scope / 适用范围\n\n"
+                        "AS 2047 covers windows and external glazed doors.\n\n"
+                        "## 06 Requirements Library / 要求库\n\n"
+                        "- **参数 / Parameter**: Water penetration resistance\n"
+                        "- **来源 / Source**: AS 2047 Clause 3.4 (p. 12)\n"
+                    ),
+                    page_count=1,
+                    pages_analyzed=1,
+                    model_profile="test-profile",
+                    provider="test-provider",
+                    model="test-model",
+                    pdf_subkind="general_pdf",
+                    review_status="pending_review",
+                )
+
+            manifest = compile_project_workspace_sources(
+                self._workspace(root),
+                self._settings(),
+                pdf_extractor=fake_pdf_extractor,
+                enable_pdf_structured_extraction=True,
+            )
+
+            target = self._project_ready() / "technical" / "AS 2047.md"
+            self.assertEqual(manifest["summary"]["compiled"], 1)
+            self.assertTrue(target.exists())
+            frontmatter, body = self._read_frontmatter(target)
+            self.assertEqual(frontmatter["preprocess_skill"], "standard-pdf-preprocess")
+            self.assertEqual(frontmatter["review_status"], "pending_review")
+            self.assertEqual(frontmatter["source_scope_review_policy"], "project_markdown_pending_review")
+            self.assertEqual(frontmatter["extractor_review_status"], "pending_review")
+            self.assertIn("Water penetration resistance", body)
+            self.assertEqual(manifest["items"][0]["target_file"], "technical/AS 2047.md")
+            self.assertEqual(manifest["items"][0]["review_status"], "pending_review")
 
     def test_project_selectable_pdf_is_pending_until_structured_extraction_is_enabled(self):
         with tempfile.TemporaryDirectory() as temp_dir:

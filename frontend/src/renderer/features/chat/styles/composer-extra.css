@@ -37,20 +37,6 @@
   color: hsl(var(--destructive));
 }
 
-.composer-temp-slider {
-  display: inline-flex;
-  align-items: center;
-  margin-left: 4px;
-  padding-left: 8px;
-  border-left: 1px solid hsl(var(--border));
-}
-.composer-temp-input {
-  width: 64px;
-  height: 16px;
-  accent-color: hsl(var(--primary));
-  cursor: pointer;
-}
-
 .composer-mode-toggles {
   display: inline-flex;
   align-items: center;

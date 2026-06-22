@@ -9,7 +9,6 @@ import { toModelOption } from "../modelOptions";
 export function useAppModelControls(apiOptions: ApiClientOptions) {
   const [thinkingEnabled, setThinkingEnabled] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(readWebSearchPreference);
-  const [temperature, setTemperature] = useState<number | undefined>(undefined);
   const [llmProviders, setLlmProviders] = useState<LLMProviderStatusResponse[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelConfigError, setModelConfigError] = useState("");
@@ -72,9 +71,7 @@ export function useAppModelControls(apiOptions: ApiClientOptions) {
     selectedModelOption,
     setModelMenuOpen,
     setSelectedModelKey,
-    setTemperature,
     setThinkingEnabled,
-    temperature,
     thinkingEnabled,
     toggleWebSearch,
     webSearchEnabled,
