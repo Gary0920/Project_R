@@ -18,11 +18,13 @@ DEFAULT_MODEL_PROFILE = "mimo-v2-5"
 DEFAULT_BATCH_MAX_CHARS = 28_000
 DEFAULT_MAX_PAGES = 0
 DEFAULT_TEMPERATURE = 0.1
+SPLIT_THRESHOLD_PAGES = 40  # Split PDF if more than this many pages
 LANGUAGE_POLICY = "bilingual_zh_en_aligned"
 SUPPORTED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 SKILL_NAME = "pdf-structured-preprocess"
+STANDARD_SKILL_NAME = "standard-pdf-preprocess"
 SKILL_VERSION = "1.0.0"
-PROMPT_VERSION = "rules-pdf-structured-v1"
+PROMPT_VERSION = "rules-standard-pdf-structured-v3"
 
 # Phase 4: PDF subkind detection patterns
 _PDF_SUBKIND_RULES: list[tuple[re.Pattern, str, str]] = [
@@ -43,7 +45,7 @@ SYSTEM_PROMPT = """你是 Project_R 的 PDF 结构化资料提炼 Agent。
 - 保留必要英文标准名、条款名、参数名；中文解释用于业务使用，English 用于检索、复核和与英文源文件对照。
 - 不要逐段照抄原文；只允许短语级引用。
 - 每条关键要求尽量标注页码，例如 `(p. 12)` 或 `(pp. 12-14)`。
-- 对无法确认、疑似表格错位、图示依赖、OCR/抽取异常的内容，必须放入“待审核问题”。
+- 对无法确认、疑似表格错位、图示依赖、OCR/抽取异常的内容，必须放入"待审核问题"。
 - 不能编造 PDF 中没有的事实。
 - 输出 Markdown 正文，不要输出 YAML frontmatter，不要包裹代码块。
 """
@@ -51,6 +53,28 @@ SYSTEM_PROMPT = """你是 Project_R 的 PDF 结构化资料提炼 Agent。
 
 # ── Phase 4: Subkind detection ────────────────────────────────────────────
 
+
+STANDARD_SYSTEM_PROMPT = """你是 Project_R 的标准规范 PDF 规范知识库预处理 Agent。
+
+你的任务是把整份标准 PDF 转换成一份结构化的规范知识库，专用于 RAG 检索和 AI 问答。
+
+定位：Standard Knowledge Base（规范知识库）。不是项目执行手册、不是经验库、不是行业指导。
+
+硬性要求：
+- 所有内容必须保持客观、可追溯、可检索。不加入任何个人判断、项目经验或实施建议。
+- 禁止出现"项目建议""实施建议""风险提示""常见做法""推荐做法""项目经验""行业经验""设计建议""施工建议"等主观内容。
+- 禁止出现 `> **项目建议：**` 、`> **⚠ 应用重点：**` 等引用块。
+- 知识库仅保留：标准要求、标准定义、标准参数、标准公式、标准表格、标准验算方法。
+- 每条知识必须标注来源：标准编号 + 条款号。不得出现无法追溯来源的内容。
+- 同一知识点只允许存在一个权威事实来源。如果某知识点已在其他条款完整描述，其他位置仅保留引用关系（Refer to Clause X.X），不重复复制。
+- 一个知识块（Chunk）只允许描述一个知识点。禁止超长章节。
+- 数学公式必须使用 LaTeX 格式：简单变量用 `$...$` 行内，复杂公式用 `$$...$$` 独立块。
+- 关键表格必须完整保留行列数值，不得用"见原表"替代。参数数据必须用 Markdown 表格格式。
+- 正文写中文，专业术语和标准编号保留英文。不得只写"见 p. X"；页码和条款号只能作为证据标注，正文必须包含具体内容。
+- 不要逐段复制原文；只允许短语级引用。必须用自己的话做结构化归纳。
+- 无法确认、OCR/版式不可靠、表格错位或视觉页不足的信息，必须放入"待审核问题 / Review Questions"。
+- 输出 Markdown 正文，不输出 YAML frontmatter，不包裹代码块。
+"""
 
 def _detect_pdf_subkind(filename: str) -> tuple[str, str | None]:
     """Detect PDF subkind from filename.
@@ -198,6 +222,84 @@ def load_pdf_extraction_options() -> PDFExtractionOptions:
     )
 
 
+
+def _split_pdf_and_extract(
+    source_path: Path,
+    *,
+    options: PDFExtractionOptions,
+    client: LLMClient,
+    is_standard_pdf: bool,
+    system_prompt: str,
+) -> PDFStructuredExtractionResult:
+    """Split large PDF into two halves, extract each, and combine."""
+    import fitz
+    import tempfile
+
+    doc = fitz.open(str(source_path))
+    total_pages = doc.page_count
+    mid = total_pages // 2
+
+    tmp_dir = Path(tempfile.mkdtemp())
+    part1_path = tmp_dir / "part1.pdf"
+    part2_path = tmp_dir / "part2.pdf"
+
+    part1_doc = fitz.open()
+    part1_doc.insert_pdf(doc, from_page=0, to_page=mid - 1)
+    part1_doc.save(str(part1_path))
+    part1_doc.close()
+
+    part2_doc = fitz.open()
+    part2_doc.insert_pdf(doc, from_page=mid, to_page=total_pages - 1)
+    part2_doc.save(str(part2_path))
+    part2_doc.close()
+    doc.close()
+
+    results = []
+    for part_path in [part1_path, part2_path]:
+        result = extract_pdf_structured_markdown(
+            part_path,
+            options=options,
+            llm_client=client,
+        )
+        results.append(result)
+
+    part1_path.unlink(missing_ok=True)
+    part2_path.unlink(missing_ok=True)
+    tmp_dir.rmdir()
+
+    if len(results) == 2:
+        part2_lines = results[1].markdown.split(chr(10))
+        part2_start = 0
+        for j, line in enumerate(part2_lines):
+            if line.startswith("## "):
+                part2_start = j
+                break
+
+        combined = results[0].markdown.rstrip() + chr(10) + chr(10) + "---" + chr(10) + chr(10) + chr(10).join(part2_lines[part2_start:])
+        usage = {
+            "input_tokens": sum(r.token_usage.get("input_tokens", 0) for r in results),
+            "output_tokens": sum(r.token_usage.get("output_tokens", 0) for r in results),
+        }
+        all_warnings = list(results[0].warnings) + list(results[1].warnings)
+
+        return PDFStructuredExtractionResult(
+            markdown=combined,
+            page_count=results[0].page_count + results[1].page_count,
+            pages_analyzed=results[0].pages_analyzed + results[1].pages_analyzed,
+            review_status=results[0].review_status,
+            model_profile=results[0].model_profile,
+            provider=results[0].provider,
+            model=results[0].model,
+            token_usage=usage,
+            warnings=tuple(all_warnings),
+            vision_pages=results[0].vision_pages + results[1].vision_pages,
+            vision_image_count=results[0].vision_image_count + results[1].vision_image_count,
+            pdf_subkind=results[0].pdf_subkind,
+            validation=results[0].validation,
+        )
+    return results[0]
+
+
 def extract_pdf_structured_markdown(
     source_path: Path,
     *,
@@ -211,6 +313,30 @@ def extract_pdf_structured_markdown(
             f"PDF structured extraction model profile is not configured: {options.model_profile}"
         )
     ensure_mimo_v2_5_model(client.settings, route_name=SKILL_NAME)
+    pdf_subkind, _ = _detect_pdf_subkind(source_path.name)
+    is_standard_pdf = pdf_subkind == "general_pdf"
+    if is_standard_pdf:
+        system_prompt = STANDARD_SYSTEM_PROMPT
+    else:
+        system_prompt = SYSTEM_PROMPT
+
+    # Split large standard PDFs into two halves for better extraction quality
+    if is_standard_pdf:
+        import fitz
+        try:
+            doc = fitz.open(str(source_path))
+            total_pages = doc.page_count
+            doc.close()
+            if total_pages > SPLIT_THRESHOLD_PAGES:
+                return _split_pdf_and_extract(
+                    source_path,
+                    options=options,
+                    client=client,
+                    is_standard_pdf=is_standard_pdf,
+                    system_prompt=system_prompt,
+                )
+        except Exception:
+            pass  # Fall through to normal extraction if fitz fails
 
     pages = _read_pdf_pages(source_path)
     selected_pages = pages[: options.max_pages] if options.max_pages > 0 else pages
@@ -223,9 +349,13 @@ def extract_pdf_structured_markdown(
     usage = {"input_tokens": 0, "output_tokens": 0}
 
     for batch in batches:
+        if is_standard_pdf:
+            batch_prompt = _standard_batch_prompt(source_path.name, batch, len(batches))
+        else:
+            batch_prompt = _batch_prompt(source_path.name, batch, len(batches))
         response = client.complete(
-            [{"role": "user", "content": _batch_prompt(source_path.name, batch, len(batches))}],
-            system_prompt=SYSTEM_PROMPT,
+            [{"role": "user", "content": batch_prompt}],
+            system_prompt=system_prompt,
             temperature=options.temperature,
         )
         summaries.append(_strip_markdown_wrapper(response.text))
@@ -241,14 +371,24 @@ def extract_pdf_structured_markdown(
         client.settings.supports_vision,
         warnings,
     )
-    final_prompt = _final_prompt(
-        source_path.name,
-        page_count=len(pages),
-        pages_analyzed=len(selected_pages),
-        summaries=summaries,
-        used_vision=bool(image_inputs),
-        vision_pages=vision_pages,
-    )
+    if is_standard_pdf:
+        final_prompt = _standard_final_prompt(
+            source_path.name,
+            page_count=len(pages),
+            pages_analyzed=len(selected_pages),
+            summaries=summaries,
+            used_vision=bool(image_inputs),
+            vision_pages=vision_pages,
+        )
+    else:
+        final_prompt = _final_prompt(
+            source_path.name,
+            page_count=len(pages),
+            pages_analyzed=len(selected_pages),
+            summaries=summaries,
+            used_vision=bool(image_inputs),
+            vision_pages=vision_pages,
+        )
     final_message: dict[str, Any] = {"role": "user", "content": final_prompt}
     if image_inputs:
         final_message["content"] = _build_vision_content_blocks(final_prompt, image_inputs, client.settings.provider)
@@ -256,7 +396,7 @@ def extract_pdf_structured_markdown(
     try:
         final_response = client.complete(
             [final_message],
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             temperature=options.temperature,
         )
     except Exception as exc:
@@ -265,15 +405,13 @@ def extract_pdf_structured_markdown(
         warnings.append(f"vision-assisted final synthesis failed and retried without images: {exc}")
         final_response = client.complete(
             [{"role": "user", "content": final_prompt}],
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             temperature=options.temperature,
         )
     _merge_usage(usage, final_response.usage)
     markdown = _normalize_final_markdown(_strip_markdown_wrapper(final_response.text), source_path.stem)
     _assert_bilingual_markdown(markdown)
 
-    # Phase 4: Subkind detection + validation
-    pdf_subkind, prompt_key = _detect_pdf_subkind(source_path.name)
     validation = validate_pdf_extraction(markdown, source_path, pdf_subkind)
     all_warnings = list(warnings) + validation.get("warnings", [])
     review_status = validation.get("review_status", "pending_review")
@@ -296,6 +434,31 @@ def extract_pdf_structured_markdown(
 
 
 def _read_pdf_pages(source_path: Path) -> list[PDFPageText]:
+    pypdf_pages: list[PDFPageText] = []
+    pypdf_error: Exception | None = None
+    try:
+        pypdf_pages = _read_pdf_pages_with_pypdf(source_path)
+    except Exception as exc:
+        pypdf_error = exc
+
+    fitz_pages: list[PDFPageText] = []
+    try:
+        fitz_pages = _read_pdf_pages_with_fitz(source_path)
+    except Exception:
+        fitz_pages = []
+
+    if _page_text_score(fitz_pages) > _page_text_score(pypdf_pages):
+        return fitz_pages
+    if pypdf_pages:
+        return pypdf_pages
+    if fitz_pages:
+        return fitz_pages
+    if pypdf_error is not None:
+        raise pypdf_error
+    raise ValueError("PDF reader returned no pages")
+
+
+def _read_pdf_pages_with_pypdf(source_path: Path) -> list[PDFPageText]:
     reader = PdfReader(str(source_path))
     pages: list[PDFPageText] = []
     for page_number, page in enumerate(reader.pages, start=1):
@@ -304,6 +467,25 @@ def _read_pdf_pages(source_path: Path) -> list[PDFPageText]:
             text = "[No selectable text was extracted from this page; use vision/OCR evidence where available.]"
         pages.append(PDFPageText(page_number, text))
     return pages
+
+
+def _read_pdf_pages_with_fitz(source_path: Path) -> list[PDFPageText]:
+    import fitz  # type: ignore
+
+    document = fitz.open(str(source_path))
+    pages: list[PDFPageText] = []
+    for page_index in range(document.page_count):
+        page_number = page_index + 1
+        text = _clean_page_text(document.load_page(page_index).get_text("text") or "")
+        if not text:
+            text = "[No selectable text was extracted from this page; use vision/OCR evidence where available.]"
+        pages.append(PDFPageText(page_number, text))
+    return pages
+
+
+def _page_text_score(pages: list[PDFPageText]) -> int:
+    placeholder = "[No selectable text was extracted from this page; use vision/OCR evidence where available.]"
+    return sum(len(page.text) for page in pages if page.text != placeholder)
 
 
 def _clean_page_text(text: str) -> str:
@@ -360,8 +542,63 @@ def _build_batches(pages: list[PDFPageText], batch_max_chars: int) -> list[_Batc
     return batches
 
 
+def _standard_batch_prompt(file_name: str, batch: _Batch, batch_count: int) -> str:
+    return f"""请对下面 PDF 页文本做"规范知识块抽取"。每个知识块只描述一个知识点，必须标注来源。
+
+文件名：{file_name}
+批次：{batch.index}/{batch_count}
+页码范围：p. {batch.start_page} - p. {batch.end_page}
+
+抽取原则：
+- 每个知识块只描述一个知识点，禁止合并多个条款。
+- 必须标注：标准编号、条款号、页码。
+- 正文写中文，术语和条款号保留英文。
+- 数学公式用 LaTeX 格式。
+- 关键表格完整保留行列数值，用 Markdown 表格格式。
+- 禁止出现"项目建议""实施建议""风险提示""推荐做法"等主观内容。
+- 只基于本批次内容抽取，不要编造。
+
+请输出以下类型的独立知识块：
+
+### 定义块 / Definition Block
+- **术语 / Term**: X
+- **符号 / Symbol**: X（如有）
+- **定义 / Definition**: ...
+- **来源 / Source**: Clause X.X (p. X)
+
+### 要求块 / Requirement Block
+- **参数 / Parameter**: X
+- **要求 / Requirement**: 具体数值或条件
+- **单位 / Unit**: X
+- **适用条件 / Applicability**: ...
+- **来源 / Source**: Clause X.X (p. X)
+
+### 公式块 / Formula Block
+- **公式名 / Formula Name**: X
+- **表达式 / Expression**: $...$
+- **参数定义 / Parameters**: 逐个列出符号、含义、单位
+- **来源 / Source**: Clause X.X (p. X)
+
+### 表格块 / Table Block
+- **表格编号 / Table Number**: X
+- **表格名 / Table Name**: X
+- **表格内容 / Content**: 完整保留行列数值
+- **来源 / Source**: Clause X.X (p. X)
+
+### 验证方法块 / Verification Block
+- **验证项 / Verification Item**: X
+- **方法 / Method**: 具体验证手段
+- **判定规则 / Pass/Fail Rule**: ...
+- **来源 / Source**: Clause X.X (p. X)
+
+## 待审核问题 / Review Questions
+
+<pdf_page_text>
+{batch.text}
+</pdf_page_text>
+"""
 def _batch_prompt(file_name: str, batch: _Batch, batch_count: int) -> str:
-    return f"""请对下面 PDF 页文本做“中间提炼笔记”，用于后续合成最终知识页。
+    return f"""请对下面 PDF 页文本做"中间提炼笔记"，用于后续合成最终知识页。
 
 文件名：{file_name}
 批次：{batch.index}/{batch_count}
@@ -431,7 +668,101 @@ def _select_vision_pages(pages: list[PDFPageText], limit: int) -> tuple[int, ...
     return tuple(sorted(selected[:limit]))
 
 
-def _final_prompt(
+    return f"""请把各批次规范知识块合成为一份结构化的"规范知识库"。
+
+这不是解读文档、不是项目手册、不是经验库。这是专用于 RAG 检索和 AI 问答的规范知识库。
+
+文件名：{file_name}
+总页数：{page_count}
+已分析页数：{pages_analyzed}
+视觉辅助：{vision_note}
+
+语言规则：
+- 正文写中文，专业术语和标准编号保留英文。
+- 数学公式用 LaTeX 格式。
+- 所有内容必须可追溯：标准编号 + 条款号。
+- 禁止出现"项目建议""实施建议""风险提示""推荐做法"等主观内容。
+
+整体结构要求（按以下 11 个分区组织）：
+
+# {Path(file_name).stem}
+
+## 01 Scope / 适用范围
+标准覆盖的产品类型、建筑类型、应用场景和排除项。
+
+## 02 Referenced Standards / 引用标准
+用表格列出本标准引用的所有核心标准：
+| 标准编号 / Standard | 名称 / Name | 用途 / Purpose | 涉及条款 / Clauses |
+
+## 03 Definitions / 定义
+标准中定义的所有术语，逐条列出：
+- **术语 / Term**: X
+- **定义 / Definition**: ...
+- **来源 / Source**: Clause X.X
+
+## 04 Terms Library / 术语库
+所有专业术语单独整理，每条独立：
+- **术语 / Term**: X
+- **符号 / Symbol**: X（如有）
+- **定义 / Definition**: ...
+- **来源 / Source**: Clause X.X
+
+## 05 Symbols Library / 符号库
+所有符号单独整理：
+- **符号 / Symbol**: X
+- **含义 / Meaning**: ...
+- **单位 / Unit**: X
+- **来源 / Source**: Clause X.X
+
+## 06 Requirements Library / 要求库
+所有技术要求、限值、阈值逐条整理：
+- **参数 / Parameter**: X
+- **要求 / Requirement**: 具体数值或条件
+- **单位 / Unit**: X
+- **适用条件 / Applicability**: ...
+- **来源 / Source**: Clause X.X
+
+## 07 Formula Library / 公式库
+所有公式独立存储，每个公式一个条目：
+- **公式名 / Formula Name**: X
+- **表达式 / Expression**: $...$
+- **参数定义 / Parameters**: 逐个列出符号、含义、单位
+- **来源 / Source**: Clause X.X
+
+## 08 Parameter Library / 参数库
+所有参数、限值、阈值统一整理为表格：
+| 参数 / Parameter | 要求 / Requirement | 单位 / Unit | 适用条件 / Applicability | 来源 / Source |
+
+## 09 Table Library / 表格库
+所有标准表格单独整理，不嵌入正文：
+- **表格编号 / Table Number**: X
+- **表格名 / Table Name**: X
+- **表格内容 / Content**: 完整保留行列数值
+- **来源 / Source**: Clause X.X (p. X)
+
+## 10 Verification Methods / 验证方法
+所有验算方法、测试方法逐条整理：
+- **验证项 / Verification Item**: X
+- **方法 / Method**: 具体验证手段
+- **判定规则 / Pass/Fail Rule**: ...
+- **来源 / Source**: Clause X.X
+
+## 11 Source Mapping / 来源映射
+列出本知识库覆盖的所有条款及其对应分区：
+| 条款号 / Clause | 条款名 / Title | 对应分区 / Section | 页码 / Page |
+
+## 待审核问题 / Review Questions
+列出所有不确定、OCR/版式风险、缺少视觉证据的内容。
+
+不要输出 YAML frontmatter。不要输出代码块。不要以大段原文替代结构化知识库。
+
+<batch_summaries>
+{joined_summaries}
+</batch_summaries>
+"""
+
+
+def _standard_final_prompt(
     file_name: str,
     *,
     page_count: int,
@@ -449,46 +780,93 @@ def _final_prompt(
         if used_vision
         else f"本次未附加页面图片（请求页码：{vision_page_note}）；请基于文本中间提炼结果输出，并标注版式/表格不确定性。"
     )
-    return f"""请把 PDF 中间提炼笔记合成为一篇 Project_R / GBrain 可导入的结构化 Markdown 知识页。
+    return f"""请把各批次规范知识块合成为一份结构化的"规范知识库"。
+
+这不是解读文档、不是项目手册、不是经验库。这是专用于 RAG 检索和 AI 问答的规范知识库。
 
 文件名：{file_name}
 总页数：{page_count}
 已分析页数：{pages_analyzed}
 视觉辅助：{vision_note}
-语言规则：最终知识页必须中英文并存，且中英文表达同一事实。任何中文事实都必须有 English 等义表达；任何 English fact 都必须有中文等义表达。不要让两个语言版本的信息不对称。
 
-输出必须使用以下一级结构：
-# {Path(file_name).stem}
+语言规则：
+- 正文写中文，专业术语和标准编号保留英文。
+- 数学公式用 LaTeX 格式。
+- 所有内容必须可追溯：标准编号 + 条款号。
+- 禁止出现"项目建议""实施建议""风险提示""推荐做法"等主观内容。
 
-## 审核状态 / Review Status
-使用项目符号，每条采用 `- 中文：...` 下一行 `  English: ...` 的成对格式。说明这是 PDF 结构化提炼 MVP 生成，状态为 pending_review，并列出原始页数、已分析页数、是否使用视觉辅助、视觉辅助页码。
+整体结构要求（按以下 11 个分区组织）：
 
-## 文档定位 / Document Positioning
-使用成对段落或表格说明文档类型、适用范围、在公司业务中大概用于什么场景。每个信息单元必须中英对齐。
+# {{Path(file_name).stem}}
 
-## 核心结论 / Key Conclusions
-用 5-10 条总结最值得检索的内容。每条必须采用：
-`- 中文：... (p. X)`
-`  English: ... (p. X)`
+## 01 Scope / 适用范围
+标准覆盖的产品类型、建筑类型、应用场景和排除项。
 
-## 章节与条款结构 / Section and Clause Structure
-按章节、条款或主题整理。每项尽量带页码。每项必须中英对齐。
+## 02 Referenced Standards / 引用标准
+用表格列出本标准引用的所有核心标准：
+| 标准编号 / Standard | 名称 / Name | 用途 / Purpose | 涉及条款 / Clauses |
 
-## 关键要求与参数 / Key Requirements and Parameters
-优先用表格整理技术要求、限制、数值、测试/合规要求。表格必须包含这些列：
-`| 类别 / Category | 中文要求 / Chinese Requirement | English Equivalent | 页码 / Pages |`
+## 03 Definitions / 定义
+标准中定义的所有术语，逐条列出：
+- **术语 / Term**: X
+- **定义 / Definition**: ...
+- **来源 / Source**: Clause X.X
 
-## Project_R 业务使用建议 / Project_R Business Use
-说明销售、项目、技术、采购或质量人员何时应该查这份资料。每条必须中英对齐。
+## 04 Terms Library / 术语库
+所有专业术语单独整理，每条独立：
+- **术语 / Term**: X
+- **符号 / Symbol**: X（如有）
+- **定义 / Definition**: ...
+- **来源 / Source**: Clause X.X
 
-## 风险与适用边界 / Risks and Applicability Boundaries
-说明误用风险、过期风险、需要专业确认的部分。每条必须中英对齐。
+## 05 Symbols Library / 符号库
+所有符号单独整理：
+- **符号 / Symbol**: X
+- **含义 / Meaning**: ...
+- **单位 / Unit**: X
+- **来源 / Source**: Clause X.X
+
+## 06 Requirements Library / 要求库
+所有技术要求、限值、阈值逐条整理：
+- **参数 / Parameter**: X
+- **要求 / Requirement**: 具体数值或条件
+- **单位 / Unit**: X
+- **适用条件 / Applicability**: ...
+- **来源 / Source**: Clause X.X
+
+## 07 Formula Library / 公式库
+所有公式独立存储，每个公式一个条目：
+- **公式名 / Formula Name**: X
+- **表达式 / Expression**: $...$
+- **参数定义 / Parameters**: 逐个列出符号、含义、单位
+- **来源 / Source**: Clause X.X
+
+## 08 Parameter Library / 参数库
+所有参数、限值、阈值统一整理为表格：
+| 参数 / Parameter | 要求 / Requirement | 单位 / Unit | 适用条件 / Applicability | 来源 / Source |
+
+## 09 Table Library / 表格库
+所有标准表格单独整理，不嵌入正文：
+- **表格编号 / Table Number**: X
+- **表格名 / Table Name**: X
+- **表格内容 / Content**: 完整保留行列数值
+- **来源 / Source**: Clause X.X (p. X)
+
+## 10 Verification Methods / 验证方法
+所有验算方法、测试方法逐条整理：
+- **验证项 / Verification Item**: X
+- **方法 / Method**: 具体验证手段
+- **判定规则 / Pass/Fail Rule**: ...
+- **来源 / Source**: Clause X.X
+
+## 11 Source Mapping / 来源映射
+列出本知识库覆盖的所有条款及其对应分区：
+| 条款号 / Clause | 条款名 / Title | 对应分区 / Section | 页码 / Page |
 
 ## 待审核问题 / Review Questions
-列出无法确认、疑似表格错位、图示依赖、需要人工复核的点。每条必须中英对齐。
+列出所有不确定、OCR/版式风险、缺少视觉证据的内容。
 
-不要输出 YAML frontmatter。不要输出代码块。不要逐段复刻原文。
-如果某个信息无法可靠翻译成另一种语言，不要单语输出；请把它放进“待审核问题 / Review Questions”。
+不要输出 YAML frontmatter。不要输出代码块。不要以大段原文替代结构化知识库。
 
 <batch_summaries>
 {joined_summaries}
@@ -647,13 +1025,28 @@ def _normalize_final_markdown(markdown: str, title: str) -> str:
 
 
 def _assert_bilingual_markdown(markdown: str) -> None:
-    has_cjk = re.search(r"[\u4e00-\u9fff]", markdown) is not None
-    english_markers = len(re.findall(r"\bEnglish\b|English Equivalent|Review Status|Key Conclusions", markdown))
-    chinese_markers = len(re.findall(r"中文|中英|审核状态|核心结论", markdown))
-    if not has_cjk or english_markers < 3 or chinese_markers < 3:
+    has_cjk = re.search(r"[一-鿿]", markdown) is not None
+    # New A版: check for 11-section knowledge base structure markers
+    english_markers = len(
+        re.findall(
+            r"Referenced Standards|Definitions|Terms Library|"
+            r"Symbols Library|Requirements Library|Formula Library|"
+            r"Parameter Library|Table Library|Verification Methods|"
+            r"Source Mapping|Scope|Review Questions",
+            markdown,
+        )
+    )
+    chinese_markers = len(
+        re.findall(
+            r"适用范围|引用标准|定义|术语库|"
+            r"符号库|要求库|公式库|"
+            r"参数库|表格库|验证方法|"
+            r"来源映射|待审核",
+            markdown,
+        )
+    )
+    if not has_cjk or english_markers < 1 or chinese_markers < 3:
         raise ValueError("PDF structured extraction did not satisfy bilingual zh/en alignment policy")
-
-
 def _merge_usage(total: dict[str, int], usage: dict[str, int]) -> None:
     total["input_tokens"] = int(total.get("input_tokens", 0)) + int(usage.get("input_tokens", 0))
     total["output_tokens"] = int(total.get("output_tokens", 0)) + int(usage.get("output_tokens", 0))

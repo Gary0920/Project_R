@@ -279,6 +279,7 @@ class GBrainProjectIngestTests(unittest.TestCase):
                     model_profile="test-profile",
                     provider="test-provider",
                     model="test-model",
+                    pdf_subkind="drawing_general_arrangement",
                 )
 
             manifest = compile_project_workspace_sources(
@@ -295,15 +296,63 @@ class GBrainProjectIngestTests(unittest.TestCase):
             self.assertEqual(frontmatter["content_kind"], "project_pdf_structured_extract")
             self.assertEqual(frontmatter["preprocess_skill"], "drawing-pdf-vision-preprocess")
             self.assertEqual(frontmatter["source_file_type"], "pdf")
-            self.assertEqual(frontmatter["prompt_version"], "rules-pdf-structured-v1")
+            self.assertEqual(frontmatter["prompt_version"], "rules-standard-pdf-structured-v3")
             self.assertEqual(frontmatter["preprocess_status"], "succeeded")
-            self.assertEqual(frontmatter["review_status"], "approved")
-            self.assertEqual(frontmatter["source_scope_review_policy"], "project_no_admin_review")
+            self.assertEqual(frontmatter["review_status"], "pending_review")
+            self.assertEqual(frontmatter["source_scope_review_policy"], "project_markdown_pending_review")
             self.assertEqual(frontmatter["extractor_review_status"], "pending_review")
             self.assertEqual(frontmatter["language_policy"], "bilingual_zh_en_aligned")
             self.assertIn("The frame colour is black", body)
             self.assertEqual(manifest["items"][0]["target_file"], "technical/Drawing.md")
-            self.assertEqual(manifest["items"][0]["review_status"], "approved")
+            self.assertEqual(manifest["items"][0]["review_status"], "pending_review")
+
+    def test_project_standard_pdf_uses_standard_preprocess_skill(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "project" / "BFI" / "BG007"
+            pdf = root / "AS 2047.pdf"
+            pdf.parent.mkdir(parents=True)
+            pdf.write_bytes(b"%PDF-1.4\nnot a real pdf")
+
+            def fake_pdf_extractor(path: Path) -> PDFStructuredExtractionResult:
+                self.assertEqual(path, pdf)
+                return PDFStructuredExtractionResult(
+                    markdown=(
+                        "# AS 2047\n\n"
+                        "## 审核状态 / Review Status\n\n"
+                        "- 中文：待审核。\n"
+                        "  English: Pending review.\n\n"
+                        "## 参数与评级规则 / Parameters and Rating Rules\n\n"
+                        "### 窗户能效评级 / Window Energy Rating\n\n"
+                        "- 中文：U-value、SHGC 和 Tvis 需要作为评级参数解释。\n"
+                        "  English: U-value, SHGC, and Tvis must be explained as rating parameters.\n\n"
+                        "## 项目执行重点影响 / Project Execution Impact\n\n"
+                        "| 检查项 / Check Item | 判定规则 / Decision Rule |\n"
+                        "| --- | --- |\n"
+                        "| 水密测试 | 不低于 150 Pa |\n"
+                    ),
+                    page_count=1,
+                    pages_analyzed=1,
+                    model_profile="test-profile",
+                    provider="test-provider",
+                    model="test-model",
+                    pdf_subkind="general_pdf",
+                )
+
+            manifest = compile_project_workspace_sources(
+                self._workspace(root),
+                self._settings(),
+                pdf_extractor=fake_pdf_extractor,
+                enable_pdf_structured_extraction=True,
+            )
+
+            target = self._project_ready() / "documents" / "AS 2047.md"
+            self.assertEqual(manifest["summary"]["compiled"], 1)
+            self.assertTrue(target.exists())
+            frontmatter, body = self._read_frontmatter(target)
+            self.assertEqual(frontmatter["preprocess_skill"], "standard-pdf-preprocess")
+            self.assertEqual(frontmatter["review_status"], "pending_review")
+            self.assertEqual(frontmatter["source_scope_review_policy"], "project_markdown_pending_review")
+            self.assertIn("Window Energy Rating", body)
 
     def test_project_selectable_pdf_is_pending_until_structured_extraction_is_enabled(self):
         with tempfile.TemporaryDirectory() as temp_dir:
