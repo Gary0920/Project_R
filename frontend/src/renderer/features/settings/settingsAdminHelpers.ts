@@ -1,4 +1,5 @@
-import type { AdminUserResponse, GBrainToolResponse } from "../../shared/api/types";
+import { parseApiDate } from "../../shared/utils/time";
+import type { AdminTemplateStatusResponse, AdminUserResponse, AuditLogResponse, GBrainToolResponse } from "../../shared/api/types";
 
 export type AdminUserRole = "admin" | "employee";
 
@@ -60,6 +61,48 @@ export function generateTemporaryPassword() {
   }
   const body = Array.from(bytes, (value) => chars[value % chars.length]).join("");
   return `Pr${body}!9`;
+}
+
+export function paginate<T>(items: T[], page: number, pageSize: number): T[] {
+  const start = (page - 1) * pageSize;
+  return items.slice(start, start + pageSize);
+}
+
+export function filterUsers(users: AdminUserResponse[], search: string): AdminUserResponse[] {
+  if (!search.trim()) return users;
+  const s = search.toLowerCase();
+  return users.filter((user) => user.username.toLowerCase().includes(s) || (user.nickname ?? "").toLowerCase().includes(s));
+}
+
+export function sortUsers(users: AdminUserResponse[], sort: { field: "username" | "created_at"; dir: "asc" | "desc" }): AdminUserResponse[] {
+  return [...users].sort((a, b) => {
+    if (a.is_active !== b.is_active) {
+      return a.is_active ? -1 : 1;
+    }
+    let cmp = 0;
+    if (sort.field === "username") {
+      cmp = a.username.localeCompare(b.username);
+    } else if (sort.field === "created_at") {
+      cmp = parseApiDate(a.created_at).getTime() - parseApiDate(b.created_at).getTime();
+    }
+    return sort.dir === "asc" ? cmp : -cmp;
+  });
+}
+
+export function filterTemplates(templates: AdminTemplateStatusResponse["items"], search: string): AdminTemplateStatusResponse["items"] {
+  if (!search.trim()) return templates;
+  const s = search.toLowerCase();
+  return templates.filter((template) => template.display_name.toLowerCase().includes(s) || template.skill_name.toLowerCase().includes(s));
+}
+
+export function filterAuditLogs(logs: AuditLogResponse[], search: string, actionType: string): AuditLogResponse[] {
+  let result = logs;
+  if (actionType) {
+    result = result.filter((log) => log.action === actionType);
+  }
+  if (!search.trim()) return result;
+  const s = search.toLowerCase();
+  return result.filter((log) => log.action.toLowerCase().includes(s) || (log.detail ?? "").toLowerCase().includes(s));
 }
 
 export function statusLabel(value?: string | null) {

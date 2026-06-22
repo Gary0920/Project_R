@@ -21,6 +21,7 @@ from app.features.knowledge.gbrain import (
 )
 from app.features.knowledge.evidence import enrich_sources_with_evidence
 from app.features.knowledge.gbrain.ingest import _split_frontmatter, approve_pending_review_markdown
+from app.features.knowledge.query_orchestration import execute_think_plan, think_unavailable_message
 from models.workspace import Workspace, WorkspaceFile
 
 logger = logging.getLogger(__name__)
@@ -198,65 +199,11 @@ class KnowledgeSources:
     def think(self, db: Session, content: str, *, workspace_id: int | None = None) -> dict:
         settings = load_gbrain_settings()
         workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first() if workspace_id is not None else None
-        workspace_kind = str(workspace.workspace_kind or "project") if workspace else ""
-
-        if workspace and workspace_kind == "project":
-            try:
-                project_source_id = project_source_id_for_workspace(workspace)
-            except ValueError:
-                project_source_id = ""
-            if not project_source_id:
-                # 未注册项目 source 时退回仅公司知识库，行为与历史一致
-                return self._single_think_response(
-                    self._think_for_source(
-                        content,
-                        source_id=settings.company_source_id,
-                        settings=settings,
-                        workspace=workspace,
-                        apply_project_ranking=False,
-                    )
-                )
-            # 项目工作区 /query 叠加 company-wiki + 当前 project source
-            project_partial = self._think_for_source(
-                content,
-                source_id=project_source_id,
-                settings=settings,
-                workspace=workspace,
-                apply_project_ranking=True,
-            )
-            company_partial = self._think_for_source(
-                content,
-                source_id=settings.company_source_id,
-                settings=settings,
-                workspace=workspace,
-                apply_project_ranking=False,
-            )
-            return self._merge_project_think(project_partial, company_partial)
-
-        if workspace and workspace_kind == "customer":
-            try:
-                customer_source_id = customer_source_id_for_workspace(workspace)
-            except ValueError:
-                customer_source_id = ""
-            return self._single_think_response(
-                self._think_for_source(
-                    content,
-                    source_id=customer_source_id,
-                    settings=settings,
-                    workspace=workspace,
-                    apply_project_ranking=False,
-                )
-            )
-
-        # 个人工作台 / 默认：仅 company-wiki
-        return self._single_think_response(
-            self._think_for_source(
-                content,
-                source_id=settings.company_source_id,
-                settings=settings,
-                workspace=workspace,
-                apply_project_ranking=False,
-            )
+        return execute_think_plan(
+            content,
+            workspace=workspace,
+            settings=settings,
+            think_for_source=self._think_for_source,
         )
 
     def _think_for_source(
@@ -294,7 +241,7 @@ class KnowledgeSources:
                 "sources": self._think_diagnostic_sources(response, source_id),
                 "model": "",
                 "metadata": {},
-                "error_reply": self._think_unavailable_message(response),
+                "error_reply": think_unavailable_message(response),
                 "error": response.get("error"),
             }
 
@@ -309,7 +256,7 @@ class KnowledgeSources:
                 "sources": self._think_diagnostic_sources(diagnostic, source_id),
                 "model": "",
                 "metadata": {},
-                "error_reply": self._think_unavailable_message(diagnostic),
+                "error_reply": think_unavailable_message(diagnostic),
                 "error": result.get("error") if isinstance(result, dict) else "invalid GBrain think response",
             }
 
@@ -359,118 +306,6 @@ class KnowledgeSources:
             "error_reply": "",
             "error": None,
         }
-
-    def _single_think_response(self, partial: dict) -> dict:
-        if not partial.get("ok"):
-            return {
-                "ok": False,
-                "status": partial.get("status") or "error",
-                "source_id": partial.get("source_id"),
-                "reply": partial.get("error_reply") or self._think_unavailable_message(None),
-                "sources": partial.get("sources") or [],
-                "error": partial.get("error"),
-            }
-        answer = partial.get("raw_answer") or ""
-        sources = partial.get("sources") or []
-        return {
-            "ok": True,
-            "status": "ok",
-            "source_id": partial.get("source_id"),
-            "reply": self._append_think_source_summary(answer or "GBrain think 未返回可用回答。", sources),
-            "sources": sources,
-            "model": partial.get("model") or "think",
-            "metadata": partial.get("metadata") or {},
-        }
-
-    def _merge_project_think(self, project_partial: dict, company_partial: dict) -> dict:
-        # company-wiki 仅在两路都成功时叠加；任一不可用则按项目单 source 行为返回，避免回归
-        if not project_partial.get("ok") or not company_partial.get("ok"):
-            return self._single_think_response(project_partial)
-
-        merged_sources = self._dedupe_think_sources(
-            list(project_partial.get("sources") or []) + list(company_partial.get("sources") or [])
-        )
-        answer = self._combine_project_company_answer(
-            project_partial.get("raw_answer") or "",
-            company_partial.get("raw_answer") or "",
-        )
-        metadata = self._merge_think_metadata(
-            project_partial.get("metadata") or {},
-            company_partial.get("metadata") or {},
-        )
-        return {
-            "ok": True,
-            "status": "ok",
-            "source_id": project_partial.get("source_id"),
-            "source_ids": [project_partial.get("source_id"), company_partial.get("source_id")],
-            "reply": self._append_think_source_summary(answer or "GBrain think 未返回可用回答。", merged_sources),
-            "sources": merged_sources,
-            "model": project_partial.get("model") or "think",
-            "metadata": metadata,
-        }
-
-    @staticmethod
-    def _append_think_source_summary(answer: str, sources: list[dict]) -> str:
-        source_lines: list[str] = []
-        diagnostic_lines: list[str] = []
-        for source in sources:
-            source_type = str(source.get("type") or "")
-            if source_type == "gbrain_think_citation":
-                source_index = len(source_lines) + 1
-                file_value = str(source.get("file") or "").strip()
-                section = str(source.get("section_path") or "").strip()
-                line = f"- 来源 {source_index}: {file_value or section or 'GBrain citation'}"
-                if section and section != file_value:
-                    line += f" ({section})"
-                source_lines.append(line)
-                continue
-            if source_type in {"gbrain_think_gap", "gbrain_think_conflict", "gbrain_think_warning"}:
-                title = str(source.get("source_title") or "").strip()
-                content = str(source.get("content") or "").strip()
-                if title or content:
-                    diagnostic_lines.append(f"- {title or source_type}: {content}".rstrip())
-
-        if not source_lines and not diagnostic_lines:
-            return answer
-        sections = [answer.rstrip()]
-        if source_lines:
-            sections.append("引用来源\n" + "\n".join(source_lines))
-        if diagnostic_lines:
-            sections.append("GBrain 诊断\n" + "\n".join(diagnostic_lines))
-        return "\n\n".join(sections)
-
-    @staticmethod
-    def _combine_project_company_answer(project_answer: str, company_answer: str) -> str:
-        parts: list[str] = []
-        if project_answer.strip():
-            parts.append(project_answer.rstrip())
-        if company_answer.strip():
-            parts.append("【公司知识库补充】\n" + company_answer.rstrip())
-        return "\n\n".join(parts)
-
-    @staticmethod
-    def _dedupe_think_sources(sources: list[dict]) -> list[dict]:
-        seen: set[tuple[str, str]] = set()
-        unique: list[dict] = []
-        for source in sources:
-            key = (str(source.get("file") or ""), str(source.get("section_path") or ""))
-            if key in seen:
-                continue
-            seen.add(key)
-            unique.append(source)
-        return unique
-
-    @staticmethod
-    def _merge_think_metadata(primary: dict, secondary: dict) -> dict[str, Any]:
-        merged: dict[str, Any] = {
-            "gaps": list(primary.get("gaps") or []) + list(secondary.get("gaps") or []),
-            "conflicts": list(primary.get("conflicts") or []) + list(secondary.get("conflicts") or []),
-            "warnings": list(primary.get("warnings") or []) + list(secondary.get("warnings") or []),
-            "diagnostics": primary.get("diagnostics") or secondary.get("diagnostics") or {},
-        }
-        if primary.get("project_query_intent"):
-            merged["project_query_intent"] = primary["project_query_intent"]
-        return merged
 
     def search_workspace_sources(self, db: Session, workspace_id: int | None, content: str) -> list[dict]:
         if workspace_id is None:
@@ -953,20 +788,6 @@ class KnowledgeSources:
                 "score": 0.0,
             }
         ]
-
-    @staticmethod
-    def _think_unavailable_message(response: dict | None) -> str:
-        status = response.get("status") if isinstance(response, dict) else None
-        error = response.get("error") if isinstance(response, dict) else None
-        if status == "disabled":
-            return "GBrain think 尚未启用。当前仍可使用普通 `/query` 检索知识库。"
-        if status == "source_scope_unverified":
-            return "GBrain think 暂未开放，因为当前需要先确认 source scope 不会跨项目串库。"
-        if status == "oauth_required":
-            return "GBrain think 需要配置 source-scoped OAuth client 后才能使用。"
-        if error:
-            return f"GBrain think 暂不可用：{error}"
-        return "GBrain think 暂不可用，请管理员检查知识库服务配置。"
 
     def _adjust_company_score(self, query: str, source: dict) -> float:
         score = self._score(source.get("score"))

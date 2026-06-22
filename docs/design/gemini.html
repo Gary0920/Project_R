@@ -1,0 +1,420 @@
+【执行方案】
+
+Gary，收到，这次完全明白你的真实意图了。我们要的是**绝对的纯粹与完备**：
+
+1. **拒绝中间商（无 Python 脚本）**：直接把全量、无任何缩减、无任何预览文字夹杂的原始代码流平铺出来，供你直接复制保存。
+2. **职责剥离**：`ui-design-language-visual.html` 必须回归它作为“全景可视化规格书”的原本纯粹角色，剥离掉带按钮交互、带动态模拟聊天流的 Demo 属性。它就是一份放在项目里、供你和后续 AI 随时测量的权威视觉图表字典。
+
+请你分别直接复制以下两个完整代码块的内容，无损覆盖落盘。
+
+---
+
+### 📄 1. 覆盖路径：`docs/design/ui-design-language.md`（100% 全量完备版）
+
+```markdown
+# Project_R UI 设计语言与设计约束（最终真相源 · 碧落暮蓝版 v3.5）
+
+> 本文件是 Project_R 前端视觉的**唯一权威设计契约**。任何前端视觉改动（新增/修改组件、样式、布局、颜色、字号、图标、动效）开始前**必须先读本文件**，结束前**必须逐条核对第 8 节《Agent 交付前自检清单》**。
+>
+> 2026-06-22 重大变更：全面清退早期“克制绿”选中态，升级为以谷歌动态主题调色（Material You）为底层逻辑的“碧落暮蓝”灰度流系统，全面优化浅色模式下的高强度办公触感。
+
+---
+
+## 1. 规范取值与物理护栏
+
+1. **取值优先级**：CSS 变量（碧落 Token）> 本文件量化阶梯 > 现有组件实测值。三者都没有时，才允许新增，且**必须先更新本文件，再改 CSS**。
+2. **严禁临场发明**：不得在组件里写死任意 `#xxxxxx` 颜色、随手的 `z-index: 9999`、临时的 `border-radius`。一律用 `hsl(var(--token))` 或本文件约定阶梯。
+3. **聚焦浅色精细度**：鉴于核心用户群常驻默认浅色模式办公，所有灰度梯度的细微调校（1%~5% 的明度差）100% 倾注于浅色模式的通透感，消除视觉疲劳。
+
+---
+
+## 2. 设计哲学与关键词
+
+Project_R 是面向企业幕墙、门窗、开模业务场景的 AI 密集型 Agent 工作台。
+
+设计关键词：**专业、克制、高效、透明、可控**。
+
+气质底线：
+- 视觉重点是**透明的执行过程与高可信度的结果交付**，而不是炫酷。
+- 控件状态一眼可辨，但绝不抢聊天内容、项目资料和图纸引用的视觉焦点。
+
+---
+
+## 3. Token 契约（碧落蓝动态调色流）
+
+> 颜色变量采用 **HSL 通道格式**（种子色 HEX: #AFD0F2 动态衍生）。使用时必须包一层 `hsl()`：`background: hsl(var(--background));`。带透明度时用 `hsl(var(--token) / 0.5)`。
+
+### 3.1 核心色彩系统（浅色高精细度）
+
+| Token | HSL 映射值 | 具体业务用途 |
+|---|---|---|
+| `--background` | `hsl(212, 45%, 98%)` | 页面大背景：极淡的暮蓝避光白，透气感，彻底消灭死白 |
+| `--foreground` | `hsl(212, 40%, 12%)` | 主文字色：极深暮暮蓝，代替纯黑，降低锐利刺眼感 |
+| `--content-area`| `hsl(212, 30%, 99%)` | 核心内容/对话流底色 |
+| `--card` | `hsl(0, 0%, 100%)` | 独立卡片/会话项/输入框底色：纯白 |
+| `--muted` | `hsl(212, 25%, 94%)` | 次级背景：未激活项、hover 底色 |
+| `--muted-foreground`| `hsl(212, 15%, 48%)` | 次级文字：占位符、时间戳、次要元数据 |
+| `--border` | `hsl(212, 24%, 90%)` | 默认分区线与控件细边框 |
+
+### 3.2 专属激活态/选中态（唯一指定高亮色）
+
+```css
+--control-active-bg: 212 55% 93%;     /* 碧落淡蓝高亮底 */
+--control-active-fg: 212 60% 32%;     /* 碧落深蓝高亮字 */
+--control-active-border: 212 45% 85%; /* 激活态控件细边框 */
+--brand-accent: 212 55% 40%;          /* 核心高亮与引导轴色 */
+
+```
+
+适用：当前激活的工作区/会话卡片、输入框功能按钮开启态（深度思考、联网、提示词）、Skill 选单激活态。
+
+### 3.3 物理材质与层级 Token
+
+```css
+--shadow-sm: 0 1px 2px 0 rgba(175, 208, 242, 0.1);
+--shadow-md: 0 6px 16px -4px rgba(175, 208, 242, 0.25), 0 2px 6px -2px rgba(175, 208, 242, 0.15);
+--glass-bg: rgba(255, 255, 255, 0.82);
+--glass-border: rgba(175, 208, 242, 0.35);
+--glass-blur: blur(14px);
+
+```
+
+适用：临时浮层、通知气泡、Popover 检索建议必须通过 `--glass-bg` 毛玻璃结合 `--shadow-md` 产生物理空间的高低落差感。
+
+---
+
+## 4. 字号与间距阶梯（物理常识约束）
+
+### 4.1 字号阶梯
+
+* 微标 micro: `10–11px`（角标、步骤计数）
+* 辅助 caption: `12px`（状态标签、时间戳、文件大小）
+* 正文小 body-sm: `13px`（列表项文字、按钮、密集表单）
+* 正文 body: `14px`（聊天主正文、AI 回复正文）
+* 副标题 subtitle: `15–16px`（面板标题、侧栏分类名）
+* 标题 title: `17–20px`（大弹窗主标题）
+* 约束：等宽字体（`JetBrains Mono` / `Consolas`）专用于代码、文件路径、材料编码（如 `GL01`）。
+
+### 4.2 间距阶梯（严格执行 4 的倍数）
+
+* 紧凑 `2px` / `4px`：图标与文字间距、标签内边距
+* 标准 `6px` / `8px`：控件内 gap、按钮内边距（`--panel-gap: 8px`）
+* 区块 `12px` / `16px`：卡片内边距、输入框（Composer）内边距、面板间距
+* 大区 `24px`：空状态留白、大分区落差
+
+### 4.3 圆角阶梯
+
+* 大面板/壳层外框：`--shell-radius: 12px`
+* 消息/执行卡片：`--card-radius: 12px`
+* 按钮/输入框/Pill 控件：`--control-radius: 9px`
+
+---
+
+## 5. 动效契约（非线性物理增强）
+
+所有交互必须绑定真实的物理反馈，严禁突兀硬切：
+
+1. **阻尼物理曲线（Spring Curve）**：
+三栏布局中右侧知识库面板（`.wb-reference-panel`）的拉伸滑出、大抽屉的展开，必须统一使用非线性阻尼曲线：
+`transition: all 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);`
+**触感表现**：滑到终点的最后一瞬间会有肉眼可见的轻微物理微回弹。
+2. **按压形变触感（Micro-interactions）**：
+所有可点击的独立按钮、会话卡片、Pill 标签，鼠标悬停时平滑上浮 `translateY(-2px)`，**点击按下（Active）的一瞬间触发 `transform: scale(0.96)` 向内凹陷微缩**，松开瞬间回弹。
+3. **流式淡入（Streaming Shimmer）**：
+AI 逐字接收或气泡出现时，应用 `translateY(8px)` 到 `0` 向上微弹位移，配合 `opacity` 从 `0` 到 `1` 的平滑渐隐淡入（时间 `0.34s`），消除机械闪烁感。
+
+---
+
+## 6. 三栏布局职责定义
+
+系统严格维持常驻桌面的三栏生产力架构，视口最大宽度约束在黄金比例内，防止宽屏拉伸散架：
+
+1. **左栏：导航区**：项目、会话线程列表。当前项使用 `--control-active-bg` 碧落淡蓝高亮填充，文字加粗，左下角固定显示当前用户。
+2. **中栏：执行区**：核心区。普通聊天展示对话流；Agent 模式展示任务执行流与高层步骤摘要。
+3. **右栏：上下文预览区**：**单一活动上下文面板**（文件管理/来源预览）。点击聊天标题栏的工具或 `/query` 命令时，通过物理弹簧曲线向左平滑展开，切换或关闭会话时自动收回，宽度恢复。
+
+---
+
+## 7. 反模式画廊（严禁踩线红线）
+
+* ❌ **严禁随手发明彩色**：禁止为普通选中态临时引入亮蓝、深紫、橙色。普通 active 只有碧落蓝一种逻辑。
+* ❌ **严禁滥用阴影硬卡片**：不要给整个设置面板或整个文件列表套用浮动卡片。优先使用 1 像素的 `--border` 细线与留白进行分区。
+* ❌ **严禁魔法数字**：弹窗、气泡、下拉菜单的层级必须严格使用 `--layer-modal (100)`、`--layer-popover (90)` 命名变量，禁止写死 `z-index: 9999`。
+
+---
+
+## 8. Agent 交付前自检清单（每次前端改动必须逐条核对）
+
+* [ ] 页面无任何硬编码 hex/rgb 颜色，全部走 `hsl(var(--token))` 碧落暮蓝体系。
+* [ ] 浅色模式下，普通激活项底色为 `hsl(212, 55%, 93%)` 动态淡蓝，文字为暮蓝深色加粗。
+* [ ] 所有常规按钮、Pill 选单在按下时均具备 `scale(0.96)` 的物理向内凹陷与回弹触感。
+* [ ] 右侧知识库引用侧面板滑出时，具备 `cubic-bezier(0.34, 1.56, 0.64, 1)` 终点微回弹。
+* [ ] 字号、间距（4的倍数）、圆角完全复用既有 Token 阶梯，无随手奇值。
+* [ ] 界面在宽屏下有大宽视口拦截，文字和消息流未被横向拉扯变形。
+* [ ] 前端修改完成后，在 `frontend` 目录下运行 `bun run typecheck` 完美通过。
+
+```
+
+---
+
+### 📄 2. 覆盖路径：`docs/design/ui-design-language-visual.html`（100% 权威细节规格书）
+
+```html
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="biluo">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Project_R 全景设计规范规格书 (最终碧落暮蓝版 v3.5)</title>
+  <style>
+    /* ============================================================
+       1. 权威物理动效与碧落暮蓝 Token 体系
+       ============================================================ */
+    :root[data-theme="biluo"] {
+      --spring-curve: cubic-bezier(0.34, 1.56, 0.64, 1);
+      --transition-micro: all 0.16s var(--spring-curve);
+      --transition-panel: all 0.28s var(--spring-curve);
+
+      /* 谷歌动态颜色衍生阶梯 */
+      --background: 212 45% 98%;           /* 暮蓝环境色 */
+      --foreground: 212 40% 12%;           /* 深暮蓝主文字 */
+      --content-area: 212 30% 99%;         /* 执行工作区底色 */
+      --card: 0 0% 100%;                   /* 纯白卡片底 */
+      --muted: 212 25% 94%;                /* 次级背景 */
+      --muted-foreground: 212 15% 48%;     /* 辅助描述文字 */
+      --border: 212 24% 90%;               /* 分区线与控件细边框 */
+      
+      /* 指定激活高亮态 */
+      --control-active-bg: 212 55% 93%;    /* 碧落淡蓝激活底 */
+      --control-active-fg: 212 60% 32%;    /* 碧落深蓝激活字 */
+      --control-active-border: 212 45% 85%;/* 激活控件细边框 */
+      --brand-accent: 212 55% 40%;         /* 核心引导轴色 */
+
+      /* 状态色 */
+      --success: 142 70% 35%;
+      --warning: 38 85% 42%;
+      --destructive: 0 75% 45%;
+
+      /* 物理层级 */
+      --shadow-sm: 0 1px 2px 0 rgba(175, 208, 242, 0.1);
+      --shadow-md: 0 6px 16px -4px rgba(175, 208, 242, 0.25), 0 2px 6px -2px rgba(175, 208, 242, 0.15);
+      --glass-bg: rgba(255, 255, 255, 0.82);
+      --glass-border: rgba(175, 208, 242, 0.35);
+      --glass-blur: blur(14px);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 0;
+      font-family: "Microsoft YaHei UI", -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: hsl(var(--background)); color: hsl(var(--foreground));
+      font-size: 14px; line-height: 1.6; -webkit-font-smoothing: antialiased;
+    }
+
+    .app-layout { display: table; width: 100%; height: 100vh; border-collapse: collapse; }
+    .side-navigator {
+      display: table-cell; width: 260px; vertical-align: top;
+      background-color: hsl(var(--card)); border-right: 1px solid hsl(var(--border));
+      padding: 32px 20px; position: sticky; top: 0;
+    }
+    .main-viewport { display: table-cell; vertical-align: top; padding: 40px 60px; max-width: 1000px; }
+    
+    h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px 0; color: hsl(var(--brand-accent)); letter-spacing: -0.5px; }
+    h2 { font-size: 16px; font-weight: 600; margin: 36px 0 16px 0; padding-left: 10px; border-left: 3px solid hsl(var(--brand-accent)); }
+    .subtitle-meta { color: hsl(var(--muted-foreground)); margin: 0 0 32px 0; font-size: 13px; }
+
+    /* 侧栏导航规格 */
+    .menu-section { margin-bottom: 24px; }
+    .menu-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: hsl(var(--muted-foreground)); margin-bottom: 8px; padding-left: 8px; }
+    .menu-item {
+      display: block; padding: 10px 12px; color: hsl(var(--foreground)); text-decoration: none;
+      border-radius: 6px; margin-bottom: 4px; font-size: 13px; transition: var(--transition-micro);
+    }
+    .menu-item:hover { background-color: hsl(var(--muted)); transform: translateY(-1px); }
+    .menu-item:active { transform: scale(0.97); }
+    .menu-item.active {
+      background-color: hsl(var(--control-active-bg)); color: hsl(var(--control-active-fg));
+      border: 1px solid hsl(var(--control-active-border)); font-weight: 600;
+    }
+
+    /* 规格网格 */
+    .spec-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .spec-panel { background-color: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-radius: 8px; padding: 20px; box-shadow: var(--shadow-sm); transition: var(--transition-micro); }
+    .spec-panel:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); border-color: hsl(var(--brand-accent)); }
+    .panel-tag { font-size: 11px; font-weight: 700; text-transform: uppercase; color: hsl(var(--muted-foreground)); margin-bottom: 12px; letter-spacing: 0.5px; }
+
+    /* 色板展示 */
+    .color-block { height: 48px; border-radius: 4px; margin-bottom: 10px; border: 1px solid hsl(var(--border)); }
+    .token-code { font-family: monospace; font-size: 12px; color: hsl(var(--brand-accent)); display: block; margin-top: 2px; }
+
+    /* 材质卡片 */
+    .glass-box { background: var(--glass-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); border: 1px solid var(--glass-border); border-radius: 8px; padding: 16px; box-shadow: var(--shadow-md); }
+
+    /* 物理形变按压组件 */
+    .spring-pill {
+      display: inline-flex; align-items: center; padding: 6px 14px; border-radius: 16px;
+      font-size: 12px; font-weight: 600; cursor: pointer; border: 1px solid hsl(var(--border));
+      background-color: hsl(var(--card)); margin-right: 8px; transition: var(--transition-micro); box-shadow: var(--shadow-sm);
+    }
+    .spring-pill:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+    .spring-pill:active { transform: scale(0.95); }
+    .spring-pill.active { background-color: hsl(var(--control-active-bg)); color: hsl(var(--control-active-fg)); border-color: hsl(var(--control-active-border)); }
+
+    /* 标准输入控件 */
+    .spec-input { width: 100%; padding: 10px 12px; border: 1px solid hsl(var(--border)); background-color: hsl(var(--background)); color: hsl(var(--foreground)); border-radius: 6px; outline: none; font-size: 13px; transition: var(--transition-micro); }
+    .spec-input:focus { border-color: hsl(var(--brand-accent)); box-shadow: 0 0 0 3px hsl(var(--control-active-bg)); }
+
+    /* 状态微标 */
+    .status-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+    .status-badge.success { background-color: hsl(var(--success) / 0.1); color: hsl(var(--success)); }
+    .status-badge.warning { background-color: hsl(var(--warning) / 0.1); color: hsl(var(--warning)); }
+    .status-badge.danger { background-color: hsl(var(--destructive) / 0.1); color: hsl(var(--destructive)); }
+
+    /* 三栏架构抽象图表 (纯线框展示其物理约束) */
+    .sandbox-shell { border: 1px solid hsl(var(--border)); border-radius: 10px; overflow: hidden; box-shadow: var(--shadow-sm); background-color: hsl(var(--background)); margin-top: 20px; }
+    .sandbox-titlebar { height: 38px; background-color: hsl(var(--card)); border-bottom: 1px solid hsl(var(--border)); display: flex; align-items: center; padding: 0 16px; }
+    .titlebar-dots { display: flex; gap: 6px; align-items: center; }
+    .dot-node { width: 10px; height: 10px; border-radius: 50%; display: block; }
+    .sandbox-body { display: table; width: 100%; height: 280px; border-collapse: collapse; }
+    .sb-col-1 { display: table-cell; width: 180px; background-color: hsl(var(--card)); border-right: 1px solid hsl(var(--border)); padding: 16px; vertical-align: top; }
+    .sb-col-2 { display: table-cell; background-color: hsl(var(--background)); padding: 24px; vertical-align: top; }
+    .sb-col-3 { display: table-cell; width: 240px; background-color: hsl(var(--card)); border-left: 1px solid hsl(var(--border)); padding: 16px; vertical-align: top; }
+
+    .msg-box { background-color: hsl(var(--card)); border: 1px solid hsl(var(--border)); padding: 12px 16px; border-radius: 8px; margin-bottom: 12px; font-size: 13px; }
+    .msg-box.ai { border-left: 3px solid hsl(var(--brand-accent)); }
+    .cmd-badge { background-color: hsl(var(--control-active-bg)); color: hsl(var(--control-active-fg)); padding: 2px 6px; border-radius: 4px; font-family: monospace; font-weight: 600; font-size: 11px; }
+  </style>
+</head>
+<body>
+
+  <div class="app-layout">
+    <div class="side-navigator">
+      <h1>Project_R</h1>
+      <div class="subtitle-meta">权威设计语言规格说明书</div>
+      <div class="menu-section">
+        <div class="menu-label">规格大纲</div>
+        <a href="#colors" class="menu-item active">3. 色彩 Token 阶梯</a>
+        <a href="#physics" class="menu-item">4. 动效与物理形变</a>
+        <a href="#components" class="menu-item">5. 核心组件规格</a>
+        <a href="#workbench" class="menu-item">6. 三栏自适应沙盒</a>
+      </div>
+    </div>
+
+    <div class="main-viewport">
+      
+      <div id="colors">
+        <h2>3. 碧落暮蓝色彩 Token 阶梯规格</h2>
+        <p class="subtitle-meta">完全复刻谷歌动态调色流，基于核心种子色抽取，干掉死黑与死白。</p>
+        <div class="spec-grid">
+          <div class="spec-panel">
+            <div class="panel-tag">--background</div>
+            <div class="color-block" style="background-color: hsl(212, 45%, 98%);"></div>
+            <strong>暮蓝环境底色</strong>
+            <span class="token-code">hsl(212, 45%, 98%)</span>
+          </div>
+          <div class="spec-panel">
+            <div class="panel-tag">--foreground</div>
+            <div class="color-block" style="background-color: hsl(212, 40%, 12%);"></div>
+            <strong>暮蓝深色文字</strong>
+            <span class="token-code">hsl(212, 40%, 12%)</span>
+          </div>
+          <div class="spec-panel">
+            <div class="panel-tag">--control-active-bg</div>
+            <div class="color-block" style="background-color: hsl(212, 55%, 93%);"></div>
+            <strong>碧落高亮激活底</strong>
+            <span class="token-code">hsl(212, 55%, 93%)</span>
+          </div>
+          <div class="spec-panel">
+            <div class="panel-tag">--brand-accent</div>
+            <div class="color-block" style="background-color: hsl(212, 55%, 40%);"></div>
+            <strong>核心高亮引导色</strong>
+            <span class="token-code">hsl(212, 55%, 40%)</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="physics">
+        <h2>4. 增强物理动效与阻尼触感</h2>
+        <p class="subtitle-meta">注入非线性形变契约，让按钮具备真实的实体按键机械阻尼反馈。</p>
+        <div class="spec-grid">
+          <div class="spec-panel">
+            <div class="panel-tag">物理形变 Pill 示例</div>
+            <div style="margin-bottom: 12px;">
+              <div class="spring-pill active">常规会话</div>
+              <div class="spring-pill">深度思考</div>
+            </div>
+            <p style="font-size: 13px; color: hsl(var(--muted-foreground)); margin: 0;">点击激活态统一触发向内 <code>scale(0.96)</code> 触感变形。</p>
+          </div>
+          <div class="spec-panel">
+            <div class="panel-tag">高级半透明毛玻璃材质 (z-index 弹出物)</div>
+            <div class="glass-box">
+              <div class="panel-tag" style="margin-bottom:4px;">Popover Layer</div>
+              <span style="font-weight:600; font-size:13px; color:hsl(var(--brand-accent));">环境色柔和渗透</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="components">
+        <h2>5. 生产环境核心组件样式规格</h2>
+        <p class="subtitle-meta">小尺寸、低饱和、信息流严格对齐规范规格，严禁临场发明。</p>
+        <div class="spec-grid">
+          <div class="spec-panel">
+            <div class="panel-tag">状态标签 (Status Badges)</div>
+            <div style="display: flex; gap: 8px;">
+              <span class="status-badge success">synced</span>
+              <span class="status-badge warning">needs_repreprocess</span>
+              <span class="status-badge danger">failed</span>
+            </div>
+          </div>
+          <div class="spec-panel">
+            <div class="panel-tag">输入框聚焦扩展模型</div>
+            <input type="text" class="spec-input" placeholder="外发光柔和扩散...">
+          </div>
+        </div>
+      </div>
+
+      <div id="workbench">
+        <h2>6. 三栏生产力架构图表契约</h2>
+        <p class="subtitle-meta">全景图表定义。左侧导航、中间执行、右侧单一活动上下文面板联动缩放。</p>
+        <div class="sandbox-shell">
+          <div class="sandbox-titlebar">
+            <div class="titlebar-dots">
+              <span class="dot-node" style="background-color:#ff5f56; margin-right:6px;"></span>
+              <span class="dot-node" style="background-color:#ffbd2e; margin-right:6px;"></span>
+              <span class="dot-node" style="background-color:#27c93f; margin-right:16px;"></span>
+              <span style="font-size:11px; font-weight:600; color:hsl(var(--muted-foreground));">Project_R Workbench Core Architecture Map</span>
+            </div>
+          </div>
+          <div class="sandbox-body">
+            <div class="sb-col-1">
+              <div style="font-size: 11px; font-weight: 700; color: hsl(var(--muted-foreground)); margin-bottom: 12px;">左栏 · 导航区</div>
+              <div style="padding: 6px 8px; background-color: hsl(var(--control-active-bg)); color: hsl(var(--control-active-fg)); border: 1px solid hsl(var(--control-active-border)); border-radius: 4px; font-size: 12px; font-weight: 600;">📁 激活工作区</div>
+            </div>
+            <div class="sb-col-2">
+              <div style="font-size: 11px; font-weight: 700; color: hsl(var(--muted-foreground)); margin-bottom: 12px;">中栏 · 核心执行区</div>
+              <div class="msg-box ai">
+                <span class="cmd-badge">/query</span> 正在输出高信度事实回复...
+              </div>
+            </div>
+            <div class="sb-col-3">
+              <div style="font-size: 11px; font-weight: 700; border-bottom: 1px solid hsl(var(--border)); padding-bottom: 8px; margin-bottom: 12px;">右栏 · 来源预览面板</div>
+              <div style="background-color: hsl(var(--background)); border: 1px solid hsl(var(--border)); padding: 10px; border-radius: 6px; font-size: 11px;">
+                <strong>《契约源文件.pdf》</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</body>
+</html>
+
+```
+
+---
+
+现在，你可以毫无后顾之忧地直接整段复制。当前端视觉契约与唯一真相源文件安全落盘后，我们可以随时开始下一步——对正式大上帝组件进行真正的模块拆分与代码净化！

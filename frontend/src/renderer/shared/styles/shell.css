@@ -183,7 +183,11 @@
   transition: color 0.18s;
 }
 
-.mode-tab.is-active { color: hsl(var(--foreground)); }
+.mode-tab.is-active {
+  color: hsl(var(--control-active-foreground));
+  background: hsl(var(--control-active-bg));
+  box-shadow: var(--control-active-shadow);
+}
 
 .mode-tab:disabled {
   cursor: not-allowed;
@@ -252,22 +256,32 @@
   align-items: center;
   gap: 8px;
   width: 100%;
-  border: none;
+  border: 1px solid transparent;
   border-radius: 10px;
   background: transparent;
   color: hsl(var(--foreground));
   padding: 8px 10px;
   text-align: left;
   cursor: pointer;
-  transition: background 0.12s;
+  transition: var(--transition-micro);
 }
 
-.session-item:hover {
-  background: hsl(var(--primary) / 0.05);
+.session-item:hover:not(.is-active) {
+  background: hsl(var(--muted));
+  transform: translateY(-1px);
 }
 
 .session-item.is-active {
-  background: hsl(var(--primary) / 0.08);
+  background: hsl(var(--control-active-bg));
+  color: hsl(var(--control-active-foreground));
+  border-color: hsl(var(--control-active-border));
+  box-shadow: var(--control-active-shadow);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-item:hover:not(.is-active) {
+    transform: none;
+  }
 }
 
 .session-item.is-in-left-pane::before,
@@ -279,11 +293,11 @@
   bottom: 9px;
   width: 3px;
   border-radius: 999px;
-  background: hsl(156 44% 38%);
+  background: hsl(var(--pane-left-accent));
 }
 
 .session-item.is-in-right-pane::before {
-  background: hsl(210 44% 42%);
+  background: hsl(var(--pane-right-accent));
 }
 
 .session-title {
@@ -870,11 +884,31 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid hsl(var(--border));
+  border: 1px solid var(--glass-border);
   border-radius: 10px;
-  background: hsl(var(--card));
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   color: hsl(var(--foreground));
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-md);
+  animation: notification-popover-in 0.28s var(--spring-curve) both;
+}
+
+@keyframes notification-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notification-popover {
+    animation: none;
+  }
 }
 
 .notification-popover-header {

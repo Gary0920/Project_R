@@ -680,7 +680,7 @@
   width: 24px;
   font-size: 15px;
   font-weight: 800;
-  color: hsl(156 45% 30%);
+  color: hsl(var(--control-active-foreground));
 }
 
 .prompt-row {
@@ -711,8 +711,8 @@
 }
 
 .prompt-row.is-selected::before {
-  background: hsl(156 30% 94%);
-  box-shadow: 0 1px 0 hsl(156 28% 76% / 0.42), 0 8px 22px hsl(156 32% 30% / 0.08);
+  background: hsl(var(--control-active-bg));
+  box-shadow: 0 1px 0 hsl(var(--control-active-border) / 0.42), 0 8px 22px hsl(var(--control-active-shadow));
 }
 
 .prompt-row-main {
@@ -743,7 +743,7 @@
   display: inline-flex;
   align-self: start;
   margin-top: 3px;
-  color: hsl(156 45% 30%);
+  color: hsl(var(--control-active-foreground));
   font-size: 15px;
 }
 
@@ -777,8 +777,8 @@
 }
 
 .prompt-source-badge.is-builtin {
-  background: hsl(156 34% 93%);
-  color: hsl(156 45% 29%);
+  background: hsl(var(--control-active-bg-hover));
+  color: hsl(var(--control-active-foreground));
 }
 
 .prompt-source-badge.is-company {
@@ -815,7 +815,7 @@
   align-self: center;
   width: 14px;
   height: 14px;
-  color: hsl(156 45% 30%);
+  color: hsl(var(--control-active-foreground));
 }
 
 .prompt-row-delete {
@@ -922,7 +922,7 @@
   border: 1px dashed hsl(var(--dashed-border));
   border-radius: 8px;
   background: transparent;
-  color: hsl(156 45% 30%);
+  color: hsl(var(--control-active-foreground));
   cursor: pointer;
   font-size: 13px;
   font-weight: 650;
@@ -1008,7 +1008,7 @@
 }
 
 .agent-file-panel.is-drag-over {
-  border-color: hsl(156 45% 40%);
+  border-color: hsl(var(--brand-accent));
   background: hsl(156 40% 98%);
 }
 
@@ -1137,8 +1137,8 @@
   width: 30px;
   height: 30px;
   border-radius: 8px;
-  background: hsl(156 30% 94%);
-  color: hsl(156 45% 28%);
+  background: hsl(var(--control-active-bg));
+  color: hsl(var(--control-active-foreground));
 }
 
 .agent-file-panel-header h2 {
@@ -1460,8 +1460,8 @@
 }
 
 .workspace-file-row[data-selected="true"] {
-  background: hsl(156 30% 94%);
-  color: hsl(156 42% 26%);
+  background: hsl(var(--control-active-bg));
+  color: hsl(var(--control-active-foreground));
 }
 
 .workspace-file-row[data-drop-target="true"] {

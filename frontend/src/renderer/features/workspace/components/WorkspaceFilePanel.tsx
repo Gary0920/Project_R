@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 
 import { WorkspaceAgentRunToast } from "./WorkspaceAgentRunToast";
 import {
@@ -29,26 +29,18 @@ import { WorkspaceFilePanelHeader } from "./WorkspaceFilePanelHeader";
 import { WorkspaceKnowledgeMapOverlay } from "./WorkspaceKnowledgeMapOverlay";
 import { WorkspaceKnowledgeGraphSidecar } from "./WorkspaceKnowledgeGraphSidecar";
 import type { WorkspaceFileContextMenu as WorkspaceFileContextMenuState } from "./workspaceFilePanelTypes";
-import { listWorkspaceFiles } from "../api";
 import {
-  countPendingIngestFiles,
-  filterSystemWorkspaceItems,
-  findDirectory,
-  getItemsAtPath,
   getRagStatusMeta,
   hasExternalFiles,
   hasWorkspaceDrag,
   isTrashPath,
   isTrashWorkspaceItem,
-  makeBreadcrumb,
   MEETING_ROOT_PATH,
-  MEETING_WORKFLOW_DIRS,
 } from "../workspaceFilePanelUtils";
 import {
   inferMeetingFolder,
   isInMeetingWorkflowPath,
   isMeetingAudioFile,
-  isMeetingFolderPath,
   isMeetingTranscriptSourceFile,
   isMeetingWorkflowSubdirName,
 } from "../workspaceMeetingUtils";
@@ -59,6 +51,7 @@ import { useWorkspaceKnowledgeGraph } from "../hooks/useWorkspaceKnowledgeGraph"
 import { useWorkspaceMeetingWorkflow } from "../hooks/useWorkspaceMeetingWorkflow";
 import { useWorkspaceFileActions } from "../hooks/useWorkspaceFileActions";
 import { useWorkspaceFileDragDrop } from "../hooks/useWorkspaceFileDragDrop";
+import { useWorkspaceFileNavigation } from "../hooks/useWorkspaceFileNavigation";
 import type { ApiClientOptions } from "../../../shared/api/client";
 import type { AgentRunResponse, WorkspaceFileItemResponse } from "../../../shared/api/types";
 import { parseApiDate } from "../../../shared/utils/time";
@@ -90,14 +83,7 @@ export function WorkspaceFilePanel({
   standaloneCustomerIntelligence = false,
   onCustomerIntelligenceClose,
 }: WorkspaceFilePanelProps) {
-  const [items, setItems] = useState<WorkspaceFileItemResponse[]>([]);
-  const [currentPath, setCurrentPath] = useState(defaultPath);
-  const [history, setHistory] = useState<string[]>([defaultPath || ""]);
-  const [historyIndex, setHistoryIndex] = useState(0);
-  const [viewMode, setViewMode] = useState<"files" | "trash">("files");
-  const [loading, setLoading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [latestAgentRun, setLatestAgentRun] = useState<AgentRunResponse | null>(null);
   const [agentRunToastExpanded, setAgentRunToastExpanded] = useState(false);
@@ -179,21 +165,38 @@ export function WorkspaceFilePanel({
     await openFilePreview(item);
   }
 
-  const displayItems = useMemo(() => filterSystemWorkspaceItems(items), [items]);
-  const visibleItems = useMemo(() => viewMode === "trash" ? items : getItemsAtPath(displayItems, currentPath), [currentPath, displayItems, items, viewMode]);
-  const breadcrumb = useMemo(() => makeBreadcrumb(currentPath), [currentPath]);
-  const pendingIngestCount = useMemo(() => countPendingIngestFiles(visibleItems), [visibleItems]);
-  const isInMeetingFolder = useMemo(
-    () => visibleItems.some((child) => child.type === "directory" && child.name === "02-转录文本"),
-    [visibleItems],
-  );
-  const isMeetingRoot = currentPath === MEETING_ROOT_PATH || currentPath.startsWith(`${MEETING_ROOT_PATH}/`);
-  const hasMeetingWorkflowDirs = MEETING_WORKFLOW_DIRS.some((name) =>
-    visibleItems.some((item) => item.type === "directory" && item.name === name),
-  );
-  const showMeetingWorkflowToolbar = workspaceKind !== "user" && viewMode === "files" && (isMeetingRoot || hasMeetingWorkflowDirs);
-  const isLegitimateMeetingFolder = isMeetingFolderPath(currentPath);
-  const activeMeetingFolderPath = isLegitimateMeetingFolder ? MEETING_ROOT_PATH : currentPath;
+  const {
+    activeMeetingFolderPath,
+    breadcrumb,
+    currentPath,
+    error,
+    goBack,
+    goForward,
+    goUp,
+    hasMeetingWorkflowDirs,
+    history,
+    historyIndex,
+    isInMeetingFolder,
+    isLegitimateMeetingFolder,
+    isMeetingRoot,
+    loading,
+    navigateTo,
+    pendingIngestCount,
+    refresh,
+    setCurrentPath,
+    setError,
+    setViewMode,
+    showMeetingWorkflowToolbar,
+    viewMode,
+    visibleItems,
+  } = useWorkspaceFileNavigation({
+    apiOptions,
+    closeFilePreview,
+    defaultPath,
+    standaloneCustomerIntelligence,
+    workspaceId,
+    workspaceKind,
+  });
   const {
     canCopyWorkspaceItem,
     canModifyWorkspaceItem,
@@ -287,63 +290,6 @@ export function WorkspaceFilePanel({
     workspaceName,
   });
 
-  function navigateTo(path: string) {
-    if (path === currentPath) return;
-    closeFilePreview();
-    setCurrentPath(path);
-    setHistory((prev) => {
-      const next = [...prev.slice(0, historyIndex + 1), path];
-      setHistoryIndex(next.length - 1);
-      return next;
-    });
-  }
-
-  function goBack() {
-    if (historyIndex <= 0) return;
-    const nextIndex = historyIndex - 1;
-    setHistoryIndex(nextIndex);
-    setCurrentPath(history[nextIndex] ?? "");
-  }
-
-  function goForward() {
-    if (historyIndex >= history.length - 1) return;
-    const nextIndex = historyIndex + 1;
-    setHistoryIndex(nextIndex);
-    setCurrentPath(history[nextIndex] ?? "");
-  }
-
-  function goUp() {
-    if (!currentPath) return;
-    navigateTo(currentPath.split("/").slice(0, -1).join("/"));
-  }
-
-  function refresh() {
-    if (!workspaceId) {
-      setItems([]);
-      setCurrentPath("");
-      return Promise.resolve();
-    }
-    setLoading(true);
-    setError(null);
-    return listWorkspaceFiles(apiOptions, workspaceId, viewMode === "trash")
-      .then((response) => {
-        setItems(response.items);
-        const safeItems = filterSystemWorkspaceItems(response.items);
-        if (viewMode === "files" && currentPath && !findDirectory(safeItems, currentPath)) {
-          navigateTo("");
-        }
-      })
-      .catch((loadError: unknown) => {
-        setError(loadError instanceof Error ? loadError.message : "无法读取项目文件目录");
-      })
-      .finally(() => setLoading(false));
-  }
-
-  useEffect(() => {
-    if (standaloneCustomerIntelligence) return;
-    void refresh();
-  }, [apiOptions, workspaceId, viewMode, standaloneCustomerIntelligence]);
-
   useEffect(() => {
     if (!latestAgentRun) {
       setAgentRunToastExpanded(false);
@@ -364,23 +310,6 @@ export function WorkspaceFilePanel({
       window.clearTimeout(removeTimer);
     };
   }, [latestAgentRun, agentRunToastExpanded]);
-
-  useEffect(() => {
-    if (viewMode !== "files") return;
-    const nextPath = defaultPath || "";
-    setCurrentPath(nextPath);
-    setHistory([nextPath]);
-    setHistoryIndex(0);
-  }, [defaultPath, workspaceId, viewMode]);
-
-  useEffect(() => {
-    if (viewMode !== "files" || !currentPath || loading) return;
-    if (!findDirectory(displayItems, currentPath)) {
-      setCurrentPath("");
-      setHistory([""]);
-      setHistoryIndex(0);
-    }
-  }, [currentPath, displayItems, loading, viewMode]);
 
   useEffect(() => {
     const panel = panelRef.current;

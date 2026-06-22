@@ -1,0 +1,1522 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Project_R 可视化设计规范 · Gemini 碧落暮蓝版 v3.5</title>
+  <style>
+    /* ============================================================
+       Gemini 候选稿：碧落暮蓝 Token 与物理动效体系
+       ============================================================ */
+    :root {
+      --background: 212 45% 98%;
+      --foreground: 212 40% 12%;
+      --muted: 212 25% 94%;
+      --muted-foreground: 212 15% 48%;
+      --border: 212 24% 90%;
+      --primary: 212 40% 12%;
+      --primary-foreground: 0 0% 98%;
+      --secondary: 212 25% 94%;
+      --secondary-foreground: 212 40% 12%;
+      --accent: 212 25% 94%;
+      --content-area: 212 30% 99%;
+      --card: 0 0% 100%;
+      --card-foreground: 212 40% 12%;
+      --code-bg: 210 13% 12%;
+      --destructive: 0 84.2% 60.2%;
+      --success: 142 64% 32%;
+      --warning: 35 92% 38%;
+      --control-active-bg: 212 55% 93%;
+      --control-active-bg-hover: 212 58% 95%;
+      --control-active-border: 212 45% 85%;
+      --control-active-foreground: 212 60% 32%;
+      --control-active-shadow: 0 6px 16px -4px rgb(175 208 242 / 0.25), 0 2px 6px -2px rgb(175 208 242 / 0.15);
+      --brand-accent: 212 55% 40%;
+      --capability-border: 212 45% 85%;
+      --capability-bg: 212 55% 93%;
+      --capability-fg: 212 60% 32%;
+      --shadow-sm: 0 1px 2px 0 rgb(175 208 242 / 0.10);
+      --shadow-md: 0 6px 16px -4px rgb(175 208 242 / 0.25), 0 2px 6px -2px rgb(175 208 242 / 0.15);
+      --glass-bg: rgb(255 255 255 / 0.82);
+      --glass-border: rgb(175 208 242 / 0.35);
+      --glass-blur: blur(14px);
+      --spring-curve: cubic-bezier(0.34, 1.56, 0.64, 1);
+      --transition-micro: all 0.16s var(--spring-curve);
+      --transition-panel: all 0.28s var(--spring-curve);
+      --shell-radius: 12px;
+      --card-radius: 12px;
+      --control-radius: 9px;
+      --panel-gap: 8px;
+      --shell-pad: 8px;
+      --workbench-topbar-height: 42px;
+      --app-topbar-height: 36px;
+      --app-section-header-height: 48px;
+      --layer-popover: 90;
+      --layer-toast: 95;
+      --layer-context-menu-backdrop: 96;
+      --layer-context-menu: 97;
+      --layer-modal: 100;
+      --layer-critical-modal: 110;
+      --doc-sidebar-w: 240px;
+      --doc-max: 1180px;
+      font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif;
+      color: hsl(var(--foreground));
+      background: linear-gradient(135deg, hsl(212 45% 98%) 0%, hsl(212 30% 96%) 100%);
+    }
+
+    :root[data-theme="dark"] {
+      --background: 212 18% 10%;
+      --foreground: 212 18% 96%;
+      --muted: 212 16% 16%;
+      --muted-foreground: 212 10% 68%;
+      --border: 212 14% 24%;
+      --primary: 0 0% 96%;
+      --primary-foreground: 212 18% 10%;
+      --secondary: 212 16% 18%;
+      --secondary-foreground: 0 0% 96%;
+      --accent: 212 16% 18%;
+      --content-area: 212 18% 11%;
+      --card: 212 18% 13%;
+      --card-foreground: 0 0% 96%;
+      --code-bg: 212 20% 7%;
+      --success: 142 62% 55%;
+      --warning: 38 92% 58%;
+      --destructive: 0 84.2% 60.2%;
+      --control-active-bg: 212 34% 20%;
+      --control-active-bg-hover: 212 34% 24%;
+      --control-active-border: 212 32% 34%;
+      --control-active-foreground: 212 70% 76%;
+      --control-active-shadow: 0 6px 16px -4px rgb(0 0 0 / 0.30);
+      --brand-accent: 212 65% 68%;
+      --capability-border: 212 32% 34%;
+      --capability-bg: 212 34% 20%;
+      --capability-fg: 212 70% 76%;
+      --glass-bg: rgb(25 35 46 / 0.78);
+      --glass-border: rgb(120 168 216 / 0.24);
+      background: linear-gradient(135deg, hsl(212 18% 9%) 0%, hsl(212 18% 13%) 100%);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; min-height: 100vh; }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    .doc-layout {
+      display: grid;
+      grid-template-columns: var(--doc-sidebar-w) minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .doc-nav {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      height: 100vh;
+      overflow: auto;
+      padding: 20px 16px 32px;
+      border-right: 1px solid hsl(var(--border));
+      background: hsl(var(--card) / 0.72);
+      backdrop-filter: blur(8px);
+    }
+
+    .doc-nav h1 {
+      margin: 0 0 6px;
+      font-size: 16px;
+      font-weight: 700;
+      line-height: 1.3;
+    }
+
+    .doc-nav .subtitle {
+      margin: 0 0 16px;
+      color: hsl(var(--muted-foreground));
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .doc-nav ul {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 2px;
+    }
+
+    .doc-nav a {
+      display: block;
+      padding: 7px 10px;
+      border-radius: 8px;
+      color: hsl(var(--muted-foreground));
+      font-size: 13px;
+      text-decoration: none;
+      transition: background 0.14s ease, color 0.14s ease;
+    }
+
+    .doc-nav a:hover {
+      background: hsl(var(--muted));
+      color: hsl(var(--foreground));
+    }
+
+    .doc-nav a.is-active {
+      background: hsl(var(--control-active-bg));
+      color: hsl(var(--control-active-foreground));
+      border: 1px solid hsl(var(--control-active-border));
+    }
+
+    .theme-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+      padding: 6px 10px;
+      border: 1px solid hsl(var(--border));
+      border-radius: 8px;
+      background: hsl(var(--card));
+      color: hsl(var(--foreground));
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.14s ease, border-color 0.14s ease;
+    }
+
+    .theme-toggle:hover {
+      background: hsl(var(--muted));
+    }
+
+    .doc-main {
+      padding: 28px 32px 80px;
+    }
+
+    .doc-main-inner {
+      max-width: var(--doc-max);
+    }
+
+    .hero {
+      margin-bottom: 28px;
+      padding: 24px;
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--shell-radius);
+      background: hsl(var(--card));
+    }
+
+    .hero-kicker {
+      margin: 0 0 8px;
+      color: hsl(var(--muted-foreground));
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .hero h2 {
+      margin: 0 0 10px;
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1.25;
+    }
+
+    .hero p {
+      margin: 0;
+      max-width: 72ch;
+      color: hsl(var(--muted-foreground));
+      font-size: 14px;
+      line-height: 1.65;
+    }
+
+    .hero-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .hero-tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: hsl(var(--control-active-bg));
+      color: hsl(var(--control-active-foreground));
+      border: 1px solid hsl(var(--control-active-border));
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    section {
+      margin-bottom: 40px;
+      scroll-margin-top: 24px;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid hsl(var(--border));
+    }
+
+    .section-head h3 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .section-head span {
+      color: hsl(var(--muted-foreground));
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .section-note {
+      margin: 0 0 16px;
+      color: hsl(var(--muted-foreground));
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .panel {
+      padding: 16px;
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--card-radius);
+      background: hsl(var(--card));
+      box-shadow: var(--shadow-sm);
+    }
+
+    .panel + .panel { margin-top: 12px; }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    @media (max-width: 980px) {
+      .doc-layout { grid-template-columns: 1fr; }
+      .doc-nav {
+        position: relative;
+        height: auto;
+        border-right: none;
+        border-bottom: 1px solid hsl(var(--border));
+      }
+      .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+    }
+
+    /* ---------- 色板 ---------- */
+    .swatch {
+      overflow: hidden;
+      border: 1px solid hsl(var(--border));
+      border-radius: 10px;
+      background: hsl(var(--card));
+    }
+
+    .swatch-color {
+      height: 64px;
+      border-bottom: 1px solid hsl(var(--border));
+    }
+
+    .swatch-meta {
+      padding: 10px 12px;
+    }
+
+    .swatch-meta strong {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+
+    .swatch-meta code,
+    .swatch-meta span {
+      display: block;
+      color: hsl(var(--muted-foreground));
+      font-size: 11px;
+      line-height: 1.45;
+      font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+    }
+
+    .swatch-meta span { margin-top: 2px; }
+
+    /* ---------- 字号 ---------- */
+    .type-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 0;
+      border-bottom: 1px solid hsl(var(--border));
+    }
+
+    .type-row:last-child { border-bottom: none; }
+
+    .type-label {
+      flex: 0 0 120px;
+      color: hsl(var(--muted-foreground));
+      font-size: 12px;
+    }
+
+    .type-sample { min-width: 0; }
+
+    .type-meta {
+      flex: 0 0 88px;
+      text-align: right;
+      color: hsl(var(--muted-foreground));
+      font-size: 11px;
+      font-family: "JetBrains Mono", Consolas, monospace;
+    }
+
+    /* ---------- 间距 / 圆角 ---------- */
+    .scale-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid hsl(var(--border));
+    }
+
+    .scale-row:last-child { border-bottom: none; }
+
+    .scale-box {
+      flex: 0 0 auto;
+      background: hsl(var(--control-active-bg));
+      border: 1px solid hsl(var(--control-active-border));
+    }
+
+    .scale-info {
+      min-width: 0;
+      font-size: 13px;
+    }
+
+    .scale-info code {
+      font-family: "JetBrains Mono", Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .scale-info span {
+      display: block;
+      margin-top: 2px;
+      color: hsl(var(--muted-foreground));
+      font-size: 12px;
+    }
+
+    .radius-demo {
+      width: 72px;
+      height: 48px;
+      background: hsl(var(--muted));
+      border: 1px solid hsl(var(--border));
+    }
+
+    /* ---------- 组件预览 ---------- */
+    .demo-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      height: 32px;
+      padding: 0 12px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: hsl(var(--foreground));
+      color: hsl(var(--background));
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
+    }
+
+    .btn-primary:hover {
+      opacity: 0.9;
+      box-shadow: var(--shadow-md);
+      transform: translateY(-1px);
+    }
+    .btn-primary:active { transform: scale(0.96); }
+
+    .btn-ghost {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      height: 32px;
+      padding: 0 12px;
+      border: 1px solid hsl(var(--border));
+      border-radius: 8px;
+      background: transparent;
+      color: hsl(var(--foreground));
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.14s ease;
+    }
+
+    .btn-ghost:hover { background: hsl(var(--muted)); }
+
+    .composer-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 32px;
+      padding: 0 11px;
+      border: 1px solid hsl(var(--border));
+      border-radius: 8px;
+      background: hsl(var(--card));
+      color: hsl(var(--muted-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease, box-shadow 0.14s ease, transform 0.12s ease;
+    }
+
+    .composer-toggle:hover {
+      color: hsl(var(--foreground));
+      background: hsl(var(--muted));
+      transform: translateY(-1px);
+    }
+
+    .composer-toggle:active { transform: scale(0.96); }
+
+    .composer-toggle.is-active {
+      color: hsl(var(--control-active-foreground));
+      border-color: hsl(var(--control-active-border));
+      background: hsl(var(--control-active-bg));
+      box-shadow: var(--control-active-shadow);
+    }
+
+    .glass-box {
+      padding: 14px;
+      border: 1px solid var(--glass-border);
+      border-radius: var(--card-radius);
+      background: var(--glass-bg);
+      box-shadow: var(--shadow-md);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      color: hsl(var(--foreground));
+    }
+
+    .spring-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 0 12px;
+      border: 1px solid hsl(var(--border));
+      border-radius: 999px;
+      background: hsl(var(--card));
+      color: hsl(var(--foreground));
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: var(--transition-micro);
+    }
+
+    .spring-pill:hover {
+      border-color: hsl(var(--control-active-border));
+      box-shadow: var(--shadow-md);
+      transform: translateY(-2px);
+    }
+
+    .spring-pill:active { transform: scale(0.96); }
+
+    .spring-pill.is-active {
+      border-color: hsl(var(--control-active-border));
+      background: hsl(var(--control-active-bg));
+      color: hsl(var(--control-active-foreground));
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 0 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .status-pill.success {
+      background: hsl(var(--success) / 0.14);
+      color: hsl(var(--success));
+    }
+
+    .status-pill.warning {
+      background: hsl(var(--warning) / 0.14);
+      color: hsl(var(--warning));
+    }
+
+    .status-pill.destructive {
+      background: hsl(var(--destructive) / 0.14);
+      color: hsl(var(--destructive));
+    }
+
+    .status-pill.muted {
+      background: hsl(var(--muted));
+      color: hsl(var(--muted-foreground));
+    }
+
+    .capability-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      height: 30px;
+      padding: 0 10px 0 7px;
+      border-radius: 999px;
+      border: 1px solid hsl(var(--capability-border));
+      background: hsl(var(--capability-bg));
+      color: hsl(var(--capability-fg));
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .capability-chip small {
+      font-size: 11px;
+      font-weight: 700;
+      opacity: 0.85;
+    }
+
+    .chip-icon {
+      display: grid;
+      place-items: center;
+      width: 18px;
+      height: 18px;
+      border-radius: 6px;
+      background: hsl(var(--capability-fg));
+      color: hsl(var(--background));
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .session-list {
+      display: grid;
+      gap: 4px;
+      max-width: 280px;
+    }
+
+    .session-item {
+      display: grid;
+      gap: 2px;
+      width: 100%;
+      padding: 8px 10px;
+      border: none;
+      border-radius: 10px;
+      background: transparent;
+      color: hsl(var(--foreground));
+      text-align: left;
+      cursor: pointer;
+      transition: background 0.12s ease;
+    }
+
+    .session-item:hover { background: hsl(var(--primary) / 0.05); }
+
+    .session-item.is-active {
+      background: hsl(var(--control-active-bg));
+      border: 1px solid hsl(var(--control-active-border));
+      box-shadow: var(--control-active-shadow);
+    }
+
+    .session-title {
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .session-preview {
+      font-size: 12px;
+      color: hsl(var(--muted-foreground));
+    }
+
+    .composer-mock {
+      max-width: 640px;
+      display: grid;
+      gap: 6px;
+      padding: 12px 14px 10px;
+      border: 1px solid hsl(var(--border));
+      border-radius: 12px;
+      background: hsl(var(--card));
+      transition: border-color 0.12s, box-shadow 0.12s;
+    }
+
+    .composer-mock:focus-within {
+      border-color: hsl(var(--foreground) / 0.4);
+      box-shadow: 0 0 0 3px hsl(var(--foreground) / 0.06);
+    }
+
+    .composer-mock textarea {
+      width: 100%;
+      min-height: 72px;
+      border: none;
+      background: transparent;
+      color: hsl(var(--foreground));
+      font-size: 15px;
+      line-height: 1.55;
+      resize: none;
+      outline: none;
+    }
+
+    .composer-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .object-card {
+      padding: 14px 16px;
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--card-radius);
+      background: hsl(var(--card));
+    }
+
+    .object-card header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .object-card header strong { font-size: 14px; }
+    .object-card p {
+      margin: 0;
+      color: hsl(var(--muted-foreground));
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .object-card .step-list {
+      margin: 10px 0 0;
+      padding-left: 18px;
+      color: hsl(var(--foreground));
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    /* ---------- 布局线框 ---------- */
+    .workbench-wire {
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr) 260px;
+      gap: var(--shell-pad);
+      height: 280px;
+      padding: var(--shell-pad);
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--shell-radius);
+      background: hsl(var(--background));
+    }
+
+    .wire-pane {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--card-radius);
+      background: hsl(var(--card));
+      overflow: hidden;
+    }
+
+    .wire-pane-head {
+      flex: 0 0 auto;
+      padding: 8px 10px;
+      border-bottom: 1px solid hsl(var(--border));
+      background: hsl(var(--muted) / 0.35);
+      font-size: 11px;
+      font-weight: 700;
+      color: hsl(var(--muted-foreground));
+    }
+
+    .wire-pane-body {
+      flex: 1;
+      padding: 10px;
+      font-size: 12px;
+      color: hsl(var(--muted-foreground));
+      line-height: 1.55;
+    }
+
+    .wire-pane.is-active-outline {
+      outline: 2px solid hsl(var(--control-active-border));
+      outline-offset: -2px;
+    }
+
+    .wire-topbar {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: var(--workbench-topbar-height);
+      padding: 0 12px;
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--control-radius);
+      background: hsl(var(--card));
+      font-size: 12px;
+    }
+
+    .wire-topbar span:last-child {
+      color: hsl(var(--muted-foreground));
+      font-size: 11px;
+    }
+
+    /* ---------- 反模式对比 ---------- */
+    .compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    @media (max-width: 760px) {
+      .compare { grid-template-columns: 1fr; }
+    }
+
+    .compare-card {
+      padding: 14px;
+      border-radius: 10px;
+      border: 1px solid hsl(var(--border));
+    }
+
+    .compare-card.bad {
+      background: hsl(var(--destructive) / 0.06);
+      border-color: hsl(var(--destructive) / 0.25);
+    }
+
+    .compare-card.good {
+      background: hsl(var(--success) / 0.06);
+      border-color: hsl(var(--success) / 0.25);
+    }
+
+    .compare-label {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      margin-bottom: 10px;
+      padding: 0 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.03em;
+    }
+
+    .compare-card.bad .compare-label {
+      background: hsl(var(--destructive) / 0.14);
+      color: hsl(var(--destructive));
+    }
+
+    .compare-card.good .compare-label {
+      background: hsl(var(--success) / 0.14);
+      color: hsl(var(--success));
+    }
+
+    .bad-nested-cards {
+      display: grid;
+      gap: 8px;
+    }
+
+    .bad-nested-cards .fake-card {
+      padding: 10px;
+      border-radius: 10px;
+      background: #fff;
+      border: 1px solid #dbeafe;
+      box-shadow: 0 8px 24px rgba(59, 130, 246, 0.15);
+    }
+
+    .bad-nested-cards .fake-card .fake-card {
+      margin-top: 8px;
+      border-color: #c4b5fd;
+      box-shadow: 0 6px 18px rgba(139, 92, 246, 0.12);
+    }
+
+    .good-sections {
+      display: grid;
+      gap: 12px;
+    }
+
+    .good-section {
+      padding: 10px 0 0;
+      border-top: 1px solid hsl(var(--border));
+    }
+
+    .good-section:first-child {
+      padding-top: 0;
+      border-top: none;
+    }
+
+    .motion-demo {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 120px;
+      height: 40px;
+      padding: 0 14px;
+      border: 1px solid hsl(var(--border));
+      border-radius: 8px;
+      background: hsl(var(--card));
+      cursor: pointer;
+      transition: var(--transition-micro);
+    }
+
+    .motion-demo:hover {
+      border-color: hsl(var(--control-active-border));
+      background: hsl(var(--control-active-bg-hover));
+      box-shadow: var(--control-active-shadow);
+    }
+
+    .motion-demo:active { transform: scale(0.96); }
+
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid hsl(var(--border));
+      border-top-color: hsl(var(--control-active-foreground));
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .checklist {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .checklist li {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid hsl(var(--border));
+      border-radius: 8px;
+      background: hsl(var(--muted) / 0.25);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .checklist li::before {
+      content: "☐";
+      flex: 0 0 auto;
+      color: hsl(var(--control-active-foreground));
+      font-weight: 700;
+    }
+
+    .mono {
+      font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .icon-demo {
+      display: inline-grid;
+      place-items: center;
+      flex-shrink: 0;
+      border-radius: 6px;
+      background: hsl(var(--muted));
+      color: hsl(var(--foreground));
+    }
+
+    .layer-stack {
+      position: relative;
+      height: 140px;
+      border: 1px dashed hsl(var(--border));
+      border-radius: 10px;
+      background: hsl(var(--muted) / 0.25);
+      overflow: hidden;
+    }
+
+    .layer-item {
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      padding: 8px 10px;
+      border: 1px solid hsl(var(--border));
+      border-radius: 8px;
+      background: hsl(var(--card));
+      font-size: 12px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+    }
+  </style>
+</head>
+<body>
+  <div class="doc-layout">
+    <aside class="doc-nav">
+      <h1>Project_R<br>Gemini 视觉规范</h1>
+      <p class="subtitle">碧落暮蓝候选稿 · 保留原规格结构 · 文字版见 ui-design-language-Gemini.md</p>
+      <button class="theme-toggle" type="button" id="themeToggle" aria-label="切换深浅主题">
+        <span id="themeIcon">🌙</span>
+        <span id="themeLabel">切换深色主题</span>
+      </button>
+      <ul>
+        <li><a href="#philosophy">设计气质</a></li>
+        <li><a href="#colors">颜色 Token</a></li>
+        <li><a href="#active-vs-blue">碧落 active vs 能力提示</a></li>
+        <li><a href="#typography">字号阶梯</a></li>
+        <li><a href="#spacing">间距阶梯</a></li>
+        <li><a href="#radius">圆角阶梯</a></li>
+        <li><a href="#icons">图标尺寸</a></li>
+        <li><a href="#layers">层级 z-index</a></li>
+        <li><a href="#controls">按钮与控件</a></li>
+        <li><a href="#composer">输入框组合</a></li>
+        <li><a href="#status">状态标签</a></li>
+        <li><a href="#cards">卡片使用边界</a></li>
+        <li><a href="#layout">三栏工作台</a></li>
+        <li><a href="#motion">动效</a></li>
+        <li><a href="#anti-patterns">反模式对比</a></li>
+        <li><a href="#checklist">交付自检</a></li>
+      </ul>
+    </aside>
+
+    <main class="doc-main">
+      <div class="doc-main-inner">
+        <div class="hero">
+          <p class="hero-kicker">Design System · Visual Reference</p>
+          <h2>把 Gemini 的「碧落暮蓝」升级变成可测量规格</h2>
+          <p>
+            本页沿用原始可视化设计规范的章节结构，合并 Gemini 生成的碧落暮蓝 token、物理动效和材质层级。
+            它是候选规格书，不直接覆盖当前唯一真相源；采纳后需同步更新
+            <span class="mono">docs/design/ui-design-language.md</span> 与
+            <span class="mono">frontend/src/renderer/shared/styles/base.css</span>。
+          </p>
+          <div class="hero-tags">
+            <span class="hero-tag">专业</span>
+            <span class="hero-tag">克制</span>
+            <span class="hero-tag">高效</span>
+            <span class="hero-tag">透明</span>
+            <span class="hero-tag">可控</span>
+            <span class="hero-tag">碧落暮蓝</span>
+          </div>
+        </div>
+
+        <section id="philosophy">
+          <div class="section-head">
+            <h3>设计气质</h3>
+            <span>Workbench first</span>
+          </div>
+          <p class="section-note">
+            Project_R 是企业 Agent 工作台，不是营销网站。视觉重点：让用户清楚 Agent 理解了什么、正在做什么、哪里要确认、结果在哪里。
+          </p>
+          <div class="grid-2">
+            <div class="panel">
+              <strong style="font-size:14px;">✅ 应该长这样</strong>
+              <ul style="margin:10px 0 0; padding-left:18px; color:hsl(var(--muted-foreground)); font-size:13px; line-height:1.65;">
+                <li>细边框 + 留白分区，信息密度适中</li>
+                <li>普通选中态统一碧落暮蓝</li>
+                <li>卡片只框住「具体对象」（消息、计划、工具调用…）</li>
+                <li>交互有 0.12–0.16s 轻微过渡，必要时使用弹簧曲线</li>
+              </ul>
+            </div>
+            <div class="panel">
+              <strong style="font-size:14px;">❌ 不要这样做</strong>
+              <ul style="margin:10px 0 0; padding-left:18px; color:hsl(var(--muted-foreground)); font-size:13px; line-height:1.65;">
+                <li>装饰性大色块、渐变球、hero 标题</li>
+                <li>每个页面区块都套一层阴影卡片</li>
+                <li>随手写 #3b82f6 或给 active 用绿/紫/橙</li>
+                <li>大面积闪烁动画、英文俏皮 loading</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section id="colors">
+          <div class="section-head">
+            <h3>颜色 Token</h3>
+            <span>用法：hsl(var(--token))</span>
+          </div>
+          <p class="section-note">所有颜色必须通过 CSS 变量取值，禁止在组件里硬编码 hex。点击右上角可切换深浅主题对照。</p>
+          <div class="grid-4" id="colorGrid"></div>
+        </section>
+
+        <section id="active-vs-blue">
+          <div class="section-head">
+            <h3>碧落 active vs 能力提示</h3>
+            <span>统一为低饱和暮蓝体系</span>
+          </div>
+          <div class="grid-2">
+            <div class="panel">
+              <p class="section-note" style="margin-top:0;"><strong>碧落淡蓝 — 普通选中 / 激活</strong><br>工作区、会话、列表项、输入框功能按钮开启态。</p>
+              <div class="demo-row">
+                <button type="button" class="composer-toggle is-active">深度思考</button>
+                <button type="button" class="session-item is-active" style="max-width:180px;">
+                  <span class="session-title">当前会话</span>
+                </button>
+              </div>
+              <p class="mono" style="margin:12px 0 0; color:hsl(var(--muted-foreground));">--control-active-*</p>
+            </div>
+            <div class="panel">
+              <p class="section-note" style="margin-top:0;"><strong>能力提示 — 仍属于碧落体系</strong><br>用于 /query、公司预设 Skill、提示词等「本轮能力」提示，不另造亮蓝体系。</p>
+              <div class="demo-row">
+                <span class="capability-chip">
+                  <span class="chip-icon">Q</span>
+                  <strong>/query 知识库</strong>
+                  <small>内置命令</small>
+                </span>
+                <span class="capability-chip">
+                  <span class="chip-icon">S</span>
+                  <strong>邮件起草</strong>
+                  <small>公司预设</small>
+                </span>
+              </div>
+              <p class="mono" style="margin:12px 0 0; color:hsl(var(--muted-foreground));">--capability-* / --control-active-* 同源</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="typography">
+          <div class="section-head">
+            <h3>字号阶梯</h3>
+            <span>10px – 26px</span>
+          </div>
+          <div class="panel">
+            <div class="type-row">
+              <div class="type-label">微标 micro</div>
+              <div class="type-sample" style="font-size:10px;">未读 3 · 步骤 2/5</div>
+              <div class="type-meta">10–11px</div>
+            </div>
+            <div class="type-row">
+              <div class="type-label">辅助 caption</div>
+              <div class="type-sample" style="font-size:12px;">12:30 · 等待确认 · synced</div>
+              <div class="type-meta">12px</div>
+            </div>
+            <div class="type-row">
+              <div class="type-label">正文小 body-sm</div>
+              <div class="type-sample" style="font-size:13px;">按钮文字、列表项、密集工具栏</div>
+              <div class="type-meta">13px</div>
+            </div>
+            <div class="type-row">
+              <div class="type-label">正文 body</div>
+              <div class="type-sample" style="font-size:14px;">默认聊天正文、表单、说明段落</div>
+              <div class="type-meta">14px</div>
+            </div>
+            <div class="type-row">
+              <div class="type-label">副标题 subtitle</div>
+              <div class="type-sample" style="font-size:16px; font-weight:600;">面板标题 · 区块标题</div>
+              <div class="type-meta">15–16px</div>
+            </div>
+            <div class="type-row">
+              <div class="type-label">标题 title</div>
+              <div class="type-sample" style="font-size:19px; font-weight:700;">弹窗主标题</div>
+              <div class="type-meta">17–20px</div>
+            </div>
+            <div class="type-row">
+              <div class="type-label">大标题 display</div>
+              <div class="type-sample" style="font-size:24px; font-weight:700;">欢迎页 / 空状态（业务区禁用）</div>
+              <div class="type-meta">21–26px</div>
+            </div>
+            <div class="type-row">
+              <div class="type-label">等宽 mono</div>
+              <div class="type-sample mono" style="font-size:13px;">backend/app/features/chat/api.py</div>
+              <div class="type-meta">13–14px</div>
+            </div>
+          </div>
+        </section>
+
+        <section id="spacing">
+          <div class="section-head">
+            <h3>间距阶梯</h3>
+            <span>4 的倍数</span>
+          </div>
+          <div class="panel">
+            <div class="scale-row"><div class="scale-box" style="width:4px;height:16px;"></div><div class="scale-info"><code>4px</code><span>图标与文字、标签内边距</span></div></div>
+            <div class="scale-row"><div class="scale-box" style="width:8px;height:16px;"></div><div class="scale-info"><code>8px · --panel-gap</code><span>控件 gap、列表项间距、壳层 padding</span></div></div>
+            <div class="scale-row"><div class="scale-box" style="width:12px;height:16px;"></div><div class="scale-info"><code>12px</code><span>卡片内边距、composer 内边距</span></div></div>
+            <div class="scale-row"><div class="scale-box" style="width:16px;height:16px;"></div><div class="scale-info"><code>16px</code><span>区块间距、面板 padding</span></div></div>
+            <div class="scale-row"><div class="scale-box" style="width:24px;height:16px;"></div><div class="scale-info"><code>24px</code><span>大分区、空状态留白</span></div></div>
+          </div>
+          <p class="section-note">壳层高度 token：<span class="mono">--workbench-topbar-height: 42px</span> · <span class="mono">--app-topbar-height: 36px</span> · <span class="mono">--app-section-header-height: 48px</span></p>
+        </section>
+
+        <section id="radius">
+          <div class="section-head">
+            <h3>圆角阶梯</h3>
+            <span>禁止随机 4/5/6/10</span>
+          </div>
+          <div class="grid-3">
+            <div class="panel">
+              <div class="radius-demo" style="border-radius: var(--shell-radius); margin-bottom:10px;"></div>
+              <strong style="font-size:13px;">--shell-radius · 12px</strong>
+              <p class="section-note" style="margin:6px 0 0;">壳层、大面板外框</p>
+            </div>
+            <div class="panel">
+              <div class="radius-demo" style="border-radius: var(--card-radius); margin-bottom:10px;"></div>
+              <strong style="font-size:13px;">--card-radius · 12px</strong>
+              <p class="section-note" style="margin:6px 0 0;">消息、计划、弹窗卡片</p>
+            </div>
+            <div class="panel">
+              <div class="radius-demo" style="border-radius: var(--control-radius); margin-bottom:10px;"></div>
+              <strong style="font-size:13px;">--control-radius · 9px</strong>
+              <p class="section-note" style="margin:6px 0 0;">按钮、输入框、标签（基础 button 当前 8px，新控件向 9px 靠拢）</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="icons">
+          <div class="section-head">
+            <h3>图标尺寸</h3>
+            <span>同组必须统一</span>
+          </div>
+          <div class="panel">
+            <div class="demo-row">
+              <div style="text-align:center;">
+                <div class="icon-demo" style="width:12px;height:12px;font-size:8px;">·</div>
+                <div class="type-meta" style="margin-top:6px;text-align:center;">12px</div>
+              </div>
+              <div style="text-align:center;">
+                <div class="icon-demo" style="width:14px;height:14px;font-size:9px;">☰</div>
+                <div class="type-meta" style="margin-top:6px;text-align:center;">14px 默认</div>
+              </div>
+              <div style="text-align:center;">
+                <div class="icon-demo" style="width:16px;height:16px;font-size:10px;">⚙</div>
+                <div class="type-meta" style="margin-top:6px;text-align:center;">15–16px 工具栏</div>
+              </div>
+              <div style="text-align:center;">
+                <div class="icon-demo" style="width:18px;height:18px;font-size:11px;">📄</div>
+                <div class="type-meta" style="margin-top:6px;text-align:center;">18px 强调</div>
+              </div>
+            </div>
+            <p class="section-note" style="margin-bottom:0;">图标必须 flex-shrink: 0；容器变窄时只隐藏文字 label，图标尺寸不变。</p>
+          </div>
+        </section>
+
+        <section id="layers">
+          <div class="section-head">
+            <h3>层级 z-index</h3>
+            <span>禁止 9999</span>
+          </div>
+          <div class="grid-2">
+            <div class="panel">
+              <div class="layer-stack">
+                <div class="layer-item" style="top:12px; z-index: var(--layer-popover);">popover · 90</div>
+                <div class="layer-item" style="top:38px; z-index: var(--layer-toast);">toast · 95</div>
+                <div class="layer-item" style="top:64px; z-index: var(--layer-context-menu);">context menu · 97</div>
+                <div class="layer-item" style="top:90px; z-index: var(--layer-modal);">modal · 100</div>
+                <div class="layer-item" style="top:116px; z-index: var(--layer-critical-modal);">critical modal · 110</div>
+              </div>
+            </div>
+            <div class="panel">
+              <ul style="margin:0; padding-left:18px; font-size:13px; line-height:1.8; color:hsl(var(--muted-foreground));">
+                <li><span class="mono">--layer-popover: 90</span></li>
+                <li><span class="mono">--layer-toast: 95</span></li>
+                <li><span class="mono">--layer-context-menu-backdrop: 96</span></li>
+                <li><span class="mono">--layer-context-menu: 97</span></li>
+                <li><span class="mono">--layer-modal: 100</span></li>
+                <li><span class="mono">--layer-critical-modal: 110</span></li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section id="controls">
+          <div class="section-head">
+            <h3>按钮与控件</h3>
+            <span>高度 32px</span>
+          </div>
+          <div class="panel">
+            <div class="demo-row">
+              <button type="button" class="btn-primary">主按钮 / 发送</button>
+              <button type="button" class="btn-ghost">次级 ghost</button>
+              <button type="button" class="composer-toggle">默认工具</button>
+              <button type="button" class="composer-toggle is-active">开启态</button>
+            </div>
+            <p class="section-note" style="margin-bottom:0;">主按钮用 --primary（深色实心）；普通 toggle active 只用碧落淡蓝，不用主色黑/白按钮样式。</p>
+          </div>
+        </section>
+
+        <section id="composer">
+          <div class="section-head">
+            <h3>输入框组合</h3>
+            <span>composer 真实结构</span>
+          </div>
+          <div class="composer-mock">
+            <div class="demo-row" style="margin-bottom:4px;">
+              <span class="capability-chip"><span class="chip-icon">Q</span><strong>公司制度查询</strong><small>内置命令</small></span>
+            </div>
+            <textarea placeholder="输入问题… 选 /query 后这里只写真实问题">Project_R 的文件录入权限规则是什么？</textarea>
+            <div class="composer-toolbar">
+              <div class="demo-row">
+                <button type="button" class="composer-toggle">📎</button>
+                <button type="button" class="composer-toggle is-active">深度思考</button>
+                <button type="button" class="composer-toggle">联网</button>
+                <button type="button" class="composer-toggle">提示词</button>
+              </div>
+              <button type="button" class="btn-primary">发送</button>
+            </div>
+          </div>
+          <p class="section-note">底部功能按钮是一组同级工具：高度 32px、圆角 8px、active 统一碧落淡蓝。附件入口只保留一个纸夹。</p>
+        </section>
+
+        <section id="status">
+          <div class="section-head">
+            <h3>状态标签</h3>
+            <span>小尺寸 · 低饱和</span>
+          </div>
+          <div class="panel">
+            <div class="demo-row">
+              <span class="status-pill muted">Running</span>
+              <span class="status-pill warning">Waiting Approval</span>
+              <span class="status-pill success">Completed</span>
+              <span class="status-pill destructive">Failed</span>
+              <span class="status-pill warning">needs_repreprocess</span>
+              <span class="status-pill success">synced</span>
+            </div>
+            <p class="section-note" style="margin-bottom:0;">Thread：Draft / Planning / Running / Waiting Approval / Need Review / Failed / Completed / Archived</p>
+          </div>
+          <div class="panel" style="margin-top:12px;">
+            <p class="section-note" style="margin-top:0;"><strong>侧栏会话列表示例</strong></p>
+            <div class="session-list">
+              <button type="button" class="session-item is-active">
+                <span class="session-title">二期方案讨论</span>
+                <span class="session-preview">正在整理项目资料…</span>
+              </button>
+              <button type="button" class="session-item">
+                <span class="session-title">客户情报整理</span>
+                <span class="session-preview">已完成 3 个步骤</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section id="cards">
+          <div class="section-head">
+            <h3>卡片使用边界</h3>
+            <span>只框具体对象</span>
+          </div>
+          <div class="grid-2">
+            <div class="object-card">
+              <header>
+                <strong>Agent 执行计划</strong>
+                <span class="status-pill warning">Running</span>
+              </header>
+              <p>默认只展示高层摘要；日志、diff、完整输出通过展开查看。</p>
+              <ol class="step-list">
+                <li>读取项目资料目录</li>
+                <li>调用知识库 /query</li>
+                <li>生成变更摘要（需确认）</li>
+              </ol>
+            </div>
+            <div class="object-card">
+              <header>
+                <strong>工具调用 · read_file</strong>
+                <span class="status-pill success">Completed</span>
+              </header>
+              <p class="mono">workspace/project/demo/spec.md</p>
+              <p style="margin-top:8px;">失败时可自动展开错误；成功默认折叠细节。</p>
+            </div>
+          </div>
+          <p class="section-note">❌ 不要把「整个设置页」「整个文件面板外框」再套一层阴影卡片。大区块用分区 + 细边框 + 留白。</p>
+        </section>
+
+        <section id="layout">
+          <div class="section-head">
+            <h3>三栏工作台</h3>
+            <span>导航 · 执行 · 上下文</span>
+          </div>
+          <div class="workbench-wire">
+            <div class="wire-topbar">
+              <span>顶部业务导航 · 当前工作区工具</span>
+              <span>右上角：通知 / 设置 / 登出</span>
+            </div>
+            <div class="wire-pane is-active-outline">
+              <div class="wire-pane-head">左 · 导航区</div>
+              <div class="wire-pane-body">项目 / 个人工作台 / 会话列表<br>当前项碧落淡蓝高亮<br>左下角固定当前用户</div>
+            </div>
+            <div class="wire-pane">
+              <div class="wire-pane-head">中 · 执行区</div>
+              <div class="wire-pane-body">Chat 或 Agent 任务流<br>第一层：是否在跑、要不要确认<br>第二层：计划与步骤摘要</div>
+            </div>
+            <div class="wire-pane">
+              <div class="wire-pane-head">右 · 单一上下文面板</div>
+              <div class="wire-pane-body">文件管理 / CRM / 客户情报 / 提示词 / Skills / 来源预览<br>同一时间只开一个 utilityPanel<br>切换会话时自动关闭或刷新</div>
+            </div>
+          </div>
+          <p class="section-note"><strong>与代码一致：</strong>双对话在中间执行区并排，不在右栏；设置在顶栏右上角；工作区分个人 / 项目 / CRM；Scratch 便签在 Tab 栏占满中间区。</p>
+        </section>
+
+        <section id="motion">
+          <div class="section-head">
+            <h3>动效</h3>
+            <span>物理反馈用于理解状态，不做装饰</span>
+          </div>
+          <div class="grid-2">
+            <div class="panel">
+              <p class="section-note" style="margin-top:0;">悬停和按下此按钮：hover 轻上浮，active 触发 scale(0.96) 微缩。</p>
+              <button type="button" class="motion-demo">hover / active 示例</button>
+            </div>
+            <div class="panel">
+              <p class="section-note" style="margin-top:0;">Loading：匀速旋转 + 稳定中文文案，禁止高饱和多色 loading。</p>
+              <div class="demo-row">
+                <div class="spinner" aria-hidden="true"></div>
+                <span style="font-size:13px; color:hsl(var(--muted-foreground));">正在生成回答…</span>
+              </div>
+            </div>
+          </div>
+          <div class="grid-2" style="margin-top:12px;">
+            <div class="panel">
+              <p class="section-note" style="margin-top:0;"><strong>弹簧 Pill / 会话项触感</strong><br>用于独立按钮、Pill、会话项；不得造成布局跳动。</p>
+              <div class="demo-row">
+                <span class="spring-pill is-active">当前会话</span>
+                <span class="spring-pill">深度思考</span>
+                <span class="spring-pill">联网搜索</span>
+              </div>
+            </div>
+            <div class="panel">
+              <p class="section-note" style="margin-top:0;"><strong>毛玻璃浮层材质</strong><br>仅用于临时浮层、通知、Popover 和检索建议。</p>
+              <div class="glass-box">
+                <div class="mono" style="color:hsl(var(--brand-accent)); margin-bottom:6px;">--glass-bg + --shadow-md</div>
+                <strong style="font-size:13px;">Popover Layer</strong>
+                <p class="section-note" style="margin:6px 0 0;">短生命周期浮层可获得轻微空间层级。</p>
+              </div>
+            </div>
+          </div>
+          <div class="panel" style="margin-top:12px;">
+            <div class="grid-4" style="gap:8px;">
+              <div><code class="mono">0.12–0.16s</code><br><span style="font-size:12px;color:hsl(var(--muted-foreground));">hover / active</span></div>
+              <div><code class="mono">0.18–0.28s</code><br><span style="font-size:12px;color:hsl(var(--muted-foreground));">抽屉 / 展开 / spring</span></div>
+              <div><code class="mono">0.25–0.34s</code><br><span style="font-size:12px;color:hsl(var(--muted-foreground));">toast / 气泡淡入</span></div>
+              <div><code class="mono">0.8–1s linear</code><br><span style="font-size:12px;color:hsl(var(--muted-foreground));">spinner</span></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="anti-patterns">
+          <div class="section-head">
+            <h3>反模式对比</h3>
+            <span>左错右对</span>
+          </div>
+          <div class="compare">
+            <div class="compare-card bad">
+              <span class="compare-label">❌ 卡片套卡片 + 乱配色</span>
+              <div class="bad-nested-cards">
+                <div class="fake-card">
+                  设置区块 A
+                  <div class="fake-card">嵌套卡片 B · #3b82f6 边框</div>
+                </div>
+                <div class="fake-card" style="border-color:#f97316;">active 用橙色</div>
+              </div>
+            </div>
+            <div class="compare-card good">
+              <span class="compare-label">✅ 分区 + token + 碧落 active</span>
+              <div class="good-sections">
+                <div class="good-section">
+                  <strong style="font-size:14px;">设置 · 账户</strong>
+                  <p style="margin:6px 0 0; font-size:13px; color:hsl(var(--muted-foreground));">用 border-top 分区，不额外套阴影</p>
+                </div>
+                <div class="good-section">
+                  <button type="button" class="composer-toggle is-active" style="margin-top:8px;">当前选中项</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="checklist">
+          <div class="section-head">
+            <h3>Agent 交付前自检</h3>
+            <span>每次前端改动必过</span>
+          </div>
+          <ul class="checklist">
+            <li>颜色全部走 hsl(var(--token))，无硬编码 hex</li>
+            <li>普通 active 只用碧落 --control-active-*，不再使用旧浅绿或临时亮蓝</li>
+            <li>字号/间距/圆角取自阶梯，无 7/9/13/18 等奇值</li>
+            <li>同组图标尺寸统一，z-index 用 --layer-*</li>
+            <li>卡片只用于具体对象；深浅主题都看过</li>
+            <li>hover/active 有 0.12–0.16s 过渡，右侧面板可用 spring 曲线；尊重 prefers-reduced-motion</li>
+            <li>新视觉规则先更新 ui-design-language-Gemini.md 与可视化规格，再改 CSS</li>
+          </ul>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const TOKENS = [
+      { name: "--background", label: "页面底色", usage: "body / shell 背景" },
+      { name: "--foreground", label: "主文字", usage: "标题、正文" },
+      { name: "--content-area", label: "内容区底色", usage: "中间工作区" },
+      { name: "--card", label: "卡片底色", usage: "侧栏、面板、composer" },
+      { name: "--muted", label: "次级背景", usage: "hover 底、次要区块" },
+      { name: "--muted-foreground", label: "次级文字", usage: "说明、时间戳" },
+      { name: "--border", label: "默认边框", usage: "分区线、控件边框" },
+      { name: "--primary", label: "主按钮", usage: "发送、确认（非 toggle active）" },
+      { name: "--control-active-bg", label: "碧落选中底色", usage: "列表/active 按钮" },
+      { name: "--control-active-foreground", label: "碧落选中文字", usage: "active 前景" },
+      { name: "--brand-accent", label: "品牌高亮轴", usage: "标题、引导、重点边框" },
+      { name: "--success", label: "成功", usage: "完成勾、success tag" },
+      { name: "--warning", label: "警告", usage: "待确认、本机待授权" },
+      { name: "--destructive", label: "危险", usage: "删除、失败" }
+    ];
+
+    function readToken(name) {
+      return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    }
+
+    function renderSwatches() {
+      const grid = document.getElementById("colorGrid");
+      grid.innerHTML = TOKENS.map(({ name, label, usage }) => {
+        const value = readToken(name);
+        const bg = name.includes("shadow") ? "transparent" : `hsl(${value})`;
+        return `
+          <div class="swatch">
+            <div class="swatch-color" style="background:${bg};"></div>
+            <div class="swatch-meta">
+              <strong>${label}</strong>
+              <code>${name}</code>
+              <span>${value}</span>
+              <span>${usage}</span>
+            </div>
+          </div>`;
+      }).join("");
+    }
+
+    function getPreferredTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function applyTheme(theme) {
+      document.documentElement.dataset.theme = theme;
+      document.getElementById("themeIcon").textContent = theme === "dark" ? "☀️" : "🌙";
+      document.getElementById("themeLabel").textContent = theme === "dark" ? "切换浅色主题" : "切换深色主题";
+      renderSwatches();
+    }
+
+    let theme = localStorage.getItem("project-r-design-spec-theme") || getPreferredTheme();
+    applyTheme(theme);
+
+    document.getElementById("themeToggle").addEventListener("click", () => {
+      theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      localStorage.setItem("project-r-design-spec-theme", theme);
+      applyTheme(theme);
+    });
+
+    const navLinks = Array.from(document.querySelectorAll(".doc-nav a"));
+    const sections = navLinks.map((link) => document.querySelector(link.getAttribute("href")));
+
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        navLinks.forEach((link) => link.classList.toggle("is-active", link.getAttribute("href") === `#${entry.target.id}`));
+      });
+    }, { rootMargin: "-40% 0px -50% 0px", threshold: 0 });
+
+    sections.forEach((section) => section && observer.observe(section));
+  </script>
+</body>
+</html>

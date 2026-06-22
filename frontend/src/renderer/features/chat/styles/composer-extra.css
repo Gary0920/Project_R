@@ -73,12 +73,24 @@
   border: 1px solid hsl(var(--border));
   background: hsl(var(--card));
   cursor: pointer;
-  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease, box-shadow 0.14s ease, transform 0.14s ease;
+  transition: var(--transition-micro);
 }
 
-.composer-mode-toggle:hover {
+.composer-mode-toggle:hover:not(.is-active):not(:disabled) {
   color: hsl(var(--foreground));
   background: hsl(var(--muted));
+  transform: translateY(-1px);
+}
+
+.composer-mode-toggle:active:not(:disabled) {
+  transform: translateY(1px) scale(0.96);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-mode-toggle:hover:not(.is-active):not(:disabled),
+  .composer-mode-toggle:active:not(:disabled) {
+    transform: none;
+  }
 }
 
 .composer-mode-toggle.is-active {

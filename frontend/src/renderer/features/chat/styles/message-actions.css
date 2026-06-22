@@ -52,8 +52,8 @@
 }
 
 .message-action-btn.is-copied {
-  background: hsl(156 30% 94%);
-  color: hsl(156 45% 30%);
+  background: hsl(var(--control-active-bg));
+  color: hsl(var(--control-active-foreground));
 }
 
 .message-action-btn.is-rated {

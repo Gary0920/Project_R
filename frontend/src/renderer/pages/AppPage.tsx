@@ -5,7 +5,6 @@ import { ApiError, type ApiClientOptions } from "../shared/api/client";
 import { createApiOptions } from "../shared/api/options";
 import { createChatSession, fetchSessionAttachmentBlob, listChatMessages, listChatSessions, searchChatSessions } from "../features/chat/api";
 import { useChatDraft } from "../features/chat/useChatDraft";
-import { getLLMHealth } from "../shared/api/health";
 import type { NotificationView } from "../features/notifications/api";
 import { listSkills } from "../features/skills/api";
 import { authTokenAtom, clearAuthAtom, currentUserAtom } from "../features/auth/state";
@@ -35,7 +34,6 @@ import type {
   ChatContextTraceResponse,
   AgentRunResponse,
   GeneratedFileResponse,
-  LLMProviderStatusResponse,
   SkillResponse,
   SkillRunResponse,
 } from "../shared/api/types";
@@ -80,10 +78,9 @@ import {
   renderAvatar,
   resolveAvatarUrl,
 } from "../features/chat/sessionDisplay";
-import { toModelOption } from "../features/chat/modelOptions";
 import { makeLocalMessage } from "../features/chat/localMessages";
 import { latestSessionTokenTotal } from "../features/chat/sessionMetrics";
-import { readWebSearchPreference, shouldSuggestAgentMode, writeWebSearchPreference } from "../features/prompts/sessionPrompt";
+import { shouldSuggestAgentMode } from "../features/prompts/sessionPrompt";
 import { useChatSendResults } from "../features/chat/useChatSend";
 import { useChatSendOrchestrator } from "../features/chat/useChatSendOrchestrator";
 import { useChatStreamControls } from "../features/chat/useChatStream";
@@ -99,6 +96,7 @@ import { useChatMessageActions } from "../features/chat/hooks/useChatMessageActi
 import { useChatSessionManagement, type RenameScope } from "../features/chat/hooks/useChatSessionManagement";
 import { useSlashCommandSelection } from "../features/chat/hooks/useSlashCommandSelection";
 import { useAppPromptSelection } from "../features/chat/hooks/useAppPromptSelection";
+import { useAppModelControls } from "../features/chat/hooks/useAppModelControls";
 type SplitPaneKey = "left" | "right";
 type UtilityPanel = "workspace" | "knowledge" | "customer-intelligence" | "prompt" | "skills" | "source" | "crm";
 type SettingsAdminTab = "overview" | "users" | "reviews" | "gbrain" | "templates" | "updates" | "audit";
@@ -121,9 +119,6 @@ export function AppPage() {
   const [mode, setMode] = useAtom(activeModeAtom);
   const [tabs, setTabs] = useAtom(tabsAtom);
   const [activeTabId, setActiveTabId] = useAtom(activeTabIdAtom);
-  const [thinkingEnabled, setThinkingEnabled] = useState(false);
-  const [webSearchEnabled, setWebSearchEnabled] = useState(readWebSearchPreference);
-  const [temperature, setTemperature] = useState<number | undefined>(undefined);
   const [quotedMessage, setQuotedMessage] = useState<{ sessionId: number; messageId: number; content: string; role: string } | null>(null);
   // 切换会话时清空引用（防止 A 会话内容被发送到 B 会话）
   useEffect(() => {
@@ -149,11 +144,6 @@ export function AppPage() {
     useChatStreamControls({ setMessagesBySession, setSendingSessions });
   const [emailDraftEditorFile, setEmailDraftEditorFile] = useState<GeneratedFileResponse | null>(null);
   const [skills, setSkills] = useState<SkillResponse[]>([]);
-  const [llmProviders, setLlmProviders] = useState<LLMProviderStatusResponse[]>([]);
-  const [modelsLoading, setModelsLoading] = useState(true);
-  const [modelConfigError, setModelConfigError] = useState("");
-  const [selectedModelKey, setSelectedModelKey] = useState<string | null>(null);
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsInitialAdminTab, setSettingsInitialAdminTab] = useState<SettingsAdminTab | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -170,6 +160,22 @@ export function AppPage() {
     () => createApiOptions(serverUrl, token, clearAuth),
     [clearAuth, serverUrl, token],
   );
+  const {
+    modelConfigError,
+    modelMenuOpen,
+    modelOptions,
+    modelsLoading,
+    selectedModelKey,
+    selectedModelOption,
+    setModelMenuOpen,
+    setSelectedModelKey,
+    setTemperature,
+    setThinkingEnabled,
+    temperature,
+    thinkingEnabled,
+    toggleWebSearch,
+    webSearchEnabled,
+  } = useAppModelControls(apiOptions);
   const {
     clearPromptSelection,
     companyPrompts,
@@ -320,14 +326,6 @@ export function AppPage() {
     workspaces,
   });
 
-  function toggleWebSearch() {
-    setWebSearchEnabled((current) => {
-      const next = !current;
-      writeWebSearchPreference(next);
-      return next;
-    });
-  }
-
   const activeSessionIsSending = activeSessionId ? Boolean(sendingSessions[activeSessionId]) : false;
   useChatGlobalShortcuts({
     activeSessionId,
@@ -338,13 +336,6 @@ export function AppPage() {
     onNewSession: () => void handleCreateSession(),
   });
   const activeWorkspace = workspaces.find((item) => item.id === activeWorkspaceId);
-  const modelOptions = useMemo(() => {
-    return llmProviders
-      .filter((provider) => provider.configured)
-      .map(toModelOption)
-      .sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || a.label.localeCompare(b.label, "zh-CN"));
-  }, [llmProviders]);
-  const selectedModelOption = modelOptions.find((option) => option.key === selectedModelKey) ?? modelOptions.find((option) => option.isDefault) ?? modelOptions[0] ?? null;
   const {
     copiedMessageId,
     deleteLastMessageTarget,
@@ -611,37 +602,6 @@ export function AppPage() {
       mounted = false;
     };
   }, [activeWorkspaceId, apiOptions, clearAuth, setActiveSessionId, setError, setIsLoading, setSessions]);
-
-  useEffect(() => {
-    let mounted = true;
-    setModelsLoading(true);
-    setModelConfigError("");
-    getLLMHealth(apiOptions)
-      .then((health) => {
-        if (!mounted) return;
-        setLlmProviders(health.providers);
-      })
-      .catch(() => {
-        if (!mounted) return;
-        setLlmProviders([]);
-        setModelConfigError("无法读取模型配置");
-      })
-      .finally(() => {
-        if (mounted) setModelsLoading(false);
-      });
-    return () => {
-      mounted = false;
-    };
-  }, [apiOptions]);
-
-  useEffect(() => {
-    if (modelOptions.length === 0) {
-      setSelectedModelKey(null);
-      return;
-    }
-    if (selectedModelKey && modelOptions.some((option) => option.key === selectedModelKey)) return;
-    setSelectedModelKey((modelOptions.find((option) => option.isDefault) ?? modelOptions[0]).key);
-  }, [modelOptions, selectedModelKey]);
 
   useEffect(() => {
     let mounted = true;

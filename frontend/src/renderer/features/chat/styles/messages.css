@@ -125,8 +125,8 @@
   padding: 10px 14px;
   border: 1px solid hsl(156 26% 76%);
   border-radius: 10px;
-  background: hsl(156 34% 96%);
-  color: hsl(156 42% 28%);
+  background: hsl(var(--control-active-bg-hover));
+  color: hsl(var(--control-active-foreground));
   font-size: 14px;
   line-height: 1.5;
 }
@@ -139,6 +139,24 @@
   grid-template-columns: 30px minmax(0, 1fr);
   align-items: start;
   gap: 10px;
+  animation: message-row-in 0.34s ease-out both;
+}
+
+@keyframes message-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-row {
+    animation: none;
+  }
 }
 
 .message-body {
@@ -269,8 +287,8 @@
 .message-quote {
   margin: 10px 0 14px;
   padding: 8px 12px;
-  border-left: 3px solid hsl(156 42% 52%);
-  background: hsl(156 28% 96%);
+  border-left: 3px solid hsl(var(--brand-accent));
+  background: hsl(var(--control-active-bg-hover));
   color: hsl(var(--foreground) / 0.78);
 }
 
@@ -317,13 +335,13 @@
 }
 
 .message-source-ref:hover {
-  border-color: hsl(156 24% 70%);
-  background: hsl(156 28% 96%);
-  color: hsl(156 42% 28%);
+  border-color: hsl(var(--control-active-border));
+  background: hsl(var(--control-active-bg-hover));
+  color: hsl(var(--control-active-foreground));
 }
 
 .message-wikilink {
-  color: hsl(156 42% 32%);
+  color: hsl(var(--control-active-foreground));
   font-weight: 650;
 }
 
@@ -419,9 +437,9 @@
 }
 
 .message-source-item:hover {
-  border-color: hsl(156 24% 70%);
-  background: hsl(156 28% 96%);
-  color: hsl(156 42% 28%);
+  border-color: hsl(var(--control-active-border));
+  background: hsl(var(--control-active-bg-hover));
+  color: hsl(var(--control-active-foreground));
 }
 
 .message-source-index {
@@ -432,8 +450,8 @@
 .message-source-scope {
   flex: 0 0 auto;
   border-radius: 999px;
-  background: hsl(156 28% 94%);
-  color: hsl(156 44% 28%);
+  background: hsl(var(--control-active-bg));
+  color: hsl(var(--control-active-foreground));
   padding: 1px 5px;
   font-size: 10px;
   font-weight: 750;
@@ -509,9 +527,9 @@
 
 .source-evidence-filter:hover,
 .source-evidence-filter.is-active {
-  border-color: hsl(156 24% 70%);
-  background: hsl(156 28% 96%);
-  color: hsl(156 42% 28%);
+  border-color: hsl(var(--control-active-border));
+  background: hsl(var(--control-active-bg-hover));
+  color: hsl(var(--control-active-foreground));
 }
 
 .source-evidence-summary {
@@ -627,8 +645,8 @@
 }
 
 .message-attachment-file:hover {
-  border-color: hsl(156 24% 70%);
-  background: hsl(156 28% 96%);
+  border-color: hsl(var(--control-active-border));
+  background: hsl(var(--control-active-bg-hover));
 }
 
 .message-attachment-file:disabled {
@@ -654,8 +672,8 @@
 }
 
 .message-attachment-file-kind.is-text {
-  background: hsl(156 28% 94%);
-  color: hsl(156 44% 30%);
+  background: hsl(var(--control-active-bg));
+  color: hsl(var(--control-active-foreground));
 }
 
 .message-attachment-file-main {
@@ -856,9 +874,9 @@
   gap: 12px;
   margin-top: 10px;
   padding: 10px 12px;
-  border: 1px solid hsl(156 24% 84%);
+  border: 1px solid hsl(var(--control-active-border));
   border-radius: 8px;
-  background: hsl(156 28% 96%);
+  background: hsl(var(--control-active-bg-hover));
 }
 
 .message-file-card.is-email-draft {
@@ -887,8 +905,8 @@
   height: 28px;
   flex: 0 0 auto;
   border-radius: 7px;
-  background: hsl(156 34% 90%);
-  color: hsl(156 45% 28%);
+  background: hsl(var(--control-active-bg));
+  color: hsl(var(--control-active-foreground));
 }
 
 .message-file-card.is-email-draft .message-file-icon {
@@ -932,10 +950,10 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  border: 1px solid hsl(156 34% 76%);
+  border: 1px solid hsl(var(--control-active-border));
   border-radius: 7px;
   background: hsl(var(--card));
-  color: hsl(156 45% 28%);
+  color: hsl(var(--control-active-foreground));
   padding: 6px 10px;
   font-size: 12px;
   font-weight: 650;
@@ -943,13 +961,13 @@
 }
 
 .message-file-save {
-  background: hsl(156 45% 28%);
+  background: hsl(var(--control-active-foreground));
   color: #fff;
 }
 
 .message-file-download.is-copied {
-  border-color: hsl(156 34% 76%);
-  color: hsl(156 45% 28%);
+  border-color: hsl(var(--control-active-border));
+  color: hsl(var(--control-active-foreground));
 }
 
 .message-file-download.is-failed {
@@ -964,7 +982,7 @@
 
 .message-file-status {
   flex: 1 0 100%;
-  color: hsl(156 45% 28%);
+  color: hsl(var(--control-active-foreground));
   font-size: 12px;
 }
 
@@ -1249,9 +1267,9 @@
 }
 
 .message-context-trace-action:hover:not(:disabled) {
-  border-color: hsl(156 24% 70%);
-  background: hsl(156 28% 96%);
-  color: hsl(156 42% 28%);
+  border-color: hsl(var(--control-active-border));
+  background: hsl(var(--control-active-bg-hover));
+  color: hsl(var(--control-active-foreground));
 }
 
 .message-context-trace-action:disabled {
@@ -1423,7 +1441,7 @@
 }
 
 .message-agent-event.is-completed .message-agent-event-dot {
-  background: hsl(156 45% 42%);
+  background: hsl(var(--brand-accent));
 }
 
 .message-agent-event.is-failed .message-agent-event-dot {
@@ -1789,8 +1807,8 @@
 .message-skill-header span {
   flex: none;
   border-radius: 999px;
-  background: hsl(156 28% 94%);
-  color: hsl(156 45% 28%);
+  background: hsl(var(--control-active-bg));
+  color: hsl(var(--control-active-foreground));
   font-size: 12px;
   font-weight: 650;
   padding: 2px 8px;

@@ -1743,9 +1743,9 @@ h1, h2 { margin: 0; line-height: 1.2; }
 
 .admin-role-select.is-admin,
 .admin-role-tag.is-admin {
-  border-color: hsl(217 89% 55% / 0.32);
-  background: hsl(217 91% 60% / 0.12);
-  color: hsl(217 78% 42%);
+  border-color: hsl(var(--control-active-border));
+  background: hsl(var(--control-active-bg));
+  color: hsl(var(--control-active-foreground));
 }
 
 .admin-role-select select {
@@ -2449,9 +2449,9 @@ button:hover .profile-name-edit-icon {
 
 :root[data-theme="dark"] .admin-role-select.is-admin,
 :root[data-theme="dark"] .admin-role-tag.is-admin {
-  border-color: hsl(217 91% 68% / 0.34);
-  background: hsl(217 91% 68% / 0.14);
-  color: hsl(217 91% 76%);
+  border-color: hsl(var(--control-active-border));
+  background: hsl(var(--control-active-bg));
+  color: hsl(var(--control-active-foreground));
 }
 
 :root[data-theme="dark"] .admin-action-menu,

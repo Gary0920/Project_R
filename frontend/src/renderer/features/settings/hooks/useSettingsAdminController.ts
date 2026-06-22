@@ -42,7 +42,6 @@ import {
 } from "../../admin/api";
 import { listClientUpdateReleases, uploadClientUpdateRelease } from "../../updates/api";
 import { ApiError, type ApiClientOptions } from "../../../shared/api/client";
-import { parseApiDate } from "../../../shared/utils/time";
 import type {
   AdminGroupCandidateResponse,
   AdminTemplateStatusResponse,
@@ -63,12 +62,17 @@ import type { AdminSettingsPanelController } from "../../admin/components/AdminS
 import type { AdminComboOption } from "../components/AdminComboInput";
 import {
   asRecord,
+  filterAuditLogs,
+  filterTemplates,
+  filterUsers,
   generateTemporaryPassword,
   isSystemAccount,
+  paginate,
   recordNumber,
   recordText,
   roleLabel,
   shortValue,
+  sortUsers,
   statusLabel,
   toolResultArray,
   toolStatus,
@@ -1037,49 +1041,6 @@ export function useSettingsAdminController({
     } finally {
       setAdminLoading(false);
     }
-  }
-
-  // Admin pagination / filter helpers
-  function paginate<T>(items: T[], page: number, pageSize: number): T[] {
-    const start = (page - 1) * pageSize;
-    return items.slice(start, start + pageSize);
-  }
-
-  function filterUsers(users: AdminUserResponse[], search: string): AdminUserResponse[] {
-    if (!search.trim()) return users;
-    const s = search.toLowerCase();
-    return users.filter((u) => u.username.toLowerCase().includes(s) || (u.nickname ?? "").toLowerCase().includes(s));
-  }
-
-  function sortUsers(users: AdminUserResponse[], sort: { field: "username" | "created_at"; dir: "asc" | "desc" }): AdminUserResponse[] {
-    return [...users].sort((a, b) => {
-      if (a.is_active !== b.is_active) {
-        return a.is_active ? -1 : 1;
-      }
-      let cmp = 0;
-      if (sort.field === "username") {
-        cmp = a.username.localeCompare(b.username);
-      } else if (sort.field === "created_at") {
-        cmp = parseApiDate(a.created_at).getTime() - parseApiDate(b.created_at).getTime();
-      }
-      return sort.dir === "asc" ? cmp : -cmp;
-    });
-  }
-
-  function filterTemplates(templates: AdminTemplateStatusResponse["items"], search: string): AdminTemplateStatusResponse["items"] {
-    if (!search.trim()) return templates;
-    const s = search.toLowerCase();
-    return templates.filter((t) => t.display_name.toLowerCase().includes(s) || t.skill_name.toLowerCase().includes(s));
-  }
-
-  function filterAuditLogs(logs: AuditLogResponse[], search: string, actionType: string): AuditLogResponse[] {
-    let result = logs;
-    if (actionType) {
-      result = result.filter((l) => l.action === actionType);
-    }
-    if (!search.trim()) return result;
-    const s = search.toLowerCase();
-    return result.filter((l) => l.action.toLowerCase().includes(s) || (l.detail ?? "").toLowerCase().includes(s));
   }
 
   const uniqueAuditActions = Array.from(new Set(auditLogs.map((l) => l.action))).sort();

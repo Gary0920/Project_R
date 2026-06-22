@@ -433,13 +433,22 @@
   right: 12px;
   margin-bottom: 10px;
   padding: 7px;
-  border: 1px solid hsl(var(--border));
+  border: 1px solid var(--glass-border);
   border-radius: 10px;
-  background: hsl(var(--card));
-  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.12), 0 2px 8px rgba(15, 23, 42, 0.06);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-md);
   max-height: 292px;
   overflow-y: auto;
   z-index: var(--layer-popover);
+  animation: popover-in 0.28s var(--spring-curve) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skill-candidate-panel {
+    animation: none;
+  }
 }
 
 .skill-candidate-panel-header {
@@ -542,7 +551,7 @@
   border: 1px solid hsl(var(--border));
   border-radius: 999px;
   background: hsl(var(--muted));
-  color: hsl(156 45% 30%);
+  color: hsl(var(--control-active-foreground));
   padding: 3px 8px;
   font-size: 11px;
   font-weight: 700;
@@ -570,7 +579,7 @@
 :root[data-theme="dark"] .skill-candidate-panel-header kbd {
   border-color: hsl(220 14% 34%);
   background: hsl(220 16% 18%);
-  color: hsl(156 42% 72%);
+  color: hsl(var(--control-active-foreground));
 }
 
 :root[data-theme="dark"] .skill-candidate-item {
@@ -579,8 +588,8 @@
 
 :root[data-theme="dark"] .skill-candidate-item.is-active,
 :root[data-theme="dark"] .skill-candidate-item:hover {
-  border-color: hsl(156 34% 36% / 0.65);
-  background: hsl(156 30% 26% / 0.34);
+  border-color: hsl(var(--control-active-border) / 0.65);
+  background: hsl(var(--control-active-bg));
 }
 
 :root[data-theme="dark"] .skill-candidate-title strong {
@@ -594,7 +603,7 @@
 :root[data-theme="dark"] .skill-candidate-scope {
   border-color: hsl(220 14% 34%);
   background: hsl(220 16% 18%);
-  color: hsl(156 36% 74%);
+  color: hsl(var(--control-active-foreground));
 }
 
 :root[data-theme="dark"] .skill-candidate-empty {
