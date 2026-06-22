@@ -13,9 +13,11 @@ Thumbs.db
 .env.local
 .scratch/
 .obsidian/
+.reasonix/
 .claude/settings.local.json
 .claude/skills/
 _release/
+$tmp
 test.md
 *.zip
 *.7z
@@ -39,6 +41,10 @@ backend/update_packages/
 backend/knowledge_base/.agents/
 backend/knowledge_base/.claude/
 backend/knowledge_base/raw/
+
+# Frontend local/runtime files
+frontend/.env.development
+frontend/test-results/
 
 # Local AI planning artifacts
 Spec/plans/
