@@ -2,7 +2,6 @@ import { useEffect, useState, type RefObject } from "react";
 
 import type { ApiClientOptions } from "../../../shared/api/client";
 import type {
-  ChatContextTraceResponse,
   GeneratedFileResponse,
   WorkspaceResponse,
 } from "../../../shared/api/types";
@@ -15,16 +14,16 @@ import type { SourcePreview } from "../messageContent";
 import { MessageActions } from "./MessageActions";
 import { MessageAgentRunCard } from "./MessageAgentRunCard";
 import { MessageAttachments } from "./MessageAttachments";
+import { ChatEmptyState } from "./ChatEmptyState";
+import { ChatReplyLoadingMotion } from "./ChatReplyLoadingMotion";
+import { MessageContextTraceCard } from "./MessageContextTraceCard";
 import { MessageGeneratedFile } from "./MessageGeneratedFile";
 import { MessageSkillRunCard } from "./MessageSkillRunCard";
 import type { TextTransformAction } from "../textTransform";
 import { buildLoadingStatusTexts } from "../loadingStatusTexts";
-import {
-  buildWebSearchSummary,
-  hasNonDefaultSessionPrompt,
-  shouldShowContextTraceCard,
-} from "../contextTraceVisibility";
 import { MessageSourceList } from "../../knowledge/components/MessageSourceList";
+
+const COMPACT_META_GAP_MS = 5 * 60 * 1000;
 
 export type ChatMessageListController = Record<string, any> & {
   apiOptions: ApiClientOptions;
@@ -47,98 +46,23 @@ export type ChatMessageListController = Record<string, any> & {
   onSaveGeneratedFileToWorkspace?: (file: GeneratedFileResponse) => Promise<{ path: string }>;
   onEditGeneratedEmailDraft?: (file: GeneratedFileResponse) => void;
   onTransformMessage?: (message: ChatMessage, action: TextTransformAction) => void;
+  onFocusComposer?: () => void;
 };
 
 export type ChatMessageListProps = {
   controller: ChatMessageListController;
 };
 
-function renderContextTraceCard(
-  contextTrace: ChatContextTraceResponse | null | undefined,
-  messageSourceCount = 0,
-  options: { onSubmitGBrainThinkReview?: () => void; gbrainThinkReviewBusy?: boolean } = {},
-) {
-  if (!shouldShowContextTraceCard(contextTrace, messageSourceCount) || !contextTrace) return null;
-  const attachments = contextTrace.attachments ?? [];
-  const sources = contextTrace.knowledge?.sources ?? [];
-  const prompt = contextTrace.prompt;
-  const gbrainThink = contextTrace.gbrain_think;
-  const gbrainGaps = gbrainThink?.gaps?.filter(Boolean) ?? [];
-  const gbrainConflicts = gbrainThink?.conflicts?.filter(Boolean) ?? [];
-  const gbrainWarnings = gbrainThink?.warnings?.filter(Boolean) ?? [];
-  const showKnowledgeSection = !messageSourceCount && (sources.length || contextTrace.knowledge?.source_count);
-  const webSearchSummary = buildWebSearchSummary(contextTrace);
-  return (
-    <div className="message-context-trace">
-      <div className="message-context-trace-header">
-        <strong>本轮上下文</strong>
-      </div>
-      <div className="message-context-trace-grid">
-        {attachments.length ? (
-          <div className="message-context-trace-section">
-            <span>附件</span>
-            {attachments.slice(0, 4).map((attachment) => (
-              <small key={`${attachment.id}-${attachment.name}`}>{attachment.name ?? `附件 ${attachment.id}`}</small>
-            ))}
-            {attachments.length > 4 ? <small>另有 {attachments.length - 4} 个附件</small> : null}
-          </div>
-        ) : null}
-        {showKnowledgeSection ? (
-          <div className="message-context-trace-section">
-            <span>知识来源</span>
-            {sources.slice(0, 4).map((source) => (
-              <small key={`${source.index}-${source.file}`}>{source.section_path || source.source_title || source.file}</small>
-            ))}
-            {(contextTrace.knowledge?.source_count ?? 0) > sources.length ? (
-              <small>共 {contextTrace.knowledge?.source_count} 个来源</small>
-            ) : null}
-          </div>
-        ) : null}
-        {webSearchSummary ? (
-          <div className="message-context-trace-section">
-            <span>联网搜索</span>
-            <small>检索词：{webSearchSummary.query}</small>
-            <small>{webSearchSummary.providerLabel} · {webSearchSummary.resultCount} 条结果</small>
-          </div>
-        ) : null}
-        {gbrainThink && (gbrainGaps.length || gbrainConflicts.length || gbrainWarnings.length) ? (
-          <div className="message-context-trace-section is-gbrain-think">
-            <span>
-              GBrain 推理状态
-              {options.onSubmitGBrainThinkReview ? (
-                <button
-                  className="message-context-trace-action"
-                  disabled={options.gbrainThinkReviewBusy}
-                  onClick={options.onSubmitGBrainThinkReview}
-                  type="button"
-                >
-                  {options.gbrainThinkReviewBusy ? "提交中" : "提交审核"}
-                </button>
-              ) : null}
-            </span>
-            {gbrainConflicts.length ? <small className="is-conflict">冲突 {gbrainConflicts.length} 条</small> : null}
-            {gbrainGaps.length ? <small className="is-gap">缺口 {gbrainGaps.length} 条</small> : null}
-            {gbrainWarnings.length ? <small className="is-warning">警告 {gbrainWarnings.length} 条</small> : null}
-          </div>
-        ) : null}
-        {hasNonDefaultSessionPrompt(prompt) ? (
-          <div className="message-context-trace-section">
-            <span>提示词</span>
-            <small>{prompt?.selected_prompt_id}</small>
-            {prompt?.system_prompt_preview ? <small>{prompt.system_prompt_preview}</small> : null}
-          </div>
-        ) : null}
-        {contextTrace.skill?.skill_name ? (
-          <div className="message-context-trace-section">
-            <span>Skill</span>
-            <small>{contextTrace.skill.display_name || contextTrace.skill.skill_name}</small>
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
+function shouldCompactMessageMeta(messages: ChatMessage[], index: number) {
+  if (index <= 0) return false;
+  const current = messages[index];
+  const previous = messages[index - 1];
+  if (current.role !== previous.role) return false;
+  const currentTime = Date.parse(current.created_at);
+  const previousTime = Date.parse(previous.created_at);
+  if (!Number.isFinite(currentTime) || !Number.isFinite(previousTime)) return false;
+  return currentTime - previousTime < COMPACT_META_GAP_MS;
 }
-
 
 export function ChatMessageList({ controller }: ChatMessageListProps) {
   const {
@@ -167,6 +91,7 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
     onOpenGeneratedEmailClient,
     onSaveGeneratedFileToWorkspace,
     onTransformMessage,
+    onFocusComposer,
     paneSessionId,
     renderAvatar,
     requestDeleteMessageContext,
@@ -177,7 +102,6 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
     setEditingMessageId,
     setSourcePreview,
     setUtilityPanel,
-    sideBySideOpen,
     startEditingMessage,
     token,
   } = controller;
@@ -224,7 +148,7 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
 
     return (
       <div className={`loading-placeholder-inner ${inline ? "loading-placeholder-inline" : ""}`}>
-        <span aria-hidden="true" className="chat-loading-spinner" />
+        <ChatReplyLoadingMotion />
         <span className="loading-placeholder-text">{statusTexts[stepIndex]}</span>
       </div>
     );
@@ -249,32 +173,13 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
   }
 
   function renderEmptyState(isSplitPane: boolean) {
-    if (isSplitPane) {
-      return (
-        <div className="empty-chat empty-chat-compact">
-          <span className="empty-chat-mark"><ProjectRLogo /></span>
-          <h2>选择一个对话</h2>
-          <p>先点击这个区域，再从左侧会话列表选择要放进来的对话。</p>
-        </div>
-      );
-    }
-    if (mode === "agent") {
-      return (
-        <div className={`empty-agent ${sideBySideOpen ? "is-split-mode" : ""}`}>
-          <div className="empty-agent-copy">
-            <span className="empty-chat-mark"><ProjectRLogo /></span>
-            <h2>{activeWorkspace ? `在「${activeWorkspace.name}」开始 Agent` : "选择项目后开始 Agent"}</h2>
-            <p>直接说明你要整理、核对或生成的业务结果。</p>
-          </div>
-        </div>
-      );
-    }
     return (
-      <div className="empty-chat">
-        <span className="empty-chat-mark"><ProjectRLogo /></span>
-        <h2>{activeWorkspace ? `在「${activeWorkspace.name}」开始聊天` : "从一个问题开始"}</h2>
-        <p>询问规范、整理资料，或把当前工作流交给 Project_R 梳理成可执行步骤。</p>
-      </div>
+      <ChatEmptyState
+        activeWorkspace={activeWorkspace}
+        isSplitPane={isSplitPane}
+        mode={mode}
+        onFocusComposer={onFocusComposer}
+      />
     );
   }
 
@@ -308,12 +213,13 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
     );
   }
 
-  function renderMessageCard(message: ChatMessage) {
+  function renderMessageCard(message: ChatMessage, messageIndex: number) {
     const isEditing = editingMessageId === message.id;
     const isBusy = messageActionBusyId === message.id;
     const hasMessageBubble = Boolean(message.content.trim()) || Boolean(message.isTyping) || Boolean(message.isRegenerating);
+    const compactMeta = shouldCompactMessageMeta(filteredMessages, messageIndex);
     return (
-      <article className={`message-row message-row-${message.role} ${message.status === "failed" ? "message-row-failed" : ""}`} key={message.id}>
+      <article className={`message-row message-row-${message.role} ${message.status === "failed" ? "message-row-failed" : ""} ${compactMeta ? "message-row-compact" : ""}`} key={message.id}>
         {message.role === "assistant" ? (
           <span className="message-avatar assistant-avatar"><ProjectRLogo /></span>
         ) : (
@@ -385,12 +291,6 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
               setUtilityPanel("source");
             }}
           />
-          {message.role === "assistant" ? renderContextTraceCard(message.context_trace, message.sources?.length ?? 0, {
-            gbrainThinkReviewBusy: messageActionBusyId === message.id,
-            onSubmitGBrainThinkReview: message.context_trace?.gbrain_think
-              ? () => void handleSubmitGBrainThinkReview(message)
-              : undefined,
-          }) : null}
           {message.generated_file ? (
             <MessageGeneratedFile
               activeWorkspace={activeWorkspace}
@@ -403,9 +303,27 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
               token={token}
             />
           ) : null}
-          {message.agent_run ? <MessageAgentRunCard agentRun={message.agent_run} /> : null}
-          {message.skill_run ? (
-            <MessageSkillRunCard
+          {message.role === "assistant" && (message.context_trace || message.agent_run || message.skill_run) ? (
+            <div className="message-execution-stack">
+              <MessageContextTraceCard
+                collapseByDefault={!message.isTyping && !message.isRegenerating}
+                contextTrace={message.context_trace}
+                gbrainThinkReviewBusy={messageActionBusyId === message.id}
+                messageSourceCount={message.sources?.length ?? 0}
+                onSubmitGBrainThinkReview={message.context_trace?.gbrain_think
+                  ? () => void handleSubmitGBrainThinkReview(message)
+                  : undefined}
+              />
+              {message.agent_run
+                && !(
+                  message.skill_run
+                  && ["completed", "failed"].includes(message.skill_run.status)
+                  && ["completed", "failed"].includes(message.agent_run.status)
+                )
+                ? <MessageAgentRunCard agentRun={message.agent_run} />
+                : null}
+              {message.skill_run ? (
+                <MessageSkillRunCard
               showGeneratedFile={!message.generated_file}
               skillRun={message.skill_run}
               onCopyGeneratedEmailBody={onCopyGeneratedEmailBody}
@@ -416,6 +334,8 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
               token={token}
               workspace={activeWorkspace}
             />
+              ) : null}
+            </div>
           ) : null}
           {message.agent_suggestion ? (
             <div className="message-agent-suggestion">
@@ -523,7 +443,7 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
         </div>
       ) : null}
       {messages.length === 0 ? renderEmptyState(isEmptySplitPane) : null}
-      {filteredMessages.map(renderMessageCard)}
+      {filteredMessages.map((message, index) => renderMessageCard(message, index))}
       {paneSessionId && sessionIsSending && !hasPendingAssistantReply ? <LoadingPlaceholder /> : null}
     </div>
   );

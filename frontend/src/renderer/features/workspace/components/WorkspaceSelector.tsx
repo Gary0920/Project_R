@@ -321,6 +321,14 @@ export function WorkspaceSelector({ apiOptions, canCreateProject = false, onWork
     );
   }
 
+  function openProjectDirectory() {
+    setDirectoryOpen(true);
+    setCreating(false);
+    setCreateError("");
+    setDirectoryQuery("");
+    setSelectedBrand(null);
+  }
+
   return (
     <div className="workspace-selector-area">
       <div className="workspace-section-header">
@@ -336,20 +344,6 @@ export function WorkspaceSelector({ apiOptions, canCreateProject = false, onWork
               <span>{activeWorkspace?.name ?? "未选择工作区"}</span>
             </span>
             <span className="workspace-default-badge">{getWorkspaceAffiliationLabel(activeWorkspace)}</span>
-          </button>
-          <button
-            className="workspace-create-icon"
-            onClick={() => {
-              setDirectoryOpen(true);
-              setCreating(false);
-              setCreateError("");
-              setDirectoryQuery("");
-              setSelectedBrand(null);
-            }}
-            title="项目目录"
-            type="button"
-          >
-            <SearchIcon />
           </button>
           <button
             className="workspace-section-chevron-btn"
@@ -522,6 +516,11 @@ export function WorkspaceSelector({ apiOptions, canCreateProject = false, onWork
               <span className="workspace-default-badge">CRM</span>
             </div>
           );})}
+          {canCreateProject ? (
+            <button className="workspace-directory-link" onClick={openProjectDirectory} type="button">
+              浏览项目目录
+            </button>
+          ) : null}
         </div>
       ) : null}
 

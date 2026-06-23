@@ -3,21 +3,25 @@ import { useEffect, useRef, useState, type MouseEvent } from "react";
 import {
   WORKSPACE_PANEL_DEFAULT_WIDTH,
   WORKSPACE_PANEL_PREVIEW_WIDTH,
+  SIDEBAR_COLLAPSED_WIDTH,
   auxiliaryPanelMaxWidth,
   clampAuxiliaryPanelWidth,
   clampSidebarWidth,
   clampWorkspacePanelWidth,
   readAuxiliaryPanelWidth,
+  readSidebarCollapsed,
   readSidebarWidth,
   readWorkspacePanelWidth,
   workspacePanelMaxWidth,
   writeAuxiliaryPanelWidth,
+  writeSidebarCollapsed,
   writeSidebarWidth,
   writeWorkspacePanelWidth,
 } from "../panelWidths";
 
 export function useAppShellPanels() {
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(readWorkspacePanelWidth);
   const [workspacePanelResizing, setWorkspacePanelResizing] = useState(false);
@@ -30,7 +34,12 @@ export function useAppShellPanels() {
 
   function handleSidebarResizeStart(event: MouseEvent<HTMLDivElement>) {
     event.preventDefault();
+    if (sidebarCollapsed) return;
     setSidebarResizing(true);
+  }
+
+  function toggleSidebarCollapsed() {
+    setSidebarCollapsed((value) => !value);
   }
 
   function handleWorkspacePanelResizeStart(event: MouseEvent<HTMLDivElement>) {
@@ -64,6 +73,13 @@ export function useAppShellPanels() {
   useEffect(() => {
     writeSidebarWidth(sidebarWidth);
   }, [sidebarWidth]);
+
+  useEffect(() => {
+    writeSidebarCollapsed(sidebarCollapsed);
+    if (sidebarCollapsed) {
+      setSidebarResizing(false);
+    }
+  }, [sidebarCollapsed]);
 
   useEffect(() => {
     writeWorkspacePanelWidth(workspacePanelWidth);
@@ -171,9 +187,13 @@ export function useAppShellPanels() {
     handleWorkspaceFilePreviewClose,
     handleWorkspaceFilePreviewOpen,
     handleWorkspacePanelResizeStart,
+    setSidebarCollapsed,
     sidebarRef,
+    sidebarCollapsed,
+    sidebarDisplayWidth: sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth,
     sidebarResizing,
     sidebarWidth,
+    toggleSidebarCollapsed,
     workspacePanelMaxWidth,
     workspacePanelRef,
     workspacePanelResizing,

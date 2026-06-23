@@ -171,6 +171,9 @@ export function ChatConversationPane({ controller }: ChatConversationPaneProps) 
             isActivePane,
             isEmptySplitPane,
             messages: paneMessages,
+            onFocusComposer: () => {
+              controller.textareaRef?.current?.focus();
+            },
             paneSessionId,
             sessionIsSending: paneSessionId ? Boolean(sendingSessions[paneSessionId]) : false,
           } as any}

@@ -5,6 +5,7 @@ import { GeneratedFileCard } from "./GeneratedFileCard";
 export type MessageGeneratedFileProps = {
   activeWorkspace?: WorkspaceResponse | null;
   file: GeneratedFileResponse;
+  variant?: "card" | "document";
   onCopyEmailBody?: (file: GeneratedFileResponse) => Promise<void>;
   onEditEmailDraft?: (file: GeneratedFileResponse) => void;
   onOpenEmailClient?: (file: GeneratedFileResponse) => void;
@@ -16,6 +17,7 @@ export type MessageGeneratedFileProps = {
 export function MessageGeneratedFile({
   activeWorkspace,
   file,
+  variant = "document",
   onCopyEmailBody,
   onEditEmailDraft,
   onOpenEmailClient,
@@ -31,6 +33,7 @@ export function MessageGeneratedFile({
       onEditEmailDraft={onEditEmailDraft}
       onOpenEmailClient={onOpenEmailClient}
       onSaveToWorkspace={onSaveToWorkspace}
+      variant={variant}
       workspace={activeWorkspace}
     />
   );

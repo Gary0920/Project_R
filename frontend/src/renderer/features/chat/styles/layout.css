@@ -18,6 +18,7 @@
   background: hsl(var(--content-area));
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
   overflow: hidden;
+  --chat-reading-max: clamp(640px, 72vw, 860px);
 }
 
 .chat-workbench {

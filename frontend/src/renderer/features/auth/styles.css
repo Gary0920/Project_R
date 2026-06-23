@@ -363,8 +363,22 @@
   transition: color 0.2s;
 }
 
-.alp-toggle-password:hover {
+.alp-toggle-password:hover:not(:disabled),
+.alp-toggle-password:focus-visible {
   color: #333;
+  transform: translateY(-50%);
+}
+
+.alp-toggle-password:active:not(:disabled) {
+  transform: translateY(-50%) scale(0.96);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .alp-toggle-password:hover:not(:disabled),
+  .alp-toggle-password:active:not(:disabled),
+  .alp-toggle-password:focus-visible {
+    transform: translateY(-50%);
+  }
 }
 
 .alp-error-msg {
@@ -437,16 +451,25 @@
   width: 100%;
   height: 50px;
   border-radius: 25px;
-  border: 1.5px solid #1a1a2e;
-  background: #1a1a2e;
-  color: #fff;
+  border: 1.5px solid hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   font-size: 15px;
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
   overflow: hidden;
   margin-bottom: 14px;
-  transition: all 0.3s;
+  transition: opacity 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
+}
+
+.alp-btn-login:hover:not(:disabled) {
+  opacity: 0.92;
+  box-shadow: var(--control-active-shadow);
+}
+
+.alp-btn-login:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 .alp-btn-login:disabled {
@@ -456,30 +479,6 @@
 
 .alp-btn-login .alp-btn-text {
   display: inline-block;
-  transition: all 0.3s;
-}
-
-.alp-btn-login .alp-btn-hover {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  background: #5b21b6;
-  color: #fff;
-  opacity: 0;
-  transition: all 0.3s;
-  border-radius: 25px;
-}
-
-.alp-btn-login:hover:not(:disabled) .alp-btn-text {
-  transform: translateX(40px);
-  opacity: 0;
-}
-
-.alp-btn-login:hover:not(:disabled) .alp-btn-hover {
-  opacity: 1;
 }
 
 .alp-form-footer {

@@ -2,20 +2,17 @@ import { useEffect, type MouseEvent } from "react";
 
 import type { SkillResponse } from "../../../shared/api/types";
 
-import { APP_NAME } from "../../../shared/config/app";
 import { useContextMenu } from "../../../shared/components/ContextMenu";
-import { ProjectRLogo } from "../../../shared/components/ProjectRLogo";
 import { NotificationPopover } from "../../notifications/components/NotificationPopover";
 import { PromptPanel } from "../../prompts/components/PromptPanel";
 import { SkillsSidePanel } from "./SkillsSidePanel";
 import { ScratchPad } from "./ScratchPad";
 import { SearchDialog } from "./SearchDialog";
-import { SessionListItem } from "./SessionListItem";
+import { ChatSidebar } from "./ChatSidebar";
 import { SettingsModal } from "../../settings/components/SettingsModal";
 import { TabBar } from "./TabBar";
 import { WorkspaceFilePanel } from "../../workspace/components/WorkspaceFilePanel";
 import { CrmWorkbenchPanel } from "../../workspace/components/CrmWorkbenchPanel";
-import { WorkspaceSelector } from "../../workspace/components/WorkspaceSelector";
 import {
   getWorkspaceAffiliationLabel,
   getWorkspaceAffiliationPath,
@@ -24,14 +21,8 @@ import { WindowControls } from "../../../shared/components/WindowControls";
 import { renderMessageContent } from "../messageContent";
 import { SourcePreviewPanel } from "../../knowledge/components/SourcePreviewPanel";
 import {
-  AgentIcon,
   BellIcon,
   BrainIcon,
-  ChatIcon,
-  LogoutIcon,
-  PlusIcon,
-  SearchIcon,
-  SettingsIcon,
   WorkspaceIcon,
 } from "../../../shared/icons/LineIcons";
 
@@ -140,6 +131,7 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     setShowScratchPad,
     setShowSearch,
     setShowSettings,
+    setSidebarCollapsed,
     setUpdateDialogOpen,
     setUpdateStep,
     setUtilityPanel,
@@ -150,6 +142,8 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     sideBySideOpen,
     skills,
     sidebarRef,
+    sidebarCollapsed,
+    sidebarDisplayWidth,
     sidebarRenameInputRef,
     sidebarResizing,
     sidebarWidth,
@@ -171,6 +165,7 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     workspacePanelWidth,
     workspaces,
     commitRename,
+    toggleSidebarCollapsed,
   } = controller;
   const setMode = setActiveMode;
   const isCustomerWorkspace = activeWorkspace?.workspace_kind === "customer";
@@ -437,110 +432,45 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
 
   return (
     <div className="shell">
-      <aside
-        className={`chat-sidebar ${sidebarResizing ? "is-resizing" : ""}`}
-        ref={sidebarRef}
-        style={{ width: sidebarWidth }}
-      >
-        <div className="sidebar-top">
-          <div className="sidebar-brand">
-            <span className="sidebar-brand-mark"><ProjectRLogo /></span>
-            <span className="sidebar-brand-name">{APP_NAME}</span>
-          </div>
-
-          <div className="mode-switch" data-active={mode} aria-label="模式切换">
-            <span className="mode-switch-indicator" aria-hidden="true" />
-            <button className={`mode-tab ${mode === "agent" ? "is-active" : ""}`} onClick={() => setMode("agent")} title="Agent" type="button">
-              <AgentIcon />
-              <span>Agent</span>
-            </button>
-            <button className={`mode-tab ${mode === "chat" ? "is-active" : ""}`} onClick={() => setMode("chat")} title="Chat" type="button">
-              <ChatIcon />
-              <span>Chat</span>
-            </button>
-          </div>
-
-          <WorkspaceSelector
-            apiOptions={apiOptions}
-            canCreateProject={currentUser?.role === "admin"}
-            onWorkspaceChanged={handleWorkspaceChanged}
-          />
-
-          <div className="sidebar-command-row">
-            <button className="new-chat-button" onClick={handleCreateSession} type="button">
-              <PlusIcon />
-              <span>新建对话</span>
-            </button>
-            <button className="sidebar-search-button" onClick={() => setShowSearch(true)} title="搜索对话" type="button">
-              <SearchIcon />
-            </button>
-          </div>
-        </div>
-
-        <div className="session-list" aria-label="会话列表">
-          {isLoading && sessions.length === 0 ? <p className="sidebar-note">正在加载会话...</p> : null}
-          {!isLoading && sessions.length === 0 ? <p className="sidebar-note">当前项目暂无会话。</p> : null}
-
-          {(sessionGroups as any[]).map((group: any) => (
-            <div key={group.key}>
-              {group.label ? <p className="session-group-label">{group.label}</p> : null}
-              {(group.items as any[]).map((session: any) => (
-                <SessionListItem
-                  activeSessionId={activeSessionId}
-                  commitRename={commitRename}
-                  formatSessionDisplayTitle={formatSessionDisplayTitle}
-                  formatSidebarTime={formatSidebarTime}
-                  key={session.id}
-                  openSessionMenu={openSessionMenu}
-                  renameInput={renameInput}
-                  session={session}
-                  selectSession={selectSession}
-                  setRenameInput={setRenameInput}
-                  sideBySideOpen={sideBySideOpen}
-                  sidebarRenameInputRef={sidebarRenameInputRef}
-                  splitPaneSessionIds={splitPaneSessionIds}
-                />
-              ))}
-            </div>
-          ))}
-        </div>
-
-        <div className="sidebar-user">
-          <span className={`sidebar-user-avatar ${!resolveAvatarUrl(serverUrl, currentUser?.avatar) && !currentUser?.avatar ? "is-text" : ""}`}>
-            {resolveAvatarUrl(serverUrl, currentUser?.avatar) ? (
-              <img src={resolveAvatarUrl(serverUrl, currentUser?.avatar)} alt="avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-            ) : (
-              currentUser?.avatar || getInitials(currentUser?.nickname)
-            )}
-          </span>
-          <div className="sidebar-user-info">
-            <span className="sidebar-user-name">{currentUser?.nickname ?? "未登录"}</span>
-            <span className="sidebar-user-role">{currentUser?.role === "admin" ? "管理员" : "员工"}</span>
-          </div>
-          <div className="sidebar-user-actions">
-            <button
-              className="icon-button"
-              onClick={() => {
-                setSettingsInitialAdminTab(null);
-                setShowSettings(true);
-              }}
-              title="设置"
-              type="button"
-            >
-              <SettingsIcon />
-            </button>
-            <button className="icon-button" onClick={handleLogout} title="登出" type="button">
-              <LogoutIcon />
-            </button>
-          </div>
-        </div>
-        <div
-          aria-orientation="vertical"
-          className="sidebar-resize-handle"
-          onMouseDown={handleSidebarResizeStart}
-          role="separator"
-        />
-      </aside>
+      <ChatSidebar
+        sidebarRef={sidebarRef}
+        sidebarResizing={sidebarResizing}
+        sidebarCollapsed={sidebarCollapsed}
+        sidebarDisplayWidth={sidebarDisplayWidth}
+        sidebarWidth={sidebarWidth}
+        mode={mode}
+        setMode={setMode}
+        activeWorkspace={activeWorkspace}
+        apiOptions={apiOptions}
+        currentUser={currentUser}
+        canCreateProject={currentUser?.role === "admin"}
+        handleWorkspaceChanged={handleWorkspaceChanged}
+        handleCreateSession={handleCreateSession}
+        setShowSearch={setShowSearch}
+        isLoading={isLoading}
+        sessions={sessions}
+        sessionGroups={sessionGroups}
+        activeSessionId={activeSessionId}
+        commitRename={commitRename}
+        formatSessionDisplayTitle={formatSessionDisplayTitle}
+        formatSidebarTime={formatSidebarTime}
+        openSessionMenu={openSessionMenu}
+        renameInput={renameInput}
+        selectSession={selectSession}
+        setRenameInput={setRenameInput}
+        sideBySideOpen={sideBySideOpen}
+        sidebarRenameInputRef={sidebarRenameInputRef}
+        splitPaneSessionIds={splitPaneSessionIds}
+        resolveAvatarUrl={resolveAvatarUrl}
+        serverUrl={serverUrl}
+        getInitials={getInitials}
+        setSettingsInitialAdminTab={setSettingsInitialAdminTab}
+        setShowSettings={setShowSettings}
+        handleLogout={handleLogout}
+        toggleSidebarCollapsed={toggleSidebarCollapsed}
+        setSidebarCollapsed={setSidebarCollapsed}
+        handleSidebarResizeStart={handleSidebarResizeStart}
+      />
 
       {notificationPanelOpen ? (
         <NotificationPopover

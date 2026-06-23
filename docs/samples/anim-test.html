@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project_R Loading Motion Study</title>
+<style>
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    background: #0e1219;
+    font-family: "Microsoft YaHei UI", system-ui, sans-serif;
+  }
+
+  .loader-shell {
+    width: 96px;
+    height: 96px;
+    display: grid;
+    place-items: center;
+  }
+
+  .loader-svg {
+    width: 64px;
+    height: 56px;
+    overflow: visible;
+  }
+
+  .dot {
+    transform-box: fill-box;
+    transform-origin: center;
+    will-change: transform, opacity;
+  }
+</style>
+</head>
+<body>
+  <div class="loader-shell" aria-label="加载中" role="status">
+    <svg class="loader-svg" viewBox="0 0 64 56" width="64" height="56" aria-hidden="true">
+      <defs>
+        <filter id="soft-glow" x="-80%" y="-80%" width="260%" height="260%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="1.8" result="blur"></feGaussianBlur>
+          <feColorMatrix in="blur" type="matrix"
+            values="1 0 0 0 0
+                    0 1 0 0 0
+                    0 0 1 0 0
+                    0 0 0 0.72 0" result="glow"></feColorMatrix>
+          <feMerge>
+            <feMergeNode in="glow"></feMergeNode>
+            <feMergeNode in="SourceGraphic"></feMergeNode>
+          </feMerge>
+        </filter>
+      </defs>
+      <ellipse id="core-dot" class="dot" cx="0" cy="0" rx="5" ry="5" fill="#6e9ed4" filter="url(#soft-glow)"></ellipse>
+      <ellipse id="dot-1" class="dot" cx="0" cy="0" rx="5" ry="5" fill="#9ec7f2" filter="url(#soft-glow)"></ellipse>
+      <ellipse id="dot-2" class="dot" cx="0" cy="0" rx="5" ry="5" fill="#6e9ed4" filter="url(#soft-glow)"></ellipse>
+      <ellipse id="dot-3" class="dot" cx="0" cy="0" rx="5" ry="5" fill="#426c9f" filter="url(#soft-glow)"></ellipse>
+    </svg>
+  </div>
+
+<script>
+(() => {
+  const TIMING = {
+    // 调整总时长：数值越大，整轮动画越慢。当前为三轮波浪 + 中心聚合 + 三次变速旋转。
+    cycleMs: 13200,
+    // 调整播放速度：1 为正常，1.2 更快，0.85 更慢。
+    speed: 1
+  };
+
+  const ACTION_LOOPS = {
+    // 收缩消失前，水平波浪重复次数。
+    wave: 3,
+    // 三角旋转不是连续三圈，而是三次“一圈一循环”的变速旋转。
+    rotateCycles: 3,
+    // 中心大球聚合呼吸次数。
+    corePulse: 2
+  };
+
+  const PHASE_RATIO = {
+    wave: 0.29,
+    mergeToCore: 0.105,
+    corePulse: 0.145,
+    splitToTriangle: 0.11,
+    rotate: 0.29,
+    returnToRow: 0.06
+  };
+
+  const coreDot = document.getElementById("core-dot");
+  const dots = [
+    document.getElementById("dot-1"),
+    document.getElementById("dot-2"),
+    document.getElementById("dot-3")
+  ];
+
+  const row = [
+    { x: 18, y: 29 },
+    { x: 32, y: 29 },
+    { x: 46, y: 29 }
+  ];
+
+  const center = { x: 32, y: 27 };
+  const orbitRadius = 17;
+
+  const clamp01 = (v) => Math.max(0, Math.min(1, v));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const easeInCubic = (t) => t * t * t;
+  const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+  const easeInOutCubic = (t) => t < 0.5
+    ? 4 * t * t * t
+    : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  const easeOutBack = (t) => {
+    const c1 = 1.55;
+    const c3 = c1 + 1;
+    return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+  };
+
+  const trianglePoint = (index, turn = 0) => {
+    const angle = -Math.PI / 2 + index * (Math.PI * 2 / 3) + turn;
+    return {
+      x: center.x + Math.cos(angle) * orbitRadius,
+      y: center.y + Math.sin(angle) * orbitRadius
+    };
+  };
+
+  const phaseBounds = (() => {
+    let start = 0;
+    return Object.entries(PHASE_RATIO).map(([name, ratio]) => {
+      const item = { name, start, end: start + ratio };
+      start += ratio;
+      return item;
+    });
+  })();
+
+  const getPhase = (progress) => {
+    const phase = phaseBounds.find((item) => progress >= item.start && progress < item.end) || phaseBounds[phaseBounds.length - 1];
+    return {
+      name: phase.name,
+      t: clamp01((progress - phase.start) / (phase.end - phase.start))
+    };
+  };
+
+  const pulseJump = (t, index) => {
+    const start = index * 0.15;
+    const width = 0.34;
+    const p = (t - start) / width;
+    if (p < 0 || p > 1) return 0;
+    return Math.sin(Math.PI * p);
+  };
+
+  const renderDot = (dot, state) => {
+    const rotate = state.rotate || 0;
+    const sx = state.sx ?? 1;
+    const sy = state.sy ?? 1;
+    dot.style.opacity = state.opacity.toFixed(3);
+    dot.style.transform = [
+      `translate(${state.x.toFixed(3)}px, ${state.y.toFixed(3)}px)`,
+      `rotate(${rotate.toFixed(3)}deg)`,
+      `scale(${sx.toFixed(3)}, ${sy.toFixed(3)})`
+    ].join(" ");
+  };
+
+  const waveState = (t, index) => {
+    const base = row[index];
+    const localT = t >= 1 ? 1 : (t * ACTION_LOOPS.wave) % 1;
+    const jump = pulseJump(localT, index);
+    const settle = Math.max(0, pulseJump(localT - 0.22, index));
+    return {
+      x: base.x,
+      y: base.y - jump * 13,
+      sx: 1 + settle * 0.14,
+      sy: 1 - settle * 0.18,
+      opacity: 1
+    };
+  };
+
+  const mergeToCoreState = (t, index) => {
+    const from = waveState(1, index);
+    const eased = easeInOutCubic(t);
+    const squash = Math.sin(Math.PI * t);
+    const side = index - 1;
+
+    return {
+      x: lerp(from.x, center.x + side * 1.4, eased),
+      y: lerp(from.y, center.y, eased),
+      sx: lerp(1 + squash * 0.35, 0.12, easeInCubic(t)),
+      sy: lerp(1 - squash * 0.22, 0.12, easeInCubic(t)),
+      opacity: 1 - easeOutCubic(t)
+    };
+  };
+
+  const corePulseState = (t, index) => {
+    return {
+      x: center.x,
+      y: center.y,
+      sx: 0.08,
+      sy: 0.08,
+      opacity: 0
+    };
+  };
+
+  const splitToTriangleState = (t, index) => {
+    const target = trianglePoint(index);
+    const eased = easeOutCubic(t);
+    const pop = easeOutBack(t);
+    const angle = -Math.PI / 2 + index * (Math.PI * 2 / 3);
+    const coreEdge = 5.8;
+    const seedX = center.x + Math.cos(angle) * coreEdge * Math.min(1, t * 1.7);
+    const seedY = center.y + Math.sin(angle) * coreEdge * Math.min(1, t * 1.7);
+    const scale = lerp(0.18, 1, pop);
+
+    return {
+      x: lerp(seedX, target.x, eased),
+      y: lerp(seedY, target.y, eased),
+      sx: scale,
+      sy: scale,
+      opacity: easeOutCubic(t)
+    };
+  };
+
+  const coreStateFor = (progress) => {
+    const phase = getPhase(progress);
+
+    if (phase.name === "mergeToCore") {
+      const scale = lerp(0.9, 1.75, easeOutBack(phase.t));
+      return {
+        x: center.x,
+        y: center.y,
+        sx: scale,
+        sy: scale,
+        opacity: easeOutCubic(phase.t)
+      };
+    }
+
+    if (phase.name === "corePulse") {
+      const localT = phase.t >= 1 ? 1 : (phase.t * ACTION_LOOPS.corePulse) % 1;
+      const breath = 1 + Math.sin(localT * Math.PI * 2) * 0.22;
+      return {
+        x: center.x,
+        y: center.y,
+        sx: 1.58 * breath,
+        sy: 1.58 * breath,
+        opacity: 1
+      };
+    }
+
+    if (phase.name === "splitToTriangle") {
+      const fade = 1 - easeInCubic(phase.t);
+      const scale = lerp(1.58, 0.34, easeOutCubic(phase.t));
+      return {
+        x: center.x,
+        y: center.y,
+        sx: scale,
+        sy: scale,
+        opacity: fade
+      };
+    }
+
+    return {
+      x: center.x,
+      y: center.y,
+      sx: 0.08,
+      sy: 0.08,
+      opacity: 0
+    };
+  };
+
+  const rotateState = (t, index) => {
+    const cycles = ACTION_LOOPS.rotateCycles;
+    const raw = t >= 1 ? 1 : t * cycles;
+    const cycleIndex = Math.min(cycles - 1, Math.floor(raw));
+    const localT = raw >= cycles ? 1 : raw - cycleIndex;
+    const cycleEase = easeInOutCubic(localT);
+    const turn = (cycleIndex + cycleEase) * Math.PI * 2;
+    const pos = trianglePoint(index, turn);
+    return {
+      x: pos.x,
+      y: pos.y,
+      sx: 1,
+      sy: 1,
+      rotate: (turn * 180 / Math.PI) + 120 * index,
+      opacity: 1
+    };
+  };
+
+  const returnToRowState = (t, index) => {
+    const from = rotateState(1, index);
+    const target = row[index];
+    const eased = easeInOutCubic(t);
+    const scale = 1 - Math.sin(Math.PI * t) * 0.12;
+    return {
+      x: lerp(from.x, target.x, eased),
+      y: lerp(from.y, target.y, eased),
+      sx: scale,
+      sy: scale,
+      opacity: 1
+    };
+  };
+
+  const stateFor = (progress, index) => {
+    const phase = getPhase(progress);
+    if (phase.name === "wave") return waveState(phase.t, index);
+
+    if (phase.name === "mergeToCore") return mergeToCoreState(phase.t, index);
+
+    if (phase.name === "corePulse") return corePulseState(phase.t, index);
+
+    if (phase.name === "splitToTriangle") return splitToTriangleState(phase.t, index);
+
+    if (phase.name === "rotate") return rotateState(phase.t, index);
+
+    return returnToRowState(phase.t, index);
+  };
+
+  let startTime = performance.now();
+
+  const tick = (now) => {
+    const elapsed = (now - startTime) * TIMING.speed;
+    const progress = (elapsed % TIMING.cycleMs) / TIMING.cycleMs;
+    renderDot(coreDot, coreStateFor(progress));
+    dots.forEach((dot, index) => renderDot(dot, stateFor(progress, index)));
+    requestAnimationFrame(tick);
+  };
+
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

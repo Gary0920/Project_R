@@ -132,7 +132,7 @@
 }
 
 .message-row {
-  width: min(720px, 100%);
+  width: min(100%, var(--chat-reading-max, 860px));
   margin: 0 auto 18px;
   padding: 0 24px;
   display: grid;
@@ -140,6 +140,11 @@
   align-items: start;
   gap: 10px;
   animation: message-row-in 0.34s ease-out both;
+}
+
+.message-row-compact .message-avatar,
+.message-row-compact .message-meta {
+  display: none;
 }
 
 @keyframes message-row-in {
@@ -377,6 +382,8 @@
 }
 
 .message-row-assistant .message-bubble {
+  max-width: 88%;
+  overflow-x: auto;
   background: transparent;
   color: hsl(var(--foreground));
   padding: 2px 0;

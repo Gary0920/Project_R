@@ -56,11 +56,14 @@ export function TabBar({
               <span className="tab-item-icon">
                 <ChatIcon />
               </span>
-              {isActive ? (
-                <span className="tab-item-affiliation">{workspaceAffiliationLabel}</span>
-              ) : null}
               <span className="tab-item-title">
-                {tab.title}
+                {isActive ? (
+                  <>
+                    <span className="tab-item-affiliation">{workspaceAffiliationLabel}</span>
+                    <span aria-hidden className="tab-item-title-sep">·</span>
+                  </>
+                ) : null}
+                <span className="tab-item-title-text">{tab.title}</span>
               </span>
               <span
                   className="tab-item-close"

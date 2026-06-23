@@ -74,9 +74,6 @@ export function SessionListItem({
         </span>
       )}
       <span className="session-time">{formatSidebarTime(session.updated_at)}</span>
-      {session.last_message_preview ? (
-        <div className="session-preview">{String(session.last_message_preview ?? "").slice(0, 80)}</div>
-      ) : null}
     </div>
   );
 }

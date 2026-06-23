@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 
 import type { ChatSourceResponse } from "../../shared/api/types";
 import { MessageCodeBlock } from "./components/MessageCodeBlock";
+import { MessageDocumentBlock } from "./components/MessageDocumentBlock";
+import { shouldRenderAsDocumentBlock } from "./messageDocumentHeuristic";
 
 export type SourcePreview = {
   index: number;
@@ -195,7 +197,9 @@ function renderMarkdownDocument(
     const language = match[1]?.trim();
     const code = match[2].trim();
     nodes.push(
-      <MessageCodeBlock code={code} key={`code-${index}`} language={language} />,
+      shouldRenderAsDocumentBlock(language, code)
+        ? <MessageDocumentBlock code={code} key={`code-${index}`} />
+        : <MessageCodeBlock code={code} key={`code-${index}`} language={language} />,
     );
     lastIndex = pattern.lastIndex;
     index += 1;

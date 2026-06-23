@@ -12,146 +12,68 @@ function uniqueSteps(steps: string[]) {
   return steps.filter((step, index) => steps.indexOf(step) === index);
 }
 
-const CHAT_REPLY_TAIL = [
-  "正在整理上下文",
-  "正在组织回答结构",
+function shuffledSteps(steps: string[]) {
+  const result = [...steps];
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [result[index], result[swapIndex]] = [result[swapIndex], result[index]];
+  }
+  return result;
+}
+
+// 统一加载文案库：直接删除不喜欢的句子，保留顺眼的句子即可。
+// 这些文案只用于等待时的氛围轮换，不代表真实内部执行状态。
+const LOADING_STATUS_TEXTS = [
+  "正在回复",
+  "正在理解问题",
+  "正在把话说顺",
   "正在生成回答",
-  "正在润色表述",
   "正在做最后检查",
-  "即将完成",
-];
-
-const CHAT_REGENERATE = [
-  "正在重新生成",
-  "正在回顾上一轮回答",
-  "正在调整表述角度",
-  "正在重新组织内容",
-  "正在整理上下文",
-  "正在生成新版本",
-  "正在润色表述",
-  "正在做最后检查",
-  "即将完成",
-];
-
-const AGENT_REPLY = [
-  "Agent 执行中",
-  "正在理解任务目标",
-  "正在拆解执行步骤",
-  "正在读取工作区上下文",
-  "正在整理执行计划",
-  "正在准备步骤状态",
+  "正在让句子站直",
+  "正在换一套说法",
+  "正在拆掉重装",
+  "正在把上一版返工",
+  "正在补一遍密封胶",
   "正在推进任务",
   "正在汇总结果",
-  "正在做最后检查",
-  "即将完成",
-];
-
-const AGENT_REGENERATE = [
-  "正在重新执行",
-  "正在回顾上一轮结果",
-  "正在调整执行策略",
-  "正在整理执行步骤",
-  "正在更新任务状态",
-  "正在读取上下文",
-  "正在重新生成结果",
-  "正在汇总输出",
-  "即将完成",
-];
-
-const QUERY_STEPS = [
-  "正在回复",
-  "正在识别知识库问题",
+  "正在执行任务",
+  "正在生成输出",
   "正在确认查询范围",
-  "正在检索相关文档",
   "正在比对多个来源",
-  "正在提取关键片段",
   "正在整理引用依据",
-  "正在组织回答结构",
-  "正在生成回答",
-  "正在润色表述",
-  "即将完成",
-];
-
-const ATTACHMENT_STEPS = [
-  "正在回复",
-  "正在读取本轮附件",
-  "正在解析附件内容",
-  "正在提取关键信息",
-  "正在关联对话上下文",
-  "正在整理上下文",
-  "正在组织回答结构",
-  "正在生成回答",
-  "正在润色表述",
-  "即将完成",
-];
-
-const WEB_SEARCH_EXTRA = [
-  "正在检索联网资料",
-  "正在筛选可信来源",
-  "正在整合搜索结果",
-  "正在核对时效信息",
-];
-
-const THINKING_EXTRA = [
-  "正在深度推理",
-  "正在梳理推理链路",
-  "正在校验中间结论",
+  "正在让资料对齐孔位",
+  "正在给引用打结构胶",
+  "正在从图纸堆里抬头",
+  "正在拆除过期胶条",
+  "正在脑内放样",
+  "正在校准副框",
+  "正在找那颗不见的自攻钉",
+  "正在给答案打耐候胶",
+  "正在复核洞口尺寸",
+  "正在擦亮 Low-E 玻璃",
+  "正在等结构胶表干",
+  "正在把节点图翻到正面",
+  "正在确认开启扇方向",
+  "正在给回答装限位器",
+  "正在检查排水孔有没有堵",
+  "正在把铝型材码齐",
+  "正在让幕墙顾问点头",
+  "正在拧紧最后一颗螺丝",
+  "正在看玻璃有没有自爆风险",
+  "正在把节点收口收漂亮",
+  "正在给答案贴保护膜",
+  "正在检查五金件心情",
+  "正在让窗扇别再漏风",
+  "正在把胶条塞回正确槽口",
+  "正在帮甲方冷静一下",
+  "正在让施工队先别急",
+  "正在撕保护膜",
 ];
 
 export function buildLoadingStatusTexts(context: LoadingStatusContext): string[] {
-  const {
-    mode,
-    variant,
-    hasAttachments,
-    isKnowledgeQuery,
-    activeSkillName,
-    webSearchEnabled,
-    thinkingEnabled,
-  } = context;
-
-  if (variant === "regenerate") {
-    return mode === "agent" ? AGENT_REGENERATE : CHAT_REGENERATE;
-  }
-
-  if (mode === "agent") {
-    if (activeSkillName) {
-      return [
-        `已选择 Skill：${activeSkillName}`,
-        "正在读取上下文",
-        "正在解析任务输入",
-        "正在匹配 Skill 流程",
-        "正在执行任务",
-        "正在整理中间结果",
-        "正在生成输出",
-        "正在做最后检查",
-        "即将完成",
-      ];
-    }
-    return AGENT_REPLY;
-  }
-
-  if (isKnowledgeQuery) {
-    return QUERY_STEPS;
-  }
-
-  if (hasAttachments) {
-    const insertAt = 5;
-    const head = ATTACHMENT_STEPS.slice(0, insertAt);
-    const tail = ATTACHMENT_STEPS.slice(insertAt);
-    return uniqueSteps([
-      ...head,
-      ...(webSearchEnabled ? WEB_SEARCH_EXTRA : []),
-      ...(thinkingEnabled ? THINKING_EXTRA : []),
-      ...tail,
-    ]);
-  }
-
+  const selectedSkillPrefix = context.activeSkillName ? [`已选择 Skill：${context.activeSkillName}`] : [];
   return uniqueSteps([
-    "正在回复",
-    "正在理解问题",
-    "正在分析提问意图",
-    ...(webSearchEnabled ? WEB_SEARCH_EXTRA : []),
-    ...(thinkingEnabled ? THINKING_EXTRA : []),
-    ...CHAT_REPLY_TAIL,
+    ...selectedSkillPrefix,
+    ...shuffledSteps(LOADING_STATUS_TEXTS),
   ]);
 }

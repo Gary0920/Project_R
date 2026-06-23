@@ -1,6 +1,7 @@
 import type { AgentRunResponse } from "../../../shared/api/types";
 import { AgentIcon } from "../../../shared/icons/LineIcons";
 import { missingInputInstruction } from "../messageInstructions";
+import { MessageExecutionSummary, sanitizeAgentSummaryTitle } from "./MessageExecutionSummary";
 
 function agentRunStatusLabel(status: string) {
   if (status === "completed") return "已完成";
@@ -31,7 +32,7 @@ function agentEventDetail(event: AgentRunResponse["events"][number] | undefined)
   return event.detail;
 }
 
-export function MessageAgentRunCard({ agentRun }: { agentRun: AgentRunResponse }) {
+function AgentRunAudit({ agentRun }: { agentRun: AgentRunResponse }) {
   const events = agentRun.events ?? [];
   const completedEvents = events.filter((event) => event.status === "completed").length;
   const isPlanning = ["queued", "waiting"].includes(agentRun.status);
@@ -39,20 +40,15 @@ export function MessageAgentRunCard({ agentRun }: { agentRun: AgentRunResponse }
     ?? events.find((event) => event.status === "queued")
     ?? events[events.length - 1];
   const failedEvent = events.find((event) => event.status === "failed");
-  const progressPercent = events.length ? Math.round((completedEvents / events.length) * 100) : (agentRun.status === "completed" ? 100 : 0);
+  const progressPercent = events.length
+    ? Math.round((completedEvents / events.length) * 100)
+    : (agentRun.status === "completed" ? 100 : 0);
   const planSummary = events.length
     ? events.slice(0, 4).map((event) => event.title).join(" / ")
     : "等待后端返回执行步骤。";
 
   return (
-    <div className={`message-agent-run-card is-${agentRun.status}`}>
-      <div className="message-agent-run-header">
-        <span className="message-agent-run-icon"><AgentIcon /></span>
-        <div>
-          <strong>{agentRun.title}</strong>
-          <span>{isPlanning ? "计划模式" : agentRunStatusLabel(agentRun.status)}{events.length ? ` · 步骤 ${completedEvents}/${events.length}` : ""}</span>
-        </div>
-      </div>
+    <div className="message-agent-audit">
       {events.length ? (
         <div className="message-agent-progress" aria-label={`执行进度 ${progressPercent}%`}>
           <span style={{ width: `${progressPercent}%` }} />
@@ -99,6 +95,43 @@ export function MessageAgentRunCard({ agentRun }: { agentRun: AgentRunResponse }
         </ol>
       ) : null}
       {agentRun.error_message ? <p className="message-agent-run-error">{agentRun.error_message}</p> : null}
+    </div>
+  );
+}
+
+export function MessageAgentRunCard({ agentRun }: { agentRun: AgentRunResponse }) {
+  const events = agentRun.events ?? [];
+  const isFinished = agentRun.status === "completed" || agentRun.status === "failed";
+  const isPlanning = ["queued", "waiting"].includes(agentRun.status);
+  const completedEvents = events.filter((event) => event.status === "completed").length;
+
+  if (isFinished) {
+    return (
+      <MessageExecutionSummary
+        defaultExpanded={agentRun.status === "failed"}
+        kind="agent"
+        status={agentRun.status}
+        stepCount={events.length}
+        title={sanitizeAgentSummaryTitle(agentRun.title || "Agent 任务")}
+      >
+        <AgentRunAudit agentRun={agentRun} />
+      </MessageExecutionSummary>
+    );
+  }
+
+  return (
+    <div className={`message-agent-run-card is-${agentRun.status}`}>
+      <div className="message-agent-run-header">
+        <span className="message-agent-run-icon"><AgentIcon /></span>
+        <div>
+          <strong>{agentRun.title}</strong>
+          <span>
+            {isPlanning ? "计划模式" : agentRunStatusLabel(agentRun.status)}
+            {events.length ? ` · 步骤 ${completedEvents}/${events.length}` : ""}
+          </span>
+        </div>
+      </div>
+      <AgentRunAudit agentRun={agentRun} />
     </div>
   );
 }

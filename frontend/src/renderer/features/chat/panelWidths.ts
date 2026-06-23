@@ -1,5 +1,7 @@
 const SIDEBAR_WIDTH_KEY = "project-r:chat-sidebar-width";
+const SIDEBAR_COLLAPSED_KEY = "project-r:chat-sidebar-collapsed";
 const SIDEBAR_MIN_WIDTH = 220;
+export const SIDEBAR_COLLAPSED_WIDTH = 56;
 const SIDEBAR_DEFAULT_WIDTH = 268;
 const SIDEBAR_MAX_WIDTH = 420;
 
@@ -35,6 +37,22 @@ export function readSidebarWidth() {
 export function writeSidebarWidth(width: number) {
   try {
     localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
+  } catch {
+    // localStorage may be unavailable in restricted shells.
+  }
+}
+
+export function readSidebarCollapsed() {
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function writeSidebarCollapsed(collapsed: boolean) {
+  try {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "true" : "false");
   } catch {
     // localStorage may be unavailable in restricted shells.
   }

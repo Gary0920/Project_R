@@ -3,6 +3,8 @@
    ============================================================ */
 .composer-wrap {
   flex-shrink: 0;
+  width: min(100%, var(--chat-reading-max, 860px));
+  margin: 0 auto;
   padding: 12px 20px 16px;
 }
 

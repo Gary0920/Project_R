@@ -11,6 +11,7 @@ type SaveResult = {
 export type GeneratedFileCardProps = {
   file: GeneratedFileResponse;
   workspace?: WorkspaceResponse | null;
+  variant?: "card" | "document";
   onDownload: (file: GeneratedFileResponse) => void;
   onCopyEmailBody?: (file: GeneratedFileResponse) => Promise<void>;
   onEditEmailDraft?: (file: GeneratedFileResponse) => void;
@@ -39,6 +40,7 @@ function workspaceSaveLabel(workspace: WorkspaceResponse) {
 export function GeneratedFileCard({
   file,
   workspace,
+  variant = "document",
   onDownload,
   onCopyEmailBody,
   onEditEmailDraft,
@@ -79,6 +81,70 @@ export function GeneratedFileCard({
     }
   }
 
+  const actionButtons = (
+    <>
+      {isEmailDraft && onEditEmailDraft ? (
+        <button className="ghost-button message-deliverable-action" onClick={() => onEditEmailDraft(file)} type="button">
+          查看/编辑草稿
+        </button>
+      ) : null}
+      {isEmailDraft && onCopyEmailBody ? (
+        <button
+          className={`ghost-button message-deliverable-action ${copyStatus !== "idle" ? `is-${copyStatus}` : ""}`}
+          onClick={() => void handleCopyEmailBody()}
+          type="button"
+        >
+          {copyStatus === "copied" ? <CheckIcon /> : <CopyIcon />}
+          {copyStatus === "copied" ? "已复制" : copyStatus === "failed" ? "复制失败" : "复制正文"}
+        </button>
+      ) : null}
+      {isEmailDraft && onOpenEmailClient ? (
+        <button className="ghost-button message-deliverable-action" onClick={() => onOpenEmailClient(file)} type="button">
+          打开邮件
+        </button>
+      ) : null}
+      <button className="ghost-button message-deliverable-action" onClick={() => onDownload(file)} type="button">
+        下载
+      </button>
+      {canSaveToWorkspace && workspace ? (
+        <button
+          className="ghost-button message-deliverable-action"
+          disabled={saveStatus === "saving" || saveStatus === "saved"}
+          onClick={() => void handleSave()}
+          type="button"
+        >
+          {saveStatus === "saved" ? <CheckIcon /> : <WorkspaceIcon />}
+          {saveStatus === "saving" ? "保存中" : saveStatus === "saved" ? "已保存" : workspaceSaveLabel(workspace)}
+        </button>
+      ) : null}
+    </>
+  );
+
+  if (variant === "document") {
+    return (
+      <div className={`message-deliverable is-${saveStatus} ${isEmailDraft ? "is-email-draft" : ""}`}>
+        {isEmailDraft && summary ? (
+          <>
+            {summary.subject ? <div className="message-deliverable-subject">{summary.subject}</div> : null}
+            {summary.bodyPreview ? <div className="message-deliverable-body">{summary.bodyPreview}</div> : null}
+          </>
+        ) : (
+          <div className="message-deliverable-body">
+            <strong>{file.filename}</strong>
+            <span>{generatedFileKindLabel(file)}</span>
+          </div>
+        )}
+        <div className="message-deliverable-actions">{actionButtons}</div>
+        {saveStatus === "saved" && savedPath ? (
+          <div className="message-deliverable-status">已保存到 {savedPath}</div>
+        ) : null}
+        {saveStatus === "failed" && errorMessage ? (
+          <div className="message-deliverable-status is-error">{errorMessage}</div>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div className={`message-file-card is-${saveStatus} ${isEmailDraft ? "is-email-draft" : ""}`}>
       <div className="message-file-card-main">
@@ -91,11 +157,7 @@ export function GeneratedFileCard({
       </div>
       <div className="message-file-actions">
         {isEmailDraft && onEditEmailDraft ? (
-          <button
-            className="message-file-save"
-            onClick={() => onEditEmailDraft(file)}
-            type="button"
-          >
+          <button className="message-file-save" onClick={() => onEditEmailDraft(file)} type="button">
             查看/编辑草稿
           </button>
         ) : null}
@@ -110,19 +172,11 @@ export function GeneratedFileCard({
           </button>
         ) : null}
         {isEmailDraft && onOpenEmailClient ? (
-          <button
-            className="message-file-download"
-            onClick={() => onOpenEmailClient(file)}
-            type="button"
-          >
+          <button className="message-file-download" onClick={() => onOpenEmailClient(file)} type="button">
             打开邮件
           </button>
         ) : null}
-        <button
-          className="message-file-download"
-          onClick={() => onDownload(file)}
-          type="button"
-        >
+        <button className="message-file-download" onClick={() => onDownload(file)} type="button">
           下载
         </button>
         {canSaveToWorkspace && workspace ? (

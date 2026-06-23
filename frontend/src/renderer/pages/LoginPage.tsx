@@ -721,22 +721,6 @@ export function LoginPage() {
                   <span className="alp-btn-text">
                     {serverCheckState === "checking" ? "检测中…" : "检测并继续"}
                   </span>
-                  <div className="alp-btn-hover">
-                    <span>{serverCheckState === "checking" ? "检测中…" : "检测并继续"}</span>
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <line x1="5" y1="12" x2="19" y2="12" />
-                      <polyline points="12 5 19 12 12 19" />
-                    </svg>
-                  </div>
                 </button>
               </form>
             </>
@@ -848,22 +832,6 @@ export function LoginPage() {
                   <span className="alp-btn-text">
                     {isLoading ? "登录中…" : "登录"}
                   </span>
-                  <div className="alp-btn-hover">
-                    <span>{isLoading ? "登录中…" : "登录"}</span>
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <line x1="5" y1="12" x2="19" y2="12" />
-                      <polyline points="12 5 19 12 12 19" />
-                    </svg>
-                  </div>
                 </button>
               </form>
 

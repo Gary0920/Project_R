@@ -25,24 +25,11 @@
   -webkit-mask: var(--icon-url) center / contain no-repeat;
 }
 
-.mode-switch[data-active="agent"] .mode-switch-indicator {
-  transform: translateX(0);
-}
-
-.mode-switch[data-active="chat"] .mode-switch-indicator {
-  transform: translateX(100%);
-}
-
 .mode-tab .iconoir-mask,
 .tab-item-icon .iconoir-mask {
   font-size: 16px;
 }
 
-.sidebar-command-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 36px;
-  gap: 8px;
-}
 
 .sidebar-search-button {
   display: inline-flex;
@@ -50,22 +37,52 @@
   justify-content: center;
   width: 36px;
   height: 36px;
-  border: 1px dashed hsl(var(--dashed-border));
-  border-radius: 9px;
+  border: none;
+  border-radius: var(--control-radius);
   background: transparent;
   color: hsl(var(--muted-foreground));
   cursor: pointer;
-  transition: border-color 0.12s, color 0.12s, background 0.12s;
+  transition: color 0.15s ease, background 0.15s ease;
 }
 
-.sidebar-search-button:hover {
-  border-color: hsl(var(--dashed-border-hover));
-  background: hsl(155 32% 94%);
-  color: hsl(var(--control-active-foreground));
+.sidebar-search-button:hover,
+.sidebar-search-button:focus-visible {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  outline: none;
+}
+
+.sidebar-search-button .iconoir-mask {
+  font-size: 14px;
 }
 
 .workspace-selector-area {
   padding: 2px 0 0;
+}
+
+.workspace-directory-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(100% - 8px);
+  margin: 8px 4px 4px;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--control-radius);
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.workspace-directory-link:hover,
+.workspace-directory-link:focus-visible {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  outline: none;
 }
 
 .workspace-section-toggle,
@@ -1290,7 +1307,7 @@
 
 .message-row-user .message-bubble {
   width: fit-content;
-  max-width: min(620px, 100%);
+  max-width: 70%;
   margin-left: auto;
   background: hsl(var(--control-active-bg));
   border-color: hsl(156 22% 86%);
@@ -1728,7 +1745,6 @@
 /* ============================================================
    Workbench refresh — first-stage overrides
    ============================================================ */
-.mode-tab,
 .new-chat-button,
 .session-title,
 .sidebar-user-name {
@@ -1991,5 +2007,24 @@
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: 0.001ms !important;
+  }
+
+  .alp-page .alp-character {
+    transition: all 0.7s ease-in-out !important;
+  }
+
+  .alp-page .alp-eyes,
+  .alp-page .alp-bare-pupil,
+  .alp-page .alp-yellow-mouth,
+  .alp-page .alp-orange-mouth {
+    transition: all 0.7s ease-in-out !important;
+  }
+
+  .alp-page .alp-eyeball {
+    transition: height 0.15s ease !important;
+  }
+
+  .alp-page .alp-pupil {
+    transition: transform 0.1s ease-out !important;
   }
 }
