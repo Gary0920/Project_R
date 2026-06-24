@@ -61,8 +61,10 @@
 }
 
 .message-action-btn.is-active-feedback {
-  background: color-mix(in srgb, hsl(var(--primary)) 12%, transparent);
-  color: hsl(var(--primary));
+  border: 1px solid hsl(var(--control-active-border));
+  background: hsl(var(--control-active-bg));
+  color: hsl(var(--control-active-foreground));
+  box-shadow: var(--control-active-shadow);
 }
 
 .message-action-btn.is-text-action {
@@ -146,10 +148,19 @@
   box-shadow: 0 14px 32px rgba(15, 23, 42, 0.14);
 }
 
+.message-more-menu.is-compact-icons {
+  width: auto;
+}
+
 .message-more-menu button,
-.message-more-transform,
 .message-more-versions {
   width: 100%;
+}
+
+.message-more-icon-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .message-more-menu button {
@@ -168,6 +179,14 @@
   cursor: pointer;
 }
 
+.message-more-menu .message-more-icon-btn {
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+}
+
 .message-more-menu button:hover:not(:disabled),
 .message-more-menu button.is-active {
   background: hsl(var(--accent));
@@ -182,7 +201,6 @@
   color: hsl(var(--destructive));
 }
 
-.message-more-transform,
 .message-more-versions {
   display: flex;
   flex-direction: column;
@@ -191,17 +209,11 @@
   border-top: 1px solid hsl(var(--border));
 }
 
-.message-more-transform > span,
 .message-more-versions > span {
   padding: 2px 8px;
   color: hsl(var(--muted-foreground));
   font-size: 11px;
   font-weight: 700;
-}
-
-.message-more-transform .text-transform-actions {
-  justify-content: flex-start;
-  padding: 0 4px;
 }
 
 :root[data-theme="dark"] .message-action-btn.is-copied {
@@ -303,6 +315,50 @@
 .message-feedback-status small {
   color: hsl(var(--primary));
   font-weight: 650;
+}
+
+.message-feedback-editor {
+  display: grid;
+  gap: 8px;
+  width: min(520px, 100%);
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid hsl(var(--control-active-border));
+  border-radius: var(--control-radius);
+  background: hsl(var(--control-active-bg));
+  color: hsl(var(--foreground));
+}
+
+.message-feedback-editor label {
+  display: grid;
+  gap: 6px;
+}
+
+.message-feedback-editor label > span {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.message-feedback-editor textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--control-radius);
+  padding: 8px 10px;
+  color: hsl(var(--foreground));
+  background: hsl(var(--card));
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.message-feedback-editor-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .message-operation-card {

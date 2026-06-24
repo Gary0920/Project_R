@@ -1,7 +1,7 @@
 import { type DragEvent, type MouseEvent } from "react";
 
 import type { ChatSessionResponse } from "../../../shared/api/types";
-import { BrainIcon, ChatIcon, AgentIcon, EditIcon, PaperclipIcon, PinIcon, SplitIcon, TrashIcon, WorkspaceIcon } from "../../../shared/icons/LineIcons";
+import { ArchiveIcon, BrainIcon, ChatIcon, AgentIcon, EditIcon, PaperclipIcon, PinIcon, SplitIcon, TrashIcon, WorkspaceIcon } from "../../../shared/icons/LineIcons";
 import { ChatComposer } from "./ChatComposer";
 import { ChatMessageList } from "./ChatMessageList";
 
@@ -27,6 +27,7 @@ export function ChatConversationPane({ controller }: ChatConversationPaneProps) 
     handleAttachmentDragLeave,
     handleAttachmentDragOver,
     handleAttachmentDrop,
+    handleExportConversation,
     handlePinSession,
     handleRenameSession,
     handleToggleSideBySide,
@@ -117,6 +118,15 @@ export function ChatConversationPane({ controller }: ChatConversationPaneProps) 
           </div>
           <div className="chat-header-actions">
             <button
+              className="icon-button"
+              disabled={!paneSession}
+              onClick={() => paneSession ? void handleExportConversation(paneSession.id) : undefined}
+              title="导出对话"
+              type="button"
+            >
+              <ArchiveIcon />
+            </button>
+            <button
               className={`icon-button ${paneSession?.is_pinned ? "is-active" : ""}`}
               disabled={!paneSession}
               onClick={() => paneSession ? void handlePinSession(paneSession.id) : undefined}
@@ -127,13 +137,12 @@ export function ChatConversationPane({ controller }: ChatConversationPaneProps) 
             </button>
             <button
               aria-pressed={sideBySideOpen}
-              className={`business-tool-button chat-header-tool ${sideBySideOpen ? "is-active" : ""}`}
+              className={`business-tool-button chat-header-tool is-icon-only ${sideBySideOpen ? "is-active" : ""}`}
               onClick={handleToggleSideBySide}
               title={sideBySideOpen ? "关闭对话并排" : "左右并排两个对话"}
               type="button"
             >
               <SplitIcon />
-              <span>双对话</span>
             </button>
             {activeWorkspace?.workspace_kind !== "user" ? (
               <button

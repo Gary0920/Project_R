@@ -54,17 +54,24 @@ def message_pair_delete_targets(
 ) -> list[ChatMessage]:
     visible = (
         message_query(db, user_id, session_id)
-        .filter(ChatMessage.id >= message.id)
         .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
         .all()
     )
     if not visible:
         return [message]
-    if message.role != "user":
+
+    target_index = next((index for index, item in enumerate(visible) if item.id == message.id), -1)
+    if target_index < 0:
         return [message]
+
+    turn_start = target_index
+    while turn_start > 0 and visible[turn_start].role != "user":
+        turn_start -= 1
+
     targets: list[ChatMessage] = []
-    for item in visible:
-        if item.id != message.id and item.role == "user":
+    for index in range(turn_start, len(visible)):
+        item = visible[index]
+        if index != turn_start and item.role == "user":
             break
         targets.append(item)
     return targets or [message]

@@ -8,6 +8,31 @@
   gap: 4px;
 }
 
+.chat-header-tool.is-icon-only {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: hsl(var(--muted-foreground));
+  justify-content: center;
+}
+
+.chat-header-tool.is-icon-only:hover:not(:disabled) {
+  border-color: transparent;
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  box-shadow: none;
+}
+
+.chat-header-tool.is-icon-only.is-active {
+  border-color: transparent;
+  background: transparent;
+  color: hsl(var(--control-active-foreground));
+  box-shadow: none;
+}
+
 .prompt-menu {
   position: absolute;
   top: 44px;

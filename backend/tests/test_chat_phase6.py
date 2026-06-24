@@ -366,6 +366,55 @@ class ChatPhase6Tests(unittest.TestCase):
             ["test", "test answer", "keep instruction"],
         )
 
+    def test_exclude_assistant_message_removes_entire_turn(self):
+        self.db.add_all(
+            [
+                ChatMessage(
+                    session_id=self.session.id,
+                    user_id=self.user.id,
+                    role="user",
+                    content="turn question",
+                    status="success",
+                ),
+                ChatMessage(
+                    session_id=self.session.id,
+                    user_id=self.user.id,
+                    role="assistant",
+                    content="turn answer",
+                    status="success",
+                ),
+                ChatMessage(
+                    session_id=self.session.id,
+                    user_id=self.user.id,
+                    role="user",
+                    content="next question",
+                    status="success",
+                ),
+                ChatMessage(
+                    session_id=self.session.id,
+                    user_id=self.user.id,
+                    role="assistant",
+                    content="next answer",
+                    status="success",
+                ),
+            ]
+        )
+        self.db.commit()
+        target = self.db.query(ChatMessage).filter(ChatMessage.content == "turn answer").one()
+
+        response = chat_api.exclude_message_context(self.session.id, target.id, self.user, self.db)
+
+        self.assertEqual(response["ok"], True)
+        visible = chat_api.list_messages(self.session.id, 50, 0, self.user, self.db)
+        self.assertEqual([message.content for message in visible.items], ["next question", "next answer"])
+        excluded = (
+            self.db.query(ChatMessage)
+            .filter(ChatMessage.session_id == self.session.id, ChatMessage.is_excluded == True)
+            .order_by(ChatMessage.id.asc())
+            .all()
+        )
+        self.assertEqual([message.content for message in excluded], ["turn question", "turn answer"])
+
     def test_regenerate_message_creates_new_active_version_and_excludes_later_context(self):
         self.db.add_all(
             [

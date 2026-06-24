@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 
 import type { ApiClientOptions } from "../../../shared/api/client";
 import type {
@@ -72,11 +72,13 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
     currentUser,
     editingDraft,
     editingMessageId,
+    feedbackComment,
+    feedbackTarget,
     formatClockTime,
     handleActivateVersion,
     handleCopyMessage,
-    handleExportConversation,
     handleSetBinaryFeedback,
+    handleSubmitFeedback,
     handleSubmitEditedMessage,
     handleSubmitGBrainThinkReview,
     handleSwitchToAgent,
@@ -90,7 +92,6 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
     onEditGeneratedEmailDraft,
     onOpenGeneratedEmailClient,
     onSaveGeneratedFileToWorkspace,
-    onTransformMessage,
     onFocusComposer,
     paneSessionId,
     renderAvatar,
@@ -100,11 +101,28 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
     sessionIsSending,
     setEditingDraft,
     setEditingMessageId,
+    setFeedbackComment,
+    setFeedbackTarget,
     setSourcePreview,
     setUtilityPanel,
     startEditingMessage,
     token,
   } = controller;
+  const feedbackEditorRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!feedbackTarget) return undefined;
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(".message-feedback-editor")) return;
+      if (target?.closest(".message-action-btn")) return;
+      setFeedbackTarget(null);
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [feedbackTarget, setFeedbackTarget]);
 
   function getLoadingStatusTexts(variant: "reply" | "regenerate") {
     const latestUserMessage = [...messages].reverse().find((message) => message.role === "user") as any;
@@ -209,6 +227,39 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
         >
           &gt;
         </button>
+      </div>
+    );
+  }
+
+  function renderFeedbackEditor(message: ChatMessage) {
+    if (!feedbackTarget || feedbackTarget.id !== message.id) return null;
+    const isBusy = messageActionBusyId === message.id;
+    return (
+      <div className="message-feedback-editor" ref={feedbackEditorRef}>
+        <label>
+          <span>哪里不满意？可选填写，提交后会给管理员复盘。</span>
+          <textarea
+            autoFocus
+            onChange={(event) => setFeedbackComment(event.target.value)}
+            onKeyDown={(event) => {
+              if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+                event.preventDefault();
+                void handleSubmitFeedback();
+              }
+              if (event.key === "Escape") {
+                setFeedbackTarget(null);
+              }
+            }}
+            placeholder="例如：事实不准、引用不对、没有回答到重点..."
+            value={feedbackComment}
+          />
+        </label>
+        <div className="message-feedback-editor-actions">
+          <button className="btn-secondary" onClick={() => setFeedbackTarget(null)} type="button">关闭</button>
+          <button className="btn-primary" disabled={isBusy} onClick={() => void handleSubmitFeedback()} type="button">
+            提交反馈
+          </button>
+        </div>
       </div>
     );
   }
@@ -359,6 +410,7 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
               {message.feedback_comment ? <small>含意见</small> : null}
             </div>
           ) : null}
+          {message.role === "assistant" ? renderFeedbackEditor(message) : null}
           <MessageActions
             copied={copiedMessageId === message.id}
             isBusy={isBusy}
@@ -366,13 +418,10 @@ export function ChatMessageList({ controller }: ChatMessageListProps) {
             onActivateVersion={handleActivateVersion}
             onCopy={(target) => void handleCopyMessage(target)}
             onDelete={requestDeleteMessageContext}
-            onExportConversation={(sessionId) => void handleExportConversation(sessionId)}
             onFeedback={(target, feedback) => void handleSetBinaryFeedback(target, feedback)}
             onQuote={(target) => controller.setQuotedMessage({ messageId: target.id, sessionId: paneSessionId!, content: target.content ?? "", role: target.role })}
             onRegenerate={openRegenerateDialog}
             onStartEdit={startEditingMessage}
-            onSwitchToAgent={handleSwitchToAgent}
-            onTransform={onTransformMessage}
           />
           {message.status === "failed" ? <p className="message-error">AI 服务暂时不可用</p> : null}
         </div>

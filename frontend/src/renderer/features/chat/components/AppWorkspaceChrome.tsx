@@ -46,7 +46,9 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     currentUser,
     deleteConfirmSessionId,
     deleteLastMessageTarget,
+    deleteLastMessageTargetCount,
     deleteMessageTarget,
+    deleteMessageTargetCount,
     deletedMessageUndo,
     downloadedUpdatePath,
     error,
@@ -623,7 +625,7 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
         {deletedMessageUndo ? (
           <div className="notification-toast message-undo-toast">
             <div>
-              <div className="notification-toast-title">已删除当前问答</div>
+              <div className="notification-toast-title">已删除这一轮对话</div>
               <div className="notification-toast-body">上下文已同步清理，可在数秒内撤回。</div>
             </div>
             <button onClick={() => void handleUndoDeleteMessages()} type="button">撤回删除</button>
@@ -745,8 +747,8 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
       {deleteMessageTarget !== null ? (
         <div className="confirm-overlay" onClick={() => setDeleteMessageTarget(null)}>
           <div className="confirm-card" onClick={(event) => event.stopPropagation()}>
-            <h3>删除消息上下文</h3>
-            <p>确定删除此条消息对应的问答吗？这些内容会从当前对话视图和后续 AI 上下文中排除，并可在数秒内撤回。</p>
+            <h3>删除这一轮对话</h3>
+            <p>将从当前对话视图和后续 AI 上下文中排除 {deleteMessageTargetCount || 1} 条对话信息，并可在数秒内撤回。</p>
             <div className="confirm-actions">
               <button className="btn-secondary" onClick={() => setDeleteMessageTarget(null)} type="button">取消</button>
               <button
@@ -757,7 +759,7 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
                 }}
                 type="button"
               >
-                删除
+                删除这一轮
               </button>
             </div>
           </div>
@@ -767,8 +769,8 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
       {deleteLastMessageTarget !== null ? (
         <div className="confirm-overlay" onClick={() => setDeleteLastMessageTarget(null)}>
           <div className="confirm-card" onClick={(event) => event.stopPropagation()}>
-            <h3>删除最后一条消息</h3>
-            <p>这是该对话中的最后一组消息。删除后整个对话会被删除，且无法恢复。</p>
+            <h3>删除这一轮对话</h3>
+            <p>将删除最后 {deleteLastMessageTargetCount || 1} 条对话信息。由于这是该对话中的最后一轮，确认后整个对话会被删除，且无法恢复。</p>
             <div className="confirm-actions">
               <button className="btn-secondary" onClick={() => setDeleteLastMessageTarget(null)} type="button">取消</button>
               <button

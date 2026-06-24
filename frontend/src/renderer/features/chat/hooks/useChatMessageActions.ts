@@ -70,6 +70,8 @@ export function useChatMessageActions({
 }) {
   const [deleteMessageTarget, setDeleteMessageTarget] = useState<ChatMessage | null>(null);
   const [deleteLastMessageTarget, setDeleteLastMessageTarget] = useState<ChatMessage | null>(null);
+  const [deleteMessageTargetCount, setDeleteMessageTargetCount] = useState(0);
+  const [deleteLastMessageTargetCount, setDeleteLastMessageTargetCount] = useState(0);
   const [copiedMessageId, setCopiedMessageId] = useState<number | null>(null);
   const [deletedMessageUndo, setDeletedMessageUndo] = useState<{ sessionId: number; messageIds: number[] } | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<number | null>(null);
@@ -119,12 +121,16 @@ export function useChatMessageActions({
       });
     const targetIndex = sessionMessages.findIndex((message) => message.id === target.id);
     if (targetIndex < 0) return target.id > 0 ? [target.id] : [];
-    if (target.role !== "user") return [target.id];
+
+    let turnStart = targetIndex;
+    while (turnStart > 0 && sessionMessages[turnStart].role !== "user") {
+      turnStart -= 1;
+    }
 
     const targetIds: number[] = [];
-    for (let index = targetIndex; index < sessionMessages.length; index += 1) {
+    for (let index = turnStart; index < sessionMessages.length; index += 1) {
       const message = sessionMessages[index];
-      if (index !== targetIndex && message.role === "user") break;
+      if (index !== turnStart && message.role === "user") break;
       targetIds.push(message.id);
     }
     return targetIds.length > 0 ? targetIds : [target.id];
@@ -139,10 +145,13 @@ export function useChatMessageActions({
   }
 
   function requestDeleteMessageContext(target: ChatMessage) {
+    const targetCount = getMessageDeleteTargetIds(target, messagesBySession).length;
     if (willDeleteEntireSession(target, messagesBySession)) {
+      setDeleteLastMessageTargetCount(targetCount);
       setDeleteLastMessageTarget(target);
       return;
     }
+    setDeleteMessageTargetCount(targetCount);
     setDeleteMessageTarget(target);
   }
 
@@ -314,7 +323,12 @@ export function useChatMessageActions({
         ...current,
         [feedbackTarget.session_id]: (current[feedbackTarget.session_id] ?? []).map((message) =>
           message.id === feedbackTarget.id
-            ? { ...message, feedback_rating: response.rating, feedback_comment: response.comment }
+            ? {
+                ...message,
+                feedback: response.feedback,
+                feedback_rating: response.rating,
+                feedback_comment: response.comment,
+              }
             : message,
         ),
       }));
@@ -352,6 +366,15 @@ export function useChatMessageActions({
             : item,
         ),
       }));
+      if (feedback === "dislike") {
+        setFeedbackTarget({ ...message, feedback: response.feedback, feedback_rating: response.rating, feedback_comment: response.comment });
+        setFeedbackRating(response.rating);
+        setFeedbackComment(response.comment ?? "");
+      } else {
+        setFeedbackTarget(null);
+        setFeedbackRating(0);
+        setFeedbackComment("");
+      }
       setActionNotice(feedback === "like" ? "已记录喜欢反馈。" : "已记录不喜欢反馈。");
     } catch (feedbackError: unknown) {
       if (feedbackError instanceof ApiError && feedbackError.status === 401) {
@@ -435,7 +458,9 @@ export function useChatMessageActions({
   return {
     copiedMessageId,
     deleteLastMessageTarget,
+    deleteLastMessageTargetCount,
     deleteMessageTarget,
+    deleteMessageTargetCount,
     deletedMessageUndo,
     editingDraft,
     editingMessageId,

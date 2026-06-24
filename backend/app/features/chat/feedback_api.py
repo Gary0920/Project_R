@@ -86,12 +86,13 @@ def submit_gbrain_think_review(
 ) -> dict:
     session = get_user_session(db, user.id, session_id)
     message = _assistant_message(db, user.id, session_id, message_id, not_found_detail="可提交审核的 GBrain 回答不存在")
+    note = str(getattr(req, "user_note", "") or req.note)
     review, created = create_gbrain_think_review(
         db,
         user=user,
         session=session,
         message=message,
-        note=(req.user_note or req.note).strip()[:2000],
+        note=note.strip()[:2000],
         business_context=req.business_context.strip()[:2000],
         expected_knowledge=req.expected_knowledge.strip()[:2000],
         source_hint=req.source_hint.strip()[:2000],

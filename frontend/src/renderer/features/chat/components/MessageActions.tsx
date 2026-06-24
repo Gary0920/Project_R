@@ -1,11 +1,10 @@
 import { useState } from "react";
 
 import {
-  AgentIcon,
-  ArchiveIcon,
   CopyIcon,
   EditIcon,
   MoreIcon,
+  NoteIcon,
   RefreshIcon,
   ThumbsDownIcon,
   ThumbsUpIcon,
@@ -13,8 +12,6 @@ import {
 } from "../../../shared/icons/LineIcons";
 import type { ChatMessageVersionResponse } from "../../../shared/api/types";
 import type { ChatMessage } from "../state";
-import type { TextTransformAction } from "../textTransform";
-import { TextTransformButtons } from "./TextTransformButtons";
 
 export type MessageActionsProps = {
   copied: boolean;
@@ -23,13 +20,10 @@ export type MessageActionsProps = {
   onActivateVersion: (message: ChatMessage, version: ChatMessageVersionResponse) => void;
   onCopy: (message: ChatMessage) => void;
   onDelete: (message: ChatMessage) => void;
-  onExportConversation: (sessionId: number) => void;
   onFeedback: (message: ChatMessage, feedback: "like" | "dislike") => void;
   onQuote: (message: ChatMessage) => void;
   onRegenerate: (message: ChatMessage) => void;
   onStartEdit: (message: ChatMessage) => void;
-  onSwitchToAgent: (messageId: number) => void;
-  onTransform?: (message: ChatMessage, action: TextTransformAction) => void;
 };
 
 export function MessageActions({
@@ -39,13 +33,10 @@ export function MessageActions({
   onActivateVersion,
   onCopy,
   onDelete,
-  onExportConversation,
   onFeedback,
   onQuote,
   onRegenerate,
   onStartEdit,
-  onSwitchToAgent,
-  onTransform,
 }: MessageActionsProps) {
   const [moreOpen, setMoreOpen] = useState(false);
   const disabled = message.isOptimistic || isBusy;
@@ -89,17 +80,8 @@ export function MessageActions({
           <button
             className="message-action-btn"
             disabled={disabled}
-            onClick={() => onExportConversation(message.session_id)}
-            title="导出对话"
-            type="button"
-          >
-            <ArchiveIcon />
-          </button>
-          <button
-            className="message-action-btn"
-            disabled={disabled}
             onClick={() => onRegenerate(message)}
-            title="重新生成对话"
+            title="重新生成回答"
             type="button"
           >
             <RefreshIcon />
@@ -118,29 +100,37 @@ export function MessageActions({
           <MoreIcon />
         </button>
         {moreOpen ? (
-          <div className="message-more-menu">
-            <button onClick={() => closeAfter(() => onQuote(message))} type="button">引用</button>
+          <div className={`message-more-menu ${message.role === "assistant" && versions.length <= 1 ? "is-compact-icons" : ""}`}>
+            <div className="message-more-icon-row">
+              <button
+                aria-label="引用"
+                className="message-more-icon-btn"
+                onClick={() => closeAfter(() => onQuote(message))}
+                title="引用"
+                type="button"
+              >
+                <NoteIcon />
+              </button>
+              <button
+                aria-label="删除这一轮对话"
+                className="message-more-icon-btn is-danger"
+                disabled={disabled}
+                onClick={() => closeAfter(() => onDelete(message))}
+                title="删除这一轮对话"
+                type="button"
+              >
+                <TrashIcon />
+              </button>
+            </div>
             {message.role === "user" ? (
               <button disabled={disabled} onClick={() => closeAfter(() => onStartEdit(message))} type="button">
                 <EditIcon />
                 <span>编辑并开启新分支</span>
               </button>
             ) : null}
-            {message.role === "assistant" ? (
-              <button onClick={() => closeAfter(() => onSwitchToAgent(message.id))} type="button">
-                <AgentIcon />
-                <span>切换到 Agent</span>
-              </button>
-            ) : null}
-            {onTransform ? (
-              <div className="message-more-transform">
-                <span>文本变换</span>
-                <TextTransformButtons disabled={disabled} message={message} onTransform={onTransform} />
-              </div>
-            ) : null}
             {versions.length > 1 ? (
               <div className="message-more-versions">
-                <span>版本</span>
+                <span>切换版本</span>
                 {versions.map((version) => (
                   <button
                     className={version.active_version ? "is-active" : ""}
@@ -154,10 +144,6 @@ export function MessageActions({
                 ))}
               </div>
             ) : null}
-            <button className="is-danger" disabled={disabled} onClick={() => closeAfter(() => onDelete(message))} type="button">
-              <TrashIcon />
-              <span>删除当前问答</span>
-            </button>
           </div>
         ) : null}
       </span>

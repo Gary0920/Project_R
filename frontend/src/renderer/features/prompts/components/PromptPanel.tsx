@@ -175,6 +175,14 @@ export function PromptPanel({
     setDetailOpen(true);
   }
 
+  function returnToPromptList() {
+    setCreating(false);
+    setEditingPromptId(null);
+    setName("");
+    setContent("");
+    setDetailOpen(false);
+  }
+
   function startEditingPreview() {
     if (previewPrompt.source !== "user") return;
     setCreating(false);
@@ -277,11 +285,11 @@ export function PromptPanel({
 
         <section className="prompt-detail-pane" aria-label="提示词详情">
           <div className={`prompt-detail-toolbar ${hasDetailActions ? "" : "is-actions-empty"}`}>
-            <button className="prompt-detail-back" onClick={() => setDetailOpen(false)} type="button">返回列表</button>
+            <button className="prompt-detail-back" onClick={returnToPromptList} type="button">返回列表</button>
             <div className="prompt-detail-toolbar-actions">
               {creating ? (
                 <>
-                  <button className="prompt-action-button" onClick={() => setCreating(false)} type="button">取消</button>
+                  <button className="prompt-action-button" onClick={returnToPromptList} type="button">取消</button>
                   <button className="prompt-action-button is-apply" disabled={!name.trim() || !content.trim()} onClick={() => void handleCreate()} type="button">
                     保存
                   </button>
