@@ -25,6 +25,16 @@ type ModelSelection = {
   profile?: string | null;
 } | null;
 
+export type GBrainReviewDraft = {
+  sourceHint: string;
+  userNote: string;
+};
+
+const EMPTY_GBRAIN_REVIEW_DRAFT: GBrainReviewDraft = {
+  sourceHint: "",
+  userNote: "",
+};
+
 export function useChatMessageActions({
   activeWorkspaceId,
   apiOptions,
@@ -67,6 +77,8 @@ export function useChatMessageActions({
   const [feedbackTarget, setFeedbackTarget] = useState<ChatMessage | null>(null);
   const [feedbackRating, setFeedbackRating] = useState(0);
   const [feedbackComment, setFeedbackComment] = useState("");
+  const [gbrainReviewTarget, setGBrainReviewTarget] = useState<ChatMessage | null>(null);
+  const [gbrainReviewDraft, setGBrainReviewDraft] = useState<GBrainReviewDraft>(EMPTY_GBRAIN_REVIEW_DRAFT);
   const [messageActionBusyId, setMessageActionBusyId] = useState<number | null>(null);
   const copyResetTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const undoDeleteTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
@@ -368,18 +380,36 @@ export function useChatMessageActions({
     }
   }
 
-  async function handleSubmitGBrainThinkReview(message: ChatMessage) {
+  function handleSubmitGBrainThinkReview(message: ChatMessage) {
+    if (message.id < 0) return;
+    setError("");
+    setActionNotice("");
+    setGBrainReviewTarget(message);
+    setGBrainReviewDraft(EMPTY_GBRAIN_REVIEW_DRAFT);
+  }
+
+  async function handleConfirmGBrainThinkReview() {
+    if (!gbrainReviewTarget || gbrainReviewTarget.id < 0) return;
+    const sourceHint = gbrainReviewDraft.sourceHint.trim();
+    const userNote = gbrainReviewDraft.userNote.trim();
+    if (!userNote) return;
+    const message = gbrainReviewTarget;
     if (message.id < 0) return;
     setError("");
     setActionNotice("");
     setMessageActionBusyId(message.id);
     try {
-      const response = await submitGBrainThinkReview(apiOptions, message.session_id, message.id, {});
+      const response = await submitGBrainThinkReview(apiOptions, message.session_id, message.id, {
+        source_hint: sourceHint,
+        user_note: userNote,
+      });
       setActionNotice(
         response.created
           ? `已提交 GBrain 缺口/冲突审核 #${response.knowledge_review_id}。`
           : `已更新 GBrain 缺口/冲突审核 #${response.knowledge_review_id}。`,
       );
+      setGBrainReviewTarget(null);
+      setGBrainReviewDraft(EMPTY_GBRAIN_REVIEW_DRAFT);
     } catch (reviewError: unknown) {
       if (reviewError instanceof ApiError && reviewError.status === 401) {
         clearAuth();
@@ -392,6 +422,16 @@ export function useChatMessageActions({
     }
   }
 
+  function gbrainReviewOriginalQuestion() {
+    if (!gbrainReviewTarget) return "";
+    const sessionMessages = (messagesBySession[gbrainReviewTarget.session_id] ?? [])
+      .filter((message) => message.id > 0)
+      .sort((left, right) => left.id - right.id);
+    const targetIndex = sessionMessages.findIndex((message) => message.id === gbrainReviewTarget.id);
+    const previousMessages = targetIndex >= 0 ? sessionMessages.slice(0, targetIndex) : sessionMessages;
+    return [...previousMessages].reverse().find((message) => message.role === "user")?.content ?? "";
+  }
+
   return {
     copiedMessageId,
     deleteLastMessageTarget,
@@ -402,7 +442,11 @@ export function useChatMessageActions({
     feedbackComment,
     feedbackRating,
     feedbackTarget,
+    gbrainReviewDraft,
+    gbrainReviewOriginalQuestion: gbrainReviewOriginalQuestion(),
+    gbrainReviewTarget,
     handleActivateVersion,
+    handleConfirmGBrainThinkReview,
     handleCopyMessage,
     handleDeleteMessageContext,
     handleSubmitEditedMessage,
@@ -422,6 +466,8 @@ export function useChatMessageActions({
     setFeedbackComment,
     setFeedbackRating,
     setFeedbackTarget,
+    setGBrainReviewDraft,
+    setGBrainReviewTarget,
     setMessageActionBusyId,
     startEditingMessage,
   };

@@ -635,6 +635,12 @@ class KnowledgeSources:
                     }
                 )
 
+        primary_issue_keys = {
+            _gbrain_issue_key(value)
+            for issue_key in ("gaps", "conflicts")
+            for value in (result.get(issue_key) if isinstance(result.get(issue_key), list) else [])
+            if _gbrain_issue_key(value)
+        }
         for key, title, tag in (
             ("gaps", "GBrain 缺口分析 / Gap Analysis", "gap"),
             ("conflicts", "GBrain 冲突提示 / Conflict Notes", "conflict"),
@@ -642,6 +648,13 @@ class KnowledgeSources:
         ):
             values = result.get(key)
             if isinstance(values, list) and values:
+                visible_values = [
+                    value for value in values
+                    if str(value).strip()
+                    and (key != "warnings" or _gbrain_issue_key(value) not in primary_issue_keys)
+                ]
+                if not visible_values:
+                    continue
                 sources.append(
                     {
                         "file": f"gbrain:{source_id}/__think_{key}__",
@@ -650,7 +663,7 @@ class KnowledgeSources:
                         "type": f"gbrain_think_{tag}",
                         "authority_level": source_id,
                         "tags": f"gbrain,think,{tag}",
-                        "content": "\n".join(f"- {value}" for value in values if str(value).strip()),
+                        "content": "\n".join(f"- {value}" for value in visible_values),
                         "score": 0.0,
                     }
                 )
@@ -1029,7 +1042,12 @@ def _dedupe_terms(terms: list[str]) -> list[str]:
     return unique
 
 
+def _gbrain_issue_key(value: object) -> str:
+    return re.sub(r"[\s。．.，,、；;：:！!？?（）()\[\]【】\"'`_-]+", "", str(value or "").strip().lower())
+
+
 PROJECT_PENDING_REVIEW_PREFIX = "gbrain_project_pending_review:"
+GBRAIN_THINK_REVIEW_PREFIX = "gbrain_think_review:"
 
 
 def approve_knowledge_review_to_gbrain(
@@ -1146,11 +1164,15 @@ def append_approved_knowledge(review: Any, settings: GBrainSettings | None = Non
         )
 
     reviewed_at = review.reviewed_at or datetime.now(timezone.utc)
+    source = str(review.source or "knowledge_review")
+    review_type = "知识缺口反馈" if source.startswith(GBRAIN_THINK_REVIEW_PREFIX) else "知识审核"
     section = (
         f"\n\n## 审核知识 {review.id}\n\n"
         f"{marker}\n\n"
-        f"- 来源：{review.source or 'knowledge_review'}\n"
+        f"- 类型：{review_type}\n"
+        f"- 来源：{source}\n"
         f"- 审核时间：{reviewed_at.isoformat()}\n\n"
+        "## 正式知识\n\n"
         f"{review.content.strip()}\n"
     )
     target.write_text(text.rstrip() + section, encoding="utf-8")

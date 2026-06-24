@@ -113,6 +113,14 @@ export function useNotificationCenter({
     }
   }
 
+  async function handleNotificationRead(notification: NotificationResponse) {
+    try {
+      await markNotificationReadAndRefresh(notification);
+    } catch {
+      setError("无法将通知标记为已读。");
+    }
+  }
+
   async function handleMarkAllNotificationsRead() {
     try {
       await markAllNotificationsRead(apiOptions);
@@ -216,6 +224,7 @@ export function useNotificationCenter({
     handleMarkAllNotificationsRead,
     handleNotificationAction,
     handleNotificationActionStatus,
+    handleNotificationRead,
     loadNotificationList,
     notificationPanelOpen,
     notificationToast,

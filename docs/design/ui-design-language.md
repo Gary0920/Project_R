@@ -93,6 +93,18 @@ Project_R 是公司内部 AI 智能办公工具，也是面向企业业务场景
 
 **能力提示（`/query`、公司预设 Skill、提示词）** 与 active 同属碧落体系（`--capability-*` 或 `--control-active-*`），不另造独立亮蓝。
 
+**标签组辅助色（仅用于 Chrome 风格工作区标签组，不作为普通 active 色）：**
+
+```text
+--tab-group-indigo  /* 个人/默认标签组色线 */
+--tab-group-emerald /* CRM/客户标签组色线 */
+--tab-group-amber   /* 项目标签组候选色 */
+--tab-group-rose    /* 项目标签组候选色 */
+--tab-group-slate   /* 缺省/未选择标签组色 */
+```
+
+使用规则：仅用于顶部标签组的组头色点、组底部连续 2px 色线和 active tab 顶部细边框；必须保持低饱和、轻量提示，不得扩大为大面积背景色。
+
 **颜色红线：**
 
 - ❌ 禁止为普通 active 临时引入亮蓝、紫色、深黑、橙色或任何新色；普通选中态只有碧落暮蓝一种逻辑。
@@ -291,7 +303,7 @@ Project_R 是公司内部 AI 智能办公工具，也是面向企业业务场景
 - 不展示底层目录（`.git`、`derived`、`manifests`、`.pending_review`、`_preprocessed`、`gbrain-ready`、`runs` 等后端产物）。`.trash` 显示为回收站入口，不可上传/重命名/拖拽。
 - 预览不插入列表内部；点击文件在面板侧面打开可关闭的预览窗。
 - 路径栏用 Windows 地址栏逻辑：后退/前进/上一级 + `›` 分隔层级；上传/新建为高频头部动作，刷新/回收区/录入放更多菜单。
-- 颜色只复用 `--control-active-*` / `--success` / `--warning` / `--destructive` / `--muted` / `--border` / `--card`；右键菜单用轻量浮层，不引新色。
+- 颜色只复用 `--control-active-*` / `--tab-group-*` / `--success` / `--warning` / `--destructive` / `--muted` / `--border` / `--card`；右键菜单用轻量浮层，不引新色。
 - 录入二次确认必须说明：递归处理、预计文件数、主要类型、高成本 MiMo/PDF/转写风险、当前权限。
 
 ### 6.7 确认弹窗与用户控制

@@ -309,22 +309,61 @@
   width: min(440px, calc(100vw - 32px));
 }
 
+.gbrain-review-submit-card {
+  display: grid;
+  gap: 16px;
+  width: min(520px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 48px));
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.gbrain-review-submit-card h3,
+.gbrain-review-submit-card p {
+  margin: 0;
+}
+
+.gbrain-review-summary {
+  display: grid;
+  gap: 6px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--control-radius);
+  background: hsl(var(--muted));
+  padding: 12px;
+}
+
+.gbrain-review-summary strong {
+  color: hsl(var(--foreground));
+  font-size: var(--body-sm);
+  line-height: 1.45;
+}
+
+.gbrain-review-summary span {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .message-operation-field {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  margin: 14px 0 0;
+  gap: 8px;
+  margin: 12px 0 0;
   color: hsl(var(--foreground));
   font-size: 13px;
   font-weight: 650;
+}
+
+.gbrain-review-submit-card .message-operation-field {
+  margin: 0;
 }
 
 .message-operation-field select,
 .message-operation-field textarea {
   width: 100%;
   border: 1px solid hsl(var(--border));
-  border-radius: 8px;
-  padding: 9px 10px;
+  border-radius: var(--control-radius);
+  padding: 10px 12px;
   color: hsl(var(--foreground));
   background: hsl(var(--background));
   font: inherit;
@@ -334,6 +373,22 @@
   min-height: 92px;
   resize: vertical;
   line-height: 1.5;
+}
+
+.gbrain-review-submit-card .message-operation-field textarea {
+  min-height: 72px;
+}
+
+.gbrain-review-submit-card .confirm-actions {
+  gap: 8px;
+  margin-top: 0;
+  border-top: 1px solid hsl(var(--border));
+  padding-top: 12px;
+}
+
+.gbrain-review-submit-card .confirm-actions button {
+  min-height: 36px;
+  border-radius: var(--control-radius);
 }
 
 .message-rating-row {

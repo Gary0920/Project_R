@@ -711,7 +711,12 @@ class ChatPhase6Tests(unittest.TestCase):
         response = chat_api.submit_gbrain_think_review(
             self.session.id,
             assistant_message.id,
-            chat_api.GBrainThinkReviewRequest(note="请管理员确认审批时限。"),
+            chat_api.GBrainThinkReviewRequest(
+                note="请管理员确认审批时限。",
+                business_context="正在处理员工用车申请，需要明确审批 SLA。\n避免现场等待。",
+                expected_knowledge="希望补充用车申请审批时限、审批人和超时处理规则。",
+                source_hint="可参考《行政用车管理制度》或行政部负责人。",
+            ),
             self.user,
             self.db,
         )
@@ -729,6 +734,10 @@ class ChatPhase6Tests(unittest.TestCase):
         self.assertIn("source_scope_limited", review.content)
         self.assertIn("gbrain:company-wiki/rules/用车申请", review.content)
         self.assertIn("请管理员确认审批时限", review.content)
+        self.assertIn("业务场景 / Business Context", review.content)
+        self.assertIn("正在处理员工用车申请，需要明确审批 SLA。 / 避免现场等待。", review.content)
+        self.assertIn("希望补充用车申请审批时限、审批人和超时处理规则。", review.content)
+        self.assertIn("《行政用车管理制度》", review.content)
         notification = (
             self.db.query(Notification)
             .filter(Notification.event_key == f"knowledge_review:{review.id}:pending")

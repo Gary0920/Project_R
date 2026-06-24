@@ -48,6 +48,7 @@ class AdminPhase13Tests(unittest.TestCase):
         self.db.refresh(self.employee)
         self.gbrain_root = tempfile.TemporaryDirectory()
         self.original_gbrain_adapter = admin_api.GBrainAdapter
+        self.original_generate_gbrain_review_draft = admin_api.generate_gbrain_review_draft
         admin_api.GBrainAdapter = _FakeGBrainAdapter
         _FakeGBrainAdapter.project_sync_count = 0
         _FakeGBrainAdapter.submitted_citation_fixers = []
@@ -77,6 +78,7 @@ class AdminPhase13Tests(unittest.TestCase):
 
     def tearDown(self):
         admin_api.GBrainAdapter = self.original_gbrain_adapter
+        admin_api.generate_gbrain_review_draft = self.original_generate_gbrain_review_draft
         for key, value in self.env_backup.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -338,6 +340,123 @@ class AdminPhase13Tests(unittest.TestCase):
         text = target.read_text(encoding="utf-8")
         self.assertIn("新内容", text)
         self.assertEqual(text.count(f"knowledge_review:{review.id}"), 1)
+
+    def test_gbrain_think_review_requires_clean_approval_content(self):
+        raw_content = (
+            "# GBrain Think 缺口 / 冲突审核候选\n\n"
+            "## 原问题 / Original Question\n\n"
+            "公司的考勤制度是怎样的？\n\n"
+            "## GBrain 缺口 / Gaps\n\n"
+            "- 回答存在资料缺口。\n\n"
+            "## GBrain 警告 / Warnings\n\n"
+            "- 回答存在风险提示。\n"
+        )
+        review = KnowledgeReview(
+            submitter_id=self.employee.id,
+            content=raw_content,
+            source="gbrain_think_review:message:99",
+        )
+        self.db.add(review)
+        self.db.commit()
+        self.db.refresh(review)
+
+        with self.assertRaises(HTTPException) as exc:
+            admin_api.review_knowledge(
+                review.id,
+                admin_api.ReviewKnowledgeRequest(status="approved"),
+                self.admin,
+                self.db,
+            )
+
+        self.assertEqual(exc.exception.status_code, 400)
+        clean_content = "## 考勤制度查询处理原则\n\n当公司考勤制度在知识库中缺少正式规定时，应提示用户补充制度原文或截图，不得把推测内容作为事实回答。"
+        approved = admin_api.review_knowledge(
+            review.id,
+            admin_api.ReviewKnowledgeRequest(status="approved", content=clean_content),
+            self.admin,
+            self.db,
+        )
+
+        self.assertEqual(approved.status, "approved")
+        target = (
+            Path(self.gbrain_root.name)
+            / "_preprocessed"
+            / "company"
+            / "company-wiki"
+            / "gbrain-ready"
+            / "reviews"
+            / "知识审核沉淀.md"
+        )
+        text = target.read_text(encoding="utf-8")
+        self.assertIn("类型：知识缺口反馈", text)
+        self.assertIn(clean_content, text)
+        self.assertNotIn("GBrain Think 缺口 / 冲突审核候选", text)
+
+    def test_admin_can_generate_gbrain_think_review_draft(self):
+        review = KnowledgeReview(
+            submitter_id=self.employee.id,
+            content=(
+                "# GBrain Think 缺口 / 冲突审核候选\n\n"
+                "## 用户补充信息 / User Supplement\n\n"
+                "- 自由说明 / User Note: 用户需要确认请假流程是否有正式制度依据。\n"
+                "- 可参考来源 / Source Hint: 人事制度文件夹。\n\n"
+                "## 原问题 / Original Question\n\n"
+                "公司的请假制度又如何？\n\n"
+                "## GBrain 缺口 / Gaps\n\n"
+                "- 公司请假制度的具体规定。\n"
+            ),
+            source="gbrain_think_review:message:52",
+        )
+        self.db.add(review)
+        self.db.commit()
+        self.db.refresh(review)
+
+        def fake_generate(content, *, model_profile=None):
+            return {
+                "draft": "## 公司请假制度\n\n请管理员核实后填写正式制度。",
+                "summary": "用户需要确认请假制度。",
+                "generated_by": "template",
+                "model": "",
+            }
+
+        admin_api.generate_gbrain_review_draft = fake_generate
+
+        response = admin_api.generate_knowledge_review_draft(
+            review.id,
+            admin_api.GenerateKnowledgeReviewDraftRequest(),
+            self.admin,
+            self.db,
+        )
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["generated_by"], "template")
+        self.assertIn("公司请假制度", response["draft"])
+        audit = self.db.query(AuditLog).filter(AuditLog.action == "admin_knowledge_review_generate_draft").one()
+        self.assertIn(f"review_id={review.id}", audit.detail)
+
+    def test_generate_gbrain_think_review_draft_requires_admin_and_gbrain_source(self):
+        review = KnowledgeReview(submitter_id=self.employee.id, content="候选知识", source="chat")
+        self.db.add(review)
+        self.db.commit()
+        self.db.refresh(review)
+
+        with self.assertRaises(HTTPException) as forbidden:
+            admin_api.generate_knowledge_review_draft(
+                review.id,
+                admin_api.GenerateKnowledgeReviewDraftRequest(),
+                self.employee,
+                self.db,
+            )
+        self.assertEqual(forbidden.exception.status_code, 403)
+
+        with self.assertRaises(HTTPException) as bad_source:
+            admin_api.generate_knowledge_review_draft(
+                review.id,
+                admin_api.GenerateKnowledgeReviewDraftRequest(),
+                self.admin,
+                self.db,
+            )
+        self.assertEqual(bad_source.exception.status_code, 400)
 
     def test_approve_project_pending_review_promotes_and_syncs_project_source(self):
         project_root = Path(self.gbrain_root.name) / "project" / "BFI" / "BG007"

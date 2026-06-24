@@ -11,6 +11,7 @@ import {
   getGBrainMaintenance,
   pollGBrainCitationFixerJobs,
   pollGBrainDreamCycleJobs,
+  generateKnowledgeReviewDraft,
   listAdminTemplates,
   listAdminGroupCandidates,
   listAdminUserCandidates,
@@ -519,6 +520,25 @@ export function useSettingsAdminController({
       await loadGBrainMaintenanceData();
     } catch (error) {
       setAdminMessage(error instanceof ApiError ? error.message : "提交审核项引用修复失败。");
+    } finally {
+      setAdminLoading(false);
+    }
+  }
+
+  async function handleGenerateKnowledgeReviewDraft(item: KnowledgeReviewResponse) {
+    setAdminLoading(true);
+    setAdminMessage(`正在为审核项 #${item.id} 生成审核草稿...`);
+    try {
+      const result = await generateKnowledgeReviewDraft(apiOptions, item.id, {});
+      setAdminMessage(
+        result.generated_by === "template"
+          ? `审核项 #${item.id} 已生成模板草稿；当前未调用到可用 AI Provider。`
+          : `审核项 #${item.id} 已由 ${result.generated_by}${result.model ? `/${result.model}` : ""} 生成审核草稿。`,
+      );
+      return result;
+    } catch (error) {
+      setAdminMessage(error instanceof ApiError ? error.message : "生成审核草稿失败。");
+      return null;
     } finally {
       setAdminLoading(false);
     }
@@ -1051,6 +1071,7 @@ export function useSettingsAdminController({
     gbrainDreamDraft, gbrainEntityMerge, gbrainEntityMergePreview, gbrainGraph, gbrainGraphDraft, gbrainMaintenance, handleApplyGBrainEntityMergeCandidate,
     handleCancelGBrainJob, handleCreateUser, handleExportKnowledgeQualityReport, handleGBrainMaintenanceCheck, handleLoadGBrainEntityMergeCandidates,
     handleLoadGBrainGraph, handlePollGBrainCitationFixerJobs, handlePollGBrainDreamCycleJobs, handlePreviewGBrainEntityMergeCandidate, handleRefreshGBrainMaintenance,
+    handleGenerateKnowledgeReviewDraft,
     handleRefreshKnowledge, handleRestartGBrain, handleRestartGBrainDreamCycleWorker, handleRetryGBrainJob, handleReviewKnowledge, handleRollbackGBrainCitationFixerJob,
     handleRunGBrainContradictionProbe, handleRunGBrainDreamCycle, handleRunKnowledgeQualityReport, handleSaveGBrainContradictionProbe, handleSaveGBrainDreamCycle,
     handleSaveUserGroup, handleStartGBrain, handleSubmitCitationFixer, handleSubmitGBrainJob, handleSubmitReviewCitationFixer, handleTickGBrainContradictionProbe,

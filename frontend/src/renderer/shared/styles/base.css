@@ -29,6 +29,11 @@
   --control-active-foreground: 212 60% 32%;
   --control-active-shadow: 0 6px 16px -4px rgb(175 208 242 / 0.25), 0 2px 6px -2px rgb(175 208 242 / 0.15);
   --brand-accent: 212 55% 40%;
+  --tab-group-indigo: 226 38% 58%;
+  --tab-group-emerald: 150 32% 46%;
+  --tab-group-amber: 36 48% 52%;
+  --tab-group-rose: 350 34% 58%;
+  --tab-group-slate: 212 18% 52%;
   --capability-border: 212 45% 85%;
   --capability-bg: 212 55% 93%;
   --capability-fg: 212 60% 32%;
@@ -94,6 +99,11 @@
   --control-active-foreground: 212 70% 76%;
   --control-active-shadow: 0 6px 16px -4px rgb(0 0 0 / 0.30);
   --brand-accent: 212 65% 68%;
+  --tab-group-indigo: 226 46% 68%;
+  --tab-group-emerald: 150 36% 62%;
+  --tab-group-amber: 38 54% 66%;
+  --tab-group-rose: 350 42% 68%;
+  --tab-group-slate: 212 16% 62%;
   --capability-border: 212 32% 34%;
   --capability-bg: 212 34% 20%;
   --capability-fg: 212 70% 76%;

@@ -11,10 +11,12 @@ import chevronDownUrl from "iconoir/icons/nav-arrow-down.svg";
 import chevronLeftUrl from "iconoir/icons/nav-arrow-left.svg";
 import chevronRightUrl from "iconoir/icons/nav-arrow-right.svg";
 import copyUrl from "iconoir/icons/copy.svg";
+import downloadUrl from "iconoir/icons/download.svg";
 import editUrl from "iconoir/icons/edit-pencil.svg";
 import folderUrl from "iconoir/icons/folder.svg";
 import globeUrl from "iconoir/icons/globe.svg";
 import homeUrl from "iconoir/icons/home.svg";
+import lightBulbUrl from "iconoir/icons/light-bulb.svg";
 import logoutUrl from "iconoir/icons/log-out.svg";
 import maximizeUrl from "iconoir/icons/square.svg";
 import minimizeUrl from "iconoir/icons/minus.svg";
@@ -63,6 +65,7 @@ export function ChevronLeftIcon(props: IconProps) { return <IconoirIcon url={che
 export function ChevronRightIcon(props: IconProps) { return <IconoirIcon url={chevronRightUrl} {...props} />; }
 export function ArrowUpIcon(props: IconProps) { return <IconoirIcon url={arrowUpUrl} {...props} />; }
 export function HomeIcon(props: IconProps) { return <IconoirIcon url={homeUrl} {...props} />; }
+export function LightBulbIcon(props: IconProps) { return <IconoirIcon url={lightBulbUrl} {...props} />; }
 export function EditIcon(props: IconProps) { return <IconoirIcon url={editUrl} {...props} />; }
 export function GlobeIcon(props: IconProps) { return <IconoirIcon url={globeUrl} {...props} />; }
 export function TrashIcon(props: IconProps) { return <IconoirIcon url={trashUrl} {...props} />; }
@@ -81,6 +84,7 @@ export function StopIcon(props: IconProps) { return <IconoirIcon url={maximizeUr
 export function RestoreIcon(props: IconProps) { return <IconoirIcon url={restoreUrl} {...props} />; }
 export function NoteIcon(props: IconProps) { return <IconoirIcon url={noteUrl} {...props} />; }
 export function CopyIcon(props: IconProps) { return <IconoirIcon url={copyUrl} {...props} />; }
+export function DownloadIcon(props: IconProps) { return <IconoirIcon url={downloadUrl} {...props} />; }
 export function RefreshIcon(props: IconProps) { return <IconoirIcon url={refreshUrl} {...props} />; }
 export function PaperclipIcon(props: IconProps) { return <IconoirIcon url={attachmentUrl} {...props} />; }
 export function BrainIcon(props: IconProps) { return <IconoirIcon url={brainUrl} {...props} />; }

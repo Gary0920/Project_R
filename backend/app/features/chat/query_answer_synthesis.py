@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.features.chat.intent import IntentType
@@ -58,8 +59,9 @@ def build_query_synthesis_system_prompt(
         sections.append("## 资料缺口\n" + "\n".join(f"- {item}" for item in gaps))
     if conflicts:
         sections.append("## 资料冲突\n" + "\n".join(f"- {item}" for item in conflicts))
-    if warnings:
-        sections.append("## 检索警告\n" + "\n".join(f"- {item}" for item in warnings))
+    effective_warnings = filter_secondary_issues([*gaps, *conflicts], warnings)
+    if effective_warnings:
+        sections.append("## 检索警告\n" + "\n".join(f"- {item}" for item in effective_warnings))
     return "\n\n".join(section for section in sections if section and section.strip())
 
 
@@ -93,3 +95,12 @@ def synthesize_query_answer(
         system_prompt=system_prompt,
         thinking=thinking,
     )
+
+
+def filter_secondary_issues(primary: list[str], secondary: list[str]) -> list[str]:
+    primary_keys = {issue_key(item) for item in primary if issue_key(item)}
+    return [item for item in secondary if issue_key(item) and issue_key(item) not in primary_keys]
+
+
+def issue_key(value: str) -> str:
+    return re.sub(r"[\s。．.，,、；;：:！!？?（）()\[\]【】\"'`_-]+", "", str(value or "").strip().lower())

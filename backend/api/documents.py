@@ -2,17 +2,49 @@ from pathlib import Path
 import os
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
+from app.features.documents.export_content_service import (
+    ExportContentError,
+    cleanup_export_temp_file,
+    export_content_to_temp_file,
+)
+from app.features.documents.formats import SUPPORTED_OUTPUT_FORMATS
+from app.features.documents.schemas import ExportDocumentRequest
 from models import get_db
 from models.generated_file import GeneratedFile
 from models.user import User
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 GENERATED_FILES_TTL_HOURS = int(os.getenv("GENERATED_FILES_TTL_HOURS", "48"))
+
+
+@router.post("/export")
+def export_document_content(
+    body: ExportDocumentRequest,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
+):
+    del user
+    try:
+        output_path, filename = export_content_to_temp_file(
+            content=body.content,
+            title=body.title,
+            output_format=body.format,
+        )
+    except ExportContentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    format_spec = SUPPORTED_OUTPUT_FORMATS[body.format]
+    background_tasks.add_task(cleanup_export_temp_file, output_path)
+    return FileResponse(
+        output_path,
+        media_type=format_spec.mime_type,
+        filename=filename,
+    )
 
 
 @router.get("/{file_id}/download")

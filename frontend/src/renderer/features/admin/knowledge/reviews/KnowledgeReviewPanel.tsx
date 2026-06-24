@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import type { KnowledgeReviewResponse } from "../../../../shared/api/types";
+import type { KnowledgeReviewDraftResponse, KnowledgeReviewResponse } from "../../../../shared/api/types";
 import { KnowledgeReviewBulkBar } from "./KnowledgeReviewBulkBar";
 import { KnowledgeReviewDetail } from "./KnowledgeReviewDetail";
 import { KnowledgeReviewList } from "./KnowledgeReviewList";
@@ -25,6 +25,7 @@ export type KnowledgeReviewPanelProps = {
   reviewSearch: string;
   setReviewPage: (value: number | ((prev: number) => number)) => void;
   setReviewSearch: (value: string | ((prev: string) => string)) => void;
+  onGenerateReviewDraft: (item: KnowledgeReviewResponse) => Promise<KnowledgeReviewDraftResponse | null>;
   onReviewKnowledge: (item: KnowledgeReviewResponse, status: "approved" | "rejected", content?: string) => Promise<boolean>;
   onSubmitReviewCitationFixer: (item: KnowledgeReviewResponse) => Promise<void>;
 };
@@ -33,6 +34,7 @@ export function KnowledgeReviewPanel({
   adminLoading,
   formatDate,
   knowledgeReviews,
+  onGenerateReviewDraft,
   onReviewKnowledge,
   onSubmitReviewCitationFixer,
   reviewPage,
@@ -137,7 +139,7 @@ export function KnowledgeReviewPanel({
     <div className="settings-section admin-knowledge-review">
       <div className="settings-section-header">
         <h3>知识审核</h3>
-        <p>G6.0 审核工作台 MVP：本地草稿对比、单条审核和当前页安全批量操作。</p>
+        <p>审核用户提交的知识候选与 GBrain 知识缺口反馈；正式入库前请先整理为可复用知识。</p>
       </div>
 
       <div className="admin-knowledge-review-toolbar">
@@ -187,6 +189,7 @@ export function KnowledgeReviewPanel({
           formatDate={formatDate}
           item={selectedItem}
           onDraftChange={updateDraft}
+          onGenerateDraft={onGenerateReviewDraft}
           onReview={reviewOne}
           onSubmitCitationFixer={onSubmitReviewCitationFixer}
         />

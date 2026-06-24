@@ -13,10 +13,6 @@ import { SettingsModal } from "../../settings/components/SettingsModal";
 import { TabBar } from "./TabBar";
 import { WorkspaceFilePanel } from "../../workspace/components/WorkspaceFilePanel";
 import { CrmWorkbenchPanel } from "../../workspace/components/CrmWorkbenchPanel";
-import {
-  getWorkspaceAffiliationLabel,
-  getWorkspaceAffiliationPath,
-} from "../../workspace/workspaceAffiliation";
 import { WindowControls } from "../../../shared/components/WindowControls";
 import { renderMessageContent } from "../messageContent";
 import { SourcePreviewPanel } from "../../knowledge/components/SourcePreviewPanel";
@@ -59,6 +55,9 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     formatSidebarTime,
     formatUpdateBytes,
     formatUpdateSpeed,
+    gbrainReviewDraft,
+    gbrainReviewOriginalQuestion,
+    gbrainReviewTarget,
     getInitials,
     handleArchiveRestored,
     handleAuxiliaryPanelResizeStart,
@@ -73,9 +72,11 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     handleMoveSession,
     handleNotificationAction,
     handleNotificationActionStatus,
+    handleNotificationRead,
     handleOpenScratch,
     handleReferenceWorkspaceFile,
     handleRegenerateMessage,
+    handleConfirmGBrainThinkReview,
     handleSelectPrompt,
     handleSelectSkillFromSidePanel,
     handleSelectTab,
@@ -132,6 +133,8 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     setShowSearch,
     setShowSettings,
     setSidebarCollapsed,
+    setGBrainReviewDraft,
+    setGBrainReviewTarget,
     setUpdateDialogOpen,
     setUpdateStep,
     setUtilityPanel,
@@ -169,8 +172,6 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
   } = controller;
   const setMode = setActiveMode;
   const isCustomerWorkspace = activeWorkspace?.workspace_kind === "customer";
-  const workspaceAffiliationLabel = getWorkspaceAffiliationLabel(activeWorkspace);
-  const workspaceAffiliationPath = getWorkspaceAffiliationPath(activeWorkspace);
 
   useEffect(() => {
     if (!isCustomerWorkspace && (utilityPanel === "crm" || utilityPanel === "customer-intelligence")) {
@@ -428,6 +429,79 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     );
   }
 
+  function gbrainReviewIssueSummary() {
+    const think = gbrainReviewTarget?.context_trace?.gbrain_think as any;
+    const gaps = Array.isArray(think?.gaps) ? think.gaps.filter(Boolean) : [];
+    const conflicts = Array.isArray(think?.conflicts) ? think.conflicts.filter(Boolean) : [];
+    const warnings = Array.isArray(think?.warnings) ? think.warnings.filter(Boolean) : [];
+    const issue = gaps[0] || conflicts[0] || warnings[0] || "本轮回答发现需要管理员复核的知识信号。";
+    if (gaps.length && conflicts.length) return `知识缺口与冲突：${issue}`;
+    if (gaps.length) return `知识缺口：${issue}`;
+    if (conflicts.length) return `知识冲突：${issue}`;
+    return `风险提示：${issue}`;
+  }
+
+  function updateGBrainReviewDraft(field: "businessContext" | "expectedKnowledge" | "sourceHint", value: string) {
+    setGBrainReviewDraft((current: any) => ({ ...current, [field]: value }));
+  }
+
+  function closeGBrainReviewDialog() {
+    setGBrainReviewTarget(null);
+    setGBrainReviewDraft({ businessContext: "", expectedKnowledge: "", sourceHint: "" });
+  }
+
+  function renderGBrainReviewDialog() {
+    if (!gbrainReviewTarget) return null;
+    const canSubmit = Boolean(gbrainReviewDraft.businessContext.trim() && gbrainReviewDraft.expectedKnowledge.trim());
+    return (
+      <div className="confirm-overlay" onClick={closeGBrainReviewDialog}>
+        <div className="confirm-card message-operation-card gbrain-review-submit-card" onClick={(event) => event.stopPropagation()}>
+          <h3>提交知识缺口反馈</h3>
+          <p>请先补充业务背景，管理员会根据这些信息判断是否需要补充公司知识或修正资料。</p>
+          <div className="gbrain-review-summary">
+            <strong>{gbrainReviewIssueSummary()}</strong>
+            {gbrainReviewOriginalQuestion ? <span>原问题：{gbrainReviewOriginalQuestion}</span> : null}
+          </div>
+          <label className="message-operation-field">
+            <span>业务场景 / 问题背景 *</span>
+            <textarea
+              onChange={(event) => updateGBrainReviewDraft("businessContext", event.target.value)}
+              placeholder="例如：我正在确认员工请假流程，需要知道年假/病假审批规则。"
+              value={gbrainReviewDraft.businessContext}
+            />
+          </label>
+          <label className="message-operation-field">
+            <span>期望补充的知识 *</span>
+            <textarea
+              onChange={(event) => updateGBrainReviewDraft("expectedKnowledge", event.target.value)}
+              placeholder="例如：希望补充请假类型、审批人、提前申请时限和需要提交的材料。"
+              value={gbrainReviewDraft.expectedKnowledge}
+            />
+          </label>
+          <label className="message-operation-field">
+            <span>可参考来源</span>
+            <textarea
+              onChange={(event) => updateGBrainReviewDraft("sourceHint", event.target.value)}
+              placeholder="可选：制度文件名、截图来源、负责人、文件夹位置或其他线索。"
+              value={gbrainReviewDraft.sourceHint}
+            />
+          </label>
+          <div className="confirm-actions">
+            <button className="btn-secondary" onClick={closeGBrainReviewDialog} type="button">取消</button>
+            <button
+              className="btn-primary"
+              disabled={!canSubmit || messageActionBusyId === gbrainReviewTarget.id}
+              onClick={() => void handleConfirmGBrainThinkReview()}
+              type="button"
+            >
+              {messageActionBusyId === gbrainReviewTarget.id ? "提交中" : "提交管理员复核"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const activeTab = (tabs as any[]).find((item: any) => item.id === activeTabId);
 
   return (
@@ -482,6 +556,7 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
           handleMarkAllNotificationsRead={handleMarkAllNotificationsRead}
           handleNotificationAction={handleNotificationAction}
           handleNotificationActionStatus={handleNotificationActionStatus}
+          handleNotificationRead={handleNotificationRead}
           notificationCategoryLabel={notificationCategoryLabel}
           notificationPanelRef={notificationPanelRef}
           notificationView={notificationView}
@@ -501,10 +576,9 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
       <section className="chat-main">
         <TabBar
           tabs={tabs}
+          workspaces={workspaces}
           activeTabId={activeTabId}
           scratchOpen={showScratchPad}
-          workspaceAffiliationLabel={workspaceAffiliationLabel}
-          workspaceAffiliationPath={workspaceAffiliationPath}
           leadingSlot={
             isCustomerWorkspace ? (
               <nav className="workbench-business-nav" aria-label="业务导航">
@@ -731,6 +805,7 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
           </div>
         </div>
       ) : null}
+      {renderGBrainReviewDialog()}
       {renderUpdateDialog()}
       <SettingsModal
         initialAdminTab={settingsInitialAdminTab ?? undefined}

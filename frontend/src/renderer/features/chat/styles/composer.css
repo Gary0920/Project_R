@@ -1,5 +1,5 @@
 /* ============================================================
-   Composer — Proma 卡片式输入
+   Composer — Workbench single-surface input
    ============================================================ */
 .composer-wrap {
   flex-shrink: 0;
@@ -28,10 +28,11 @@
   container-type: inline-size;
   gap: 6px;
   border: 1px solid hsl(var(--border));
-  border-radius: 12px;
+  border-radius: var(--shell-radius);
   background: hsl(var(--card));
   padding: 12px 14px 10px;
-  transition: border-color 0.12s, box-shadow 0.12s;
+  box-shadow: var(--shadow-sm);
+  transition: var(--transition-micro);
 }
 
 .hidden-file-input {
@@ -243,7 +244,7 @@
   border: 1px solid hsl(var(--warning) / 0.72);
   border-radius: 7px;
   background: hsl(var(--warning));
-  color: #fff;
+  color: hsl(var(--primary-foreground));
   padding: 0 10px;
   font-size: 12px;
   font-weight: 700;
@@ -332,8 +333,8 @@
 }
 
 .composer:focus-within {
-  border-color: hsl(var(--foreground) / 0.4);
-  box-shadow: 0 0 0 3px hsl(var(--foreground) / 0.06);
+  border-color: hsl(var(--control-active-border));
+  box-shadow: var(--shadow-sm), 0 0 0 3px hsl(var(--control-active-bg) / 0.72);
 }
 
 .composer textarea {
@@ -394,24 +395,28 @@
 }
 
 .composer-token-hint {
+  position: absolute;
+  right: 22px;
+  bottom: 54px;
   display: flex;
   justify-content: flex-end;
-  padding: 2px 8px;
+  padding: 0;
   font-size: 11px;
+  line-height: 1;
   color: hsl(var(--muted-foreground));
-  opacity: 0.7;
+  opacity: 0.72;
+  pointer-events: none;
   user-select: none;
 }
 
 .composer-toolbar {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px;
   min-width: 0;
-  border-top: 1px solid hsl(var(--border) / 0.72);
-  padding-top: 8px;
+  padding-top: 2px;
 }
 
 .composer-hint {
@@ -449,8 +454,8 @@
 }
 
 .composer-send.is-stopping {
-  background: #dc2626;
-  color: #fff;
+  background: hsl(var(--destructive));
+  color: hsl(var(--primary-foreground));
 }
 
 .composer-send.is-stopping .iconoir-mask {

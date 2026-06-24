@@ -12,6 +12,7 @@ import type {
   GBrainGraphResponse,
   GBrainMaintenanceResponse,
   GBrainToolResponse,
+  KnowledgeReviewDraftResponse,
   KnowledgeReviewResponse,
   KnowledgeStatusResponse,
 } from "../../../shared/api/types";
@@ -91,6 +92,7 @@ export type AdminSettingsPanelController = {
   handleRestartGBrain: () => Promise<void>;
   handleRestartGBrainDreamCycleWorker: () => Promise<void>;
   handleRetryGBrainJob: (jobId: number) => Promise<void>;
+  handleGenerateKnowledgeReviewDraft: (item: KnowledgeReviewResponse) => Promise<KnowledgeReviewDraftResponse | null>;
   handleReviewKnowledge: (item: KnowledgeReviewResponse, status: "approved" | "rejected", content?: string) => Promise<boolean>;
   handleRollbackGBrainCitationFixerJob: (jobId: number) => Promise<void>;
   handleRunGBrainContradictionProbe: () => Promise<void>;
@@ -176,6 +178,7 @@ export function AdminSettingsPanel({ controller }: AdminSettingsPanelProps) {
     formatDate, formatFileSize, formatOptionalDate, gbrainContradictionDraft, gbrainDreamDraft, gbrainEntityMerge, gbrainEntityMergePreview, gbrainGraph, gbrainGraphDraft,
     gbrainMaintenance, handleApplyGBrainEntityMergeCandidate, handleCancelGBrainJob, handleCreateUser, handleExportKnowledgeQualityReport, handleGBrainMaintenanceCheck, handleLoadGBrainEntityMergeCandidates,
     handleLoadGBrainGraph, handlePollGBrainCitationFixerJobs, handlePollGBrainDreamCycleJobs, handlePreviewGBrainEntityMergeCandidate, handleRefreshGBrainMaintenance,
+    handleGenerateKnowledgeReviewDraft,
     handleRefreshKnowledge, handleRestartGBrain, handleRestartGBrainDreamCycleWorker, handleRetryGBrainJob, handleReviewKnowledge, handleRollbackGBrainCitationFixerJob,
     handleRunGBrainContradictionProbe, handleRunGBrainDreamCycle, handleRunKnowledgeQualityReport, handleSaveGBrainContradictionProbe, handleSaveGBrainDreamCycle,
     handleSaveUserGroup, handleStartGBrain, handleSubmitCitationFixer, handleSubmitGBrainJob, handleSubmitReviewCitationFixer, handleTickGBrainContradictionProbe,
@@ -434,6 +437,7 @@ export function AdminSettingsPanel({ controller }: AdminSettingsPanelProps) {
                     reviewSearch={reviewSearch}
                     setReviewPage={setReviewPage}
                     setReviewSearch={setReviewSearch}
+                    onGenerateReviewDraft={handleGenerateKnowledgeReviewDraft}
                     onReviewKnowledge={handleReviewKnowledge}
                     onSubmitReviewCitationFixer={handleSubmitReviewCitationFixer}
                   />

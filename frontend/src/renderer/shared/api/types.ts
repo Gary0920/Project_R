@@ -764,6 +764,14 @@ export type KnowledgeReviewCitationFixerResponse = {
   tracked_job?: GBrainCitationFixerTrackedJob;
 };
 
+export type KnowledgeReviewDraftResponse = {
+  ok: boolean;
+  draft: string;
+  summary: string;
+  generated_by: string;
+  model: string;
+};
+
 export type AdminTemplateStatusResponse = {
   items: Array<{
     skill_name: string;

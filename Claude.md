@@ -78,13 +78,14 @@
 | `docs/milestones/Project_R 开发流程V2.0.md` | 下一阶段产品基座精修主计划：Chat、知识库查询、检索与基础 Agent |
 | `docs/product/Project_R 业务工作流清单.md` | 企业业务 Skill 候选清单与实现状态 |
 | `docs/design/ui-design-language.md` | 前端视觉**唯一权威设计契约**：可量化 token（颜色/字号/间距/圆角/图标/层级/动效）、组件规则、反模式清单和 Agent 交付前自检；前端改动前必读 |
+| `docs/design/ui-design-language-Gemini.md` | 前端视觉增强执行参考：在 `ui-design-language.md` token 契约基础上，补充当前聊天区、工作台、弹窗、反馈条、空状态等界面优化后的布局/交互/观感规则；前端视觉改动前必须同步阅读 |
 | `docs/agents/skills-design.md` | 业务 Skill 设计规范 |
 | `docs/product/gbrain-feature-inventory.md` | GBrain 原生功能盘点矩阵 |
 | `docs/specs/gbrain-ingest-workflow.md` | 原始资料进入 GBrain source 的导入、提炼、审核和索引流程 |
 | `docs/milestones/gbrain-adaptation-progress.md` | GBrain 适配进度、未闭环项和下一步顺序 |
 | `CONTEXT.md` | 项目领域术语表，Agent 理解业务概念的参考 |
 
-当前仓库核心产品文档以 `docs/product/`、`docs/milestones/`、`docs/specs/`、`docs/validation/`、`docs/design/` 和 `docs/operations/` 下的版本为准。当代理工作规则发生变化时，必须同步更新 `AGENTS.md` 与 `CLAUDE.md`；当产品范围或阶段任务变化时，同步更新 PRD 或开发流程。涉及前端视觉的改动，必须先完整阅读 `docs/design/ui-design-language.md`，严格复用既有 token（禁止硬编码颜色/字号/间距/圆角/层级），并在交付前逐条核对该文件第 8 节《Agent 交付前自检清单》。
+当前仓库核心产品文档以 `docs/product/`、`docs/milestones/`、`docs/specs/`、`docs/validation/`、`docs/design/` 和 `docs/operations/` 下的版本为准。当代理工作规则发生变化时，必须同步更新 `AGENTS.md` 与 `CLAUDE.md`；当产品范围或阶段任务变化时，同步更新 PRD 或开发流程。涉及前端视觉的改动，必须先完整阅读 `docs/design/ui-design-language.md` 与 `docs/design/ui-design-language-Gemini.md`，严格复用既有 token（禁止硬编码颜色/字号/间距/圆角/层级），并在交付前逐条核对设计文件自检清单。若两个设计文件存在冲突，以 `ui-design-language.md` 的基础 token 契约为硬约束，以 `ui-design-language-Gemini.md` 的界面优化规则为增强参考；无法判断时必须先向 Gary 二次确认，不得自行发散。
 
 ---
 

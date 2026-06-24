@@ -28,10 +28,12 @@ export function sourceEvidenceKindLabel(kind: Exclude<SourceEvidenceKind, "all">
 
 export function evidenceContextFromTrace(contextTrace?: ChatContextTraceResponse | null): SourceEvidenceContext {
   const gbrainThink = contextTrace?.gbrain_think;
+  const gaps = gbrainThink?.gaps?.filter(Boolean) ?? [];
+  const conflicts = gbrainThink?.conflicts?.filter(Boolean) ?? [];
   return {
-    conflicts: gbrainThink?.conflicts?.filter(Boolean) ?? [],
-    gaps: gbrainThink?.gaps?.filter(Boolean) ?? [],
-    warnings: gbrainThink?.warnings?.filter(Boolean) ?? [],
+    conflicts,
+    gaps,
+    warnings: filterSecondaryIssues([...gaps, ...conflicts], gbrainThink?.warnings?.filter(Boolean) ?? []),
   };
 }
 
@@ -40,7 +42,7 @@ export function buildSourceEvidences(
   contextTrace?: ChatContextTraceResponse | null,
 ): SourceEvidence[] {
   const context = evidenceContextFromTrace(contextTrace);
-  return (sources ?? []).map((source, index) => normalizeSourceEvidence(source, index + 1, context));
+  return dedupeDiagnosticSources(sources ?? []).map((source, index) => normalizeSourceEvidence(source, index + 1, context));
 }
 
 export function normalizeSourceEvidence(
@@ -147,6 +149,52 @@ function sourceIssues(context: SourceEvidenceContext): SourceEvidenceIssue[] {
     ...(context.gaps ?? []).map((text) => ({ kind: "gap" as const, text })),
     ...(context.warnings ?? []).map((text) => ({ kind: "warning" as const, text })),
   ];
+}
+
+function dedupeDiagnosticSources(sources: ChatSourceResponse[]) {
+  const primaryIssueKeys = new Set<string>();
+  sources.forEach((source) => {
+    if (diagnosticKind(source) !== "warning") {
+      sourceContentLines(source).forEach((line) => primaryIssueKeys.add(issueKey(line)));
+    }
+  });
+  return sources.flatMap((source) => {
+    if (diagnosticKind(source) !== "warning") return [source];
+    const lines = sourceContentLines(source).filter((line) => !primaryIssueKeys.has(issueKey(line)));
+    if (!lines.length) return [];
+    return [{ ...source, content: lines.map((line) => `- ${line}`).join("\n") }];
+  });
+}
+
+function diagnosticKind(source: ChatSourceResponse) {
+  const file = String(source.file || source.source_file || "");
+  const type = String((source as { type?: unknown }).type || "");
+  if (file.includes("__think_warnings__") || type === "gbrain_think_warning") return "warning";
+  if (file.includes("__think_gaps__") || type === "gbrain_think_gap") return "gap";
+  if (file.includes("__think_conflicts__") || type === "gbrain_think_conflict") return "conflict";
+  return "";
+}
+
+function sourceContentLines(source: ChatSourceResponse) {
+  return String(source.content || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/^[-*]\s*/, ""))
+    .filter(Boolean);
+}
+
+function filterSecondaryIssues(primary: string[], secondary: string[]) {
+  const primaryKeys = new Set(primary.map(issueKey).filter(Boolean));
+  return secondary.filter((item) => {
+    const key = issueKey(item);
+    return key && !primaryKeys.has(key);
+  });
+}
+
+function issueKey(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s。．.，,、；;：:！!？?（）()[\]【】"'`_-]/g, "");
 }
 
 function sourceStatusLevel(issues: SourceEvidenceIssue[], limitations: string[]): SourceEvidenceStatusLevel {

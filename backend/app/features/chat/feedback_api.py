@@ -91,7 +91,10 @@ def submit_gbrain_think_review(
         user=user,
         session=session,
         message=message,
-        note=req.note.strip()[:2000],
+        note=(req.user_note or req.note).strip()[:2000],
+        business_context=req.business_context.strip()[:2000],
+        expected_knowledge=req.expected_knowledge.strip()[:2000],
+        source_hint=req.source_hint.strip()[:2000],
         gbrain_think_review_prefix=gbrain_think_review_prefix,
     )
     if not review:
@@ -286,6 +289,9 @@ def create_gbrain_think_review(
     session: ChatSession,
     message: ChatMessage,
     note: str,
+    business_context: str,
+    expected_knowledge: str,
+    source_hint: str,
     gbrain_think_review_prefix: str,
 ) -> tuple[KnowledgeReview | None, bool]:
     trace = message.context_trace
@@ -302,6 +308,9 @@ def create_gbrain_think_review(
         session=session,
         message=message,
         note=note,
+        business_context=business_context,
+        expected_knowledge=expected_knowledge,
+        source_hint=source_hint,
         question=previous_user_message_content(db, message),
         sources=gbrain_sources_for_message(message),
         gbrain_think=gbrain_think,
@@ -414,6 +423,9 @@ def build_gbrain_think_review_content(
     session: ChatSession,
     message: ChatMessage,
     note: str,
+    business_context: str,
+    expected_knowledge: str,
+    source_hint: str,
     question: str,
     sources: list[dict],
     gbrain_think: dict,
@@ -436,6 +448,9 @@ def build_gbrain_think_review_content(
     source_block = "\n".join(source_lines) or "- 无引用来源 / No citation source."
     question_text = question or "未找到上一条用户问题。 / Previous user question was not found."
     note_text = note or "用户未补充说明。 / No additional user note."
+    business_context_text = business_context or "用户未填写业务场景。 / No business context provided."
+    expected_knowledge_text = expected_knowledge or "用户未填写期望补充知识。 / No expected knowledge provided."
+    source_hint_text = source_hint or "用户未填写参考来源。 / No source hint provided."
     gap_block = "\n".join(f"- {item}" for item in gaps) or "- 无 / None"
     conflict_block = "\n".join(f"- {item}" for item in conflicts) or "- 无 / None"
     warning_block = "\n".join(f"- {item}" for item in warnings) or "- 无 / None"
@@ -454,6 +469,11 @@ def build_gbrain_think_review_content(
         f"- status: `{safe_review_text(str(gbrain_think.get('status') or ''))}`\n"
         f"- model: `{safe_review_text(str(gbrain_think.get('model') or message.model or ''))}`\n"
         f"- trace_id: `{safe_review_text(str(diagnostics.get('trace_id') or ''))}`\n\n"
+        "## 用户补充信息 / User Supplement\n\n"
+        f"- 业务场景 / Business Context: {safe_review_inline(business_context_text)}\n"
+        f"- 期望补充知识 / Expected Knowledge: {safe_review_inline(expected_knowledge_text)}\n"
+        f"- 可参考来源 / Source Hint: {safe_review_inline(source_hint_text)}\n"
+        f"- 自由说明 / User Note: {safe_review_inline(note_text)}\n\n"
         "## 用户补充 / User Note\n\n"
         f"- 中文：{safe_review_text(note_text)}\n"
         f"- English: Same user note for review: {safe_review_text(note_text)}\n\n"
@@ -482,6 +502,10 @@ def safe_review_text(value: str, limit: int = 2000) -> str:
     if len(text) > limit:
         return text[:limit].rstrip() + "..."
     return text
+
+
+def safe_review_inline(value: str, limit: int = 2000) -> str:
+    return " / ".join(safe_review_text(value, limit).splitlines())
 
 
 def safe_trace_list(value: object, *, limit: int = 6, item_limit: int = 220) -> list[str]:

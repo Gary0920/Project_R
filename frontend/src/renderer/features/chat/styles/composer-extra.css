@@ -56,14 +56,15 @@
   font-weight: 600;
   color: hsl(var(--muted-foreground));
   border-radius: 8px;
-  border: 1px solid hsl(var(--border));
-  background: hsl(var(--card));
+  border: 1px solid transparent;
+  background: transparent;
   cursor: pointer;
   transition: var(--transition-micro);
 }
 
 .composer-mode-toggle:hover:not(.is-active):not(:disabled) {
   color: hsl(var(--foreground));
+  border-color: hsl(var(--border));
   background: hsl(var(--muted));
   transform: translateY(-1px);
 }
@@ -90,4 +91,3 @@
   color: hsl(var(--control-active-foreground));
   background: hsl(var(--control-active-bg-hover));
 }
-

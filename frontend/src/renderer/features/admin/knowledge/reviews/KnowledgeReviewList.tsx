@@ -1,5 +1,5 @@
 import type { KnowledgeReviewResponse } from "../../../../shared/api/types";
-import { canBatchApprove, canBatchReject, getDraftContent, isDraftEdited, reviewSourceLabel, type KnowledgeReviewDrafts } from "./knowledgeReviewView";
+import { canBatchApprove, canBatchReject, isDraftEdited, reviewListPreview, reviewSourceLabel, type KnowledgeReviewDrafts } from "./knowledgeReviewView";
 
 export type KnowledgeReviewListProps = {
   adminLoading: boolean;
@@ -50,7 +50,7 @@ export function KnowledgeReviewList({
                 <strong>#{item.id} {reviewSourceLabel(item)}</strong>
                 <span className={`admin-knowledge-review-status is-${item.status}`}>{item.status}</span>
               </div>
-              <p>{getDraftContent(item, drafts).slice(0, 180) || "空内容"}</p>
+              <p>{reviewListPreview(item)}</p>
               <span>{formatDate(item.created_at)}{isDraftEdited(item, drafts) ? " · 已编辑草稿" : ""}</span>
             </div>
           </article>

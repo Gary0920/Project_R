@@ -222,6 +222,7 @@ export function AppPage() {
     handleMarkAllNotificationsRead,
     handleNotificationAction,
     handleNotificationActionStatus,
+    handleNotificationRead,
     notificationPanelOpen,
     notificationToast,
     notificationView,
@@ -345,7 +346,11 @@ export function AppPage() {
     deletedMessageUndo,
     editingDraft,
     editingMessageId,
+    gbrainReviewDraft,
+    gbrainReviewOriginalQuestion,
+    gbrainReviewTarget,
     handleActivateVersion,
+    handleConfirmGBrainThinkReview,
     handleCopyMessage,
     handleDeleteMessageContext,
     handleExportConversation,
@@ -361,6 +366,8 @@ export function AppPage() {
     setDeleteMessageTarget,
     setEditingDraft,
     setEditingMessageId,
+    setGBrainReviewDraft,
+    setGBrainReviewTarget,
     setMessageActionBusyId,
     startEditingMessage,
   } = useChatMessageActions({
@@ -674,6 +681,10 @@ export function AppPage() {
         workspaceId: session.workspace_id,
         title: session.title,
       };
+      const activeTab = current.find((tab) => tab.id === activeTabId);
+      if (activeTab?.sessionId === null && activeTab.id.startsWith("draft-")) {
+        return current.map((tab) => tab.id === activeTabId ? nextTab : tab);
+      }
       if (openInNewTab || !activeTabId) return [...current, nextTab];
       if (!current.some((tab) => tab.id === activeTabId)) return [...current, nextTab];
       return current.map((tab) => tab.id === activeTabId ? nextTab : tab);
@@ -724,22 +735,29 @@ export function AppPage() {
     return session;
   }
 
-  async function handleCreateSession() {
+  function handleCreateSession() {
     setError(null);
     if (!activeWorkspaceId) {
       setError("请先选择或创建一个项目。");
       return;
     }
-    try {
-      await createSessionFromInput();
-    } catch (createError: unknown) {
-      if (createError instanceof ApiError && createError.status === 401) {
-        clearAuth();
-        window.location.hash = "#/login";
-        return;
-      }
-      setError("新建会话失败，请确认后端连接正常。");
-    }
+    const draftTabId = `draft-${activeWorkspaceId}`;
+    setShowScratchPad(false);
+    setActiveSessionId(null);
+    if (!activeSessionId) setDraft("");
+    setTabs((current) => {
+      const existing = current.find((tab) => tab.id === draftTabId);
+      if (existing) return current;
+      const draftTab = {
+        id: draftTabId,
+        sessionId: null,
+        workspaceId: activeWorkspaceId,
+        title: "新对话",
+      };
+      if (!activeTabId || !current.some((tab) => tab.id === activeTabId)) return [...current, draftTab];
+      return current.map((tab) => tab.id === activeTabId ? draftTab : tab);
+    });
+    setActiveTabId(draftTabId);
   }
 
   function handleOpenScratch() {
@@ -768,6 +786,14 @@ export function AppPage() {
       }
       if (tab.workspaceId && tab.workspaceId !== activeWorkspaceId) {
         setActiveWorkspaceId(tab.workspaceId);
+      }
+    } else if (tab) {
+      setActiveSessionId(null);
+      if (tab.workspaceId && tab.workspaceId !== activeWorkspaceId) {
+        setActiveWorkspaceId(tab.workspaceId);
+      }
+      if (sideBySideOpen) {
+        setSplitPaneSessionIds((current) => ({ ...current, [activeSplitPane]: null }));
       }
     }
   }
@@ -995,6 +1021,9 @@ export function AppPage() {
         formatSidebarTime,
         formatUpdateBytes,
         formatUpdateSpeed,
+        gbrainReviewDraft,
+        gbrainReviewOriginalQuestion,
+        gbrainReviewTarget,
         getInitials,
         handleArchiveRestored,
         handleAuxiliaryPanelResizeStart,
@@ -1009,9 +1038,11 @@ export function AppPage() {
         handleMoveSession,
         handleNotificationAction,
         handleNotificationActionStatus,
+        handleNotificationRead,
         handleOpenScratch,
         handleReferenceWorkspaceFile,
         handleRegenerateMessage,
+        handleConfirmGBrainThinkReview,
         handleSelectPrompt,
         handleSelectSkillFromSidePanel,
         handleSelectTab,
@@ -1072,6 +1103,8 @@ export function AppPage() {
         setSidebarCollapsed,
         setDraft,
         setUpdateDialogOpen,
+        setGBrainReviewDraft,
+        setGBrainReviewTarget,
         setUpdateStep,
         setUtilityPanel,
         settingsInitialAdminTab,

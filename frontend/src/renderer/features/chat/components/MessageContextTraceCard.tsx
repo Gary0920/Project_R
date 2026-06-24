@@ -1,4 +1,7 @@
+import { useState } from "react";
+
 import type { ChatContextTraceResponse } from "../../../shared/api/types";
+import { LightBulbIcon } from "../../../shared/icons/LineIcons";
 import {
   buildWebSearchSummary,
   hasNonDefaultSessionPrompt,
@@ -12,6 +15,11 @@ export type MessageContextTraceCardProps = {
   gbrainThinkReviewBusy?: boolean;
   messageSourceCount?: number;
   onSubmitGBrainThinkReview?: () => void;
+};
+
+type GBrainIssueSummary = {
+  description: string;
+  title: string;
 };
 
 function ContextTraceAudit({
@@ -31,7 +39,7 @@ function ContextTraceAudit({
   const gbrainThink = contextTrace.gbrain_think;
   const gbrainGaps = gbrainThink?.gaps?.filter(Boolean) ?? [];
   const gbrainConflicts = gbrainThink?.conflicts?.filter(Boolean) ?? [];
-  const gbrainWarnings = gbrainThink?.warnings?.filter(Boolean) ?? [];
+  const gbrainWarnings = filterSecondaryIssues([...gbrainGaps, ...gbrainConflicts], gbrainThink?.warnings?.filter(Boolean) ?? []);
   const showKnowledgeSection = !messageSourceCount && (sources.length || contextTrace.knowledge?.source_count);
   const webSearchSummary = buildWebSearchSummary(contextTrace);
 
@@ -66,8 +74,11 @@ function ContextTraceAudit({
       ) : null}
       {gbrainThink && (gbrainGaps.length || gbrainConflicts.length || gbrainWarnings.length) ? (
         <div className="message-context-trace-section is-gbrain-think">
-          <span>
-            GBrain 推理状态
+          <div className="message-context-trace-section-header">
+            <div className="message-context-trace-title">
+              <span>GBrain 推理状态</span>
+              <em>发现需要管理员复核的知识信号</em>
+            </div>
             {onSubmitGBrainThinkReview ? (
               <button
                 className="message-context-trace-action"
@@ -78,10 +89,12 @@ function ContextTraceAudit({
                 {gbrainThinkReviewBusy ? "提交中" : "提交审核"}
               </button>
             ) : null}
-          </span>
-          {gbrainConflicts.length ? <small className="is-conflict">冲突 {gbrainConflicts.length} 条</small> : null}
-          {gbrainGaps.length ? <small className="is-gap">缺口 {gbrainGaps.length} 条</small> : null}
-          {gbrainWarnings.length ? <small className="is-warning">警告 {gbrainWarnings.length} 条</small> : null}
+          </div>
+          <div className="message-context-trace-statuses">
+            {gbrainConflicts.length ? <small className="is-conflict">冲突 {gbrainConflicts.length} 条</small> : null}
+            {gbrainGaps.length ? <small className="is-gap">缺口 {gbrainGaps.length} 条</small> : null}
+            {gbrainWarnings.length ? <small className="is-warning">警告 {gbrainWarnings.length} 条</small> : null}
+          </div>
         </div>
       ) : null}
       {hasNonDefaultSessionPrompt(prompt) ? (
@@ -101,6 +114,68 @@ function ContextTraceAudit({
   );
 }
 
+function buildGBrainIssueSummary(conflicts: string[], gaps: string[], warnings: string[]): GBrainIssueSummary | null {
+  const issue = conflicts[0] || gaps[0] || warnings[0];
+  if (!issue) return null;
+  let title = "发现需复核提示";
+  if (conflicts.length && gaps.length) title = "发现知识冲突与缺口";
+  else if (conflicts.length) title = "发现知识冲突";
+  else if (gaps.length) title = "发现知识缺口";
+  return {
+    description: `GBrain 提示：${issue}`,
+    title,
+  };
+}
+
+function GBrainInlineFeedback({
+  busy,
+  onDismiss,
+  onSubmit,
+  summary,
+}: {
+  busy?: boolean;
+  onDismiss: () => void;
+  onSubmit?: () => void;
+  summary: GBrainIssueSummary;
+}) {
+  return (
+    <div className="message-gbrain-feedback">
+      <div className="message-gbrain-feedback-icon" aria-hidden>
+        <LightBulbIcon />
+      </div>
+      <div className="message-gbrain-feedback-copy">
+        <strong>{summary.title}</strong>
+        <span>{summary.description}</span>
+      </div>
+      <div className="message-gbrain-feedback-actions">
+        <button className="message-gbrain-feedback-ignore" onClick={onDismiss} type="button">
+          忽略
+        </button>
+        {onSubmit ? (
+          <button className="message-gbrain-feedback-submit" disabled={busy} onClick={onSubmit} type="button">
+            {busy ? "提交中" : "提交审核"}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function filterSecondaryIssues(primary: string[], secondary: string[]) {
+  const primaryKeys = new Set(primary.map(issueKey).filter(Boolean));
+  return secondary.filter((item) => {
+    const key = issueKey(item);
+    return key && !primaryKeys.has(key);
+  });
+}
+
+function issueKey(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s。．.，,、；;：:！!？?（）()[\]【】"'`_-]/g, "");
+}
+
 export function MessageContextTraceCard({
   collapseByDefault = false,
   contextTrace,
@@ -108,10 +183,43 @@ export function MessageContextTraceCard({
   messageSourceCount = 0,
   onSubmitGBrainThinkReview,
 }: MessageContextTraceCardProps) {
+  const [gbrainFeedbackHidden, setGbrainFeedbackHidden] = useState(false);
   if (!shouldShowContextTraceCard(contextTrace, messageSourceCount) || !contextTrace) return null;
 
   const attachments = contextTrace.attachments ?? [];
   const sourceCount = contextTrace.knowledge?.source_count ?? contextTrace.knowledge?.sources?.length ?? 0;
+  const gbrainThink = contextTrace.gbrain_think;
+  const gbrainGaps = gbrainThink?.gaps?.filter(Boolean) ?? [];
+  const gbrainConflicts = gbrainThink?.conflicts?.filter(Boolean) ?? [];
+  const gbrainWarnings = filterSecondaryIssues([...gbrainGaps, ...gbrainConflicts], gbrainThink?.warnings?.filter(Boolean) ?? []);
+  const gbrainIssueSummary = buildGBrainIssueSummary(gbrainConflicts, gbrainGaps, gbrainWarnings);
+  const webSearchSummary = buildWebSearchSummary(contextTrace);
+  const hasKnowledgeTrace = messageSourceCount <= 0 && Boolean(sourceCount);
+  const hasOnlyGBrainFeedback = Boolean(
+    gbrainIssueSummary
+    && !attachments.length
+    && !hasKnowledgeTrace
+    && !webSearchSummary
+    && !hasNonDefaultSessionPrompt(contextTrace.prompt)
+    && !contextTrace.skill?.skill_name,
+  );
+
+  if (hasOnlyGBrainFeedback && gbrainIssueSummary) {
+    if (gbrainFeedbackHidden) return null;
+    return (
+      <div className="message-inline-feedback-stack">
+        <div className="message-inline-feedback-divider" />
+        <GBrainInlineFeedback
+          busy={gbrainThinkReviewBusy}
+          onDismiss={() => setGbrainFeedbackHidden(true)}
+          onSubmit={onSubmitGBrainThinkReview}
+          summary={gbrainIssueSummary}
+        />
+        <div className="message-inline-feedback-divider" />
+      </div>
+    );
+  }
+
   const audit = (
     <ContextTraceAudit
       contextTrace={contextTrace}

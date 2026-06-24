@@ -144,7 +144,13 @@ export function submitGBrainThinkReview(
   options: ApiClientOptions,
   sessionId: number,
   messageId: number,
-  data: { note?: string } = {},
+  data: {
+    business_context?: string;
+    expected_knowledge?: string;
+    note?: string;
+    source_hint?: string;
+    user_note?: string;
+  } = {},
 ) {
   return apiRequest<GBrainThinkReviewResponse>(
     options,

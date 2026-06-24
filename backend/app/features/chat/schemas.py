@@ -241,6 +241,9 @@ class MessageFeedbackResponse(BaseModel):
 
 class GBrainThinkReviewRequest(BaseModel):
     note: str = Field(default="", max_length=2000)
+    business_context: str = Field(default="", max_length=2000)
+    expected_knowledge: str = Field(default="", max_length=2000)
+    source_hint: str = Field(default="", max_length=2000)
 
 
 class GBrainThinkReviewResponse(BaseModel):

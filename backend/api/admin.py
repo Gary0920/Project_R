@@ -16,6 +16,10 @@ from app.features.knowledge.gbrain.maintenance.citation_fixer_jobs import (
 )
 from app.features.auth.system_accounts import SYSTEM_ADMIN_USERNAME, ensure_system_admin, is_system_admin_user
 from app.features.knowledge.gbrain import GBrainAdapter
+from app.features.knowledge.reviews.ai_draft import (
+    generate_gbrain_review_draft,
+    is_gbrain_think_review_source,
+)
 from app.features.knowledge.sources import approve_knowledge_review_to_gbrain
 from app.features.notifications.service import notify_gbrain_maintenance_event
 from app.features.skills.runner import SkillRunner
@@ -134,6 +138,18 @@ class ReviewCitationFixerRequest(BaseModel):
     notes: str | None = None
     allowed_slug_prefixes: list[str] | None = None
     max_turns: int = 30
+
+
+class GenerateKnowledgeReviewDraftRequest(BaseModel):
+    model_profile: str | None = None
+
+
+class GenerateKnowledgeReviewDraftResponse(BaseModel):
+    ok: bool
+    draft: str
+    summary: str
+    generated_by: str
+    model: str = ""
 
 
 def _require_admin(user: User) -> None:
@@ -522,8 +538,12 @@ def review_knowledge(
     review = db.get(KnowledgeReview, review_id)
     if not review:
         raise HTTPException(status_code=404, detail="候选知识不存在")
+    original_content = review.content or ""
+    submitted_content = req.content.strip() if req.content is not None else original_content.strip()
+    if req.status == "approved" and review.source.startswith(GBRAIN_THINK_REVIEW_PREFIX):
+        _validate_gbrain_think_approval_content(submitted_content, original_content)
     if req.content is not None:
-        review.content = req.content.strip()
+        review.content = submitted_content
     if req.status == "approved" and not review.content.strip():
         raise HTTPException(status_code=400, detail="候选知识内容不能为空")
     review.status = req.status
@@ -539,6 +559,30 @@ def review_knowledge(
     db.commit()
     db.refresh(review)
     return review
+
+
+@router.post("/knowledge-reviews/{review_id}/draft", response_model=GenerateKnowledgeReviewDraftResponse)
+def generate_knowledge_review_draft(
+    review_id: int,
+    req: GenerateKnowledgeReviewDraftRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_admin(user)
+    review = db.get(KnowledgeReview, review_id)
+    if not review:
+        raise HTTPException(status_code=404, detail="候选知识不存在")
+    if not is_gbrain_think_review_source(review.source):
+        raise HTTPException(status_code=400, detail="仅知识缺口反馈支持生成审核草稿")
+    result = generate_gbrain_review_draft(review.content or "", model_profile=req.model_profile)
+    _write_admin_audit(
+        db,
+        user.id,
+        "admin_knowledge_review_generate_draft",
+        f"review_id={review.id}, generated_by={result.get('generated_by')}, model={result.get('model') or ''}",
+    )
+    db.commit()
+    return {"ok": True, **result}
 
 
 @router.post("/knowledge-reviews/{review_id}/citation-fixer")
@@ -655,6 +699,23 @@ def _append_approved_knowledge(review: KnowledgeReview, db: Session) -> None:
     if sync_result.get("status") not in {"ok", "disabled"}:
         # The approved Markdown is already in derived/. Admin status/refresh can retry sync.
         return
+
+
+def _validate_gbrain_think_approval_content(content: str, original_content: str) -> None:
+    if not content:
+        raise HTTPException(status_code=400, detail="请先填写审核后知识，再通过知识缺口反馈")
+    if content.strip() == (original_content or "").strip():
+        raise HTTPException(status_code=400, detail="知识缺口反馈不能直接以原始诊断内容入库，请改写为正式知识")
+    raw_markers = (
+        "# GBrain Think 缺口 / 冲突审核候选",
+        "## 元数据 / Metadata",
+        "## GBrain 缺口 / Gaps",
+        "## GBrain 冲突 / Conflicts",
+        "## GBrain 警告 / Warnings",
+        "## 原回答摘录 / Answer Excerpt",
+    )
+    if any(marker in content for marker in raw_markers):
+        raise HTTPException(status_code=400, detail="审核后知识不能包含原始 GBrain 诊断区块")
 
 
 def _first_gbrain_citation_slug(content: str) -> str:

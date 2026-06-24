@@ -25,6 +25,7 @@ import type {
   KnowledgeRefreshResponse,
   KnowledgeRegressionResponse,
   KnowledgeReviewCitationFixerResponse,
+  KnowledgeReviewDraftResponse,
   KnowledgeReviewResponse,
   KnowledgeStatusResponse,
 } from "../../shared/api/types";
@@ -119,6 +120,17 @@ export function submitKnowledgeReviewCitationFixer(
   request: { page_slug?: string | null; notes?: string | null; allowed_slug_prefixes?: string[]; max_turns?: number } = {},
 ) {
   return apiRequest<KnowledgeReviewCitationFixerResponse>(options, `/admin/knowledge-reviews/${reviewId}/citation-fixer`, {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+export function generateKnowledgeReviewDraft(
+  options: ApiClientOptions,
+  reviewId: number,
+  request: { model_profile?: string | null } = {},
+) {
+  return apiRequest<KnowledgeReviewDraftResponse>(options, `/admin/knowledge-reviews/${reviewId}/draft`, {
     method: "POST",
     body: JSON.stringify(request),
   });
