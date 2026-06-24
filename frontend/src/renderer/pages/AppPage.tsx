@@ -181,6 +181,7 @@ export function AppPage() {
     handleCreateUserPrompt,
     handleDeleteUserPrompt,
     handleSelectPrompt,
+    handleUpdateUserPrompt,
     pendingPromptId,
     promptOptions,
     selectedPrompt,
@@ -336,6 +337,7 @@ export function AppPage() {
     cancelSessionSend,
     setNotificationPanelOpen,
     onOpenSearch: () => setShowSearch(true),
+    onOpenSettings: () => setShowSettings(true),
     onNewSession: () => void handleCreateSession(),
   });
   const activeWorkspace = workspaces.find((item) => item.id === activeWorkspaceId);
@@ -1045,6 +1047,7 @@ export function AppPage() {
         handleConfirmGBrainThinkReview,
         handleSelectPrompt,
         handleSelectSkillFromSidePanel,
+        handleUpdateUserPrompt,
         handleSelectTab,
         handleSetBinaryFeedback,
         handleExportConversation,

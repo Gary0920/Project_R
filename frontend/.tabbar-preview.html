@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>TabBar preview</title>
+<style>
+:root {
+  --background: 212 45% 98%;
+  --foreground: 212 40% 12%;
+  --muted: 212 25% 94%;
+  --muted-foreground: 212 15% 48%;
+  --border: 212 24% 90%;
+  --content-area: 212 30% 99%;
+  --control-radius: 9px;
+  --workbench-topbar-height: 42px;
+  --spring-curve: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --transition-panel: all 0.28s var(--spring-curve);
+  --tab-group-indigo: 226 38% 58%;
+  --tab-group-emerald: 150 32% 46%;
+  --tab-group-amber: 36 48% 52%;
+  --tab-group-rose: 350 34% 58%;
+  --tab-group-slate: 212 18% 52%;
+}
+:root[data-theme="dark"] {
+  --background: 212 18% 10%;
+  --foreground: 212 18% 96%;
+  --muted: 212 16% 16%;
+  --muted-foreground: 212 10% 68%;
+  --border: 212 14% 24%;
+  --content-area: 212 18% 11%;
+  --tab-group-indigo: 226 46% 68%;
+  --tab-group-emerald: 150 36% 62%;
+  --tab-group-amber: 38 54% 66%;
+  --tab-group-rose: 350 42% 68%;
+  --tab-group-slate: 212 16% 62%;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "Microsoft YaHei UI","Segoe UI",system-ui,sans-serif;
+  background: hsl(var(--content-area));
+  color: hsl(var(--foreground));
+}
+.frame { width: 980px; margin: 24px auto; border: 1px solid hsl(var(--border)); border-radius: 10px; overflow: hidden; box-shadow: 0 10px 40px rgb(0 0 0 / .12); }
+.content-demo { height: 120px; background: hsl(var(--content-area)); display:flex; align-items:center; justify-content:center; color: hsl(var(--muted-foreground)); font-size: 13px; }
+
+/* ===================== TAB BAR (candidate) ===================== */
+.workbench-titlebar {
+  display: flex; align-items: stretch;
+  height: var(--workbench-topbar-height);
+  border-bottom: 1px solid hsl(var(--border));
+  background: hsl(var(--muted));
+  overflow: hidden;
+}
+.tab-strip {
+  display: flex; align-items: flex-end; height: 100%;
+  min-width: 0; padding: 0 8px 0 6px; gap: 6px; overflow-x: auto;
+}
+.tab-note-btn, .tab-add-btn {
+  display:flex; align-items:center; justify-content:center;
+  width:30px; height:30px; margin:0 2px 4px 0; align-self:flex-end;
+  color: hsl(var(--muted-foreground)); border:1px solid transparent;
+  background:transparent; border-radius: var(--control-radius); cursor:pointer;
+}
+.tab-add-btn { margin: 0 0 4px 0; }
+
+/* ---- group container ---- */
+.tab-group-container {
+  --group-color: hsl(var(--tab-group-indigo));
+  --group-strong: color-mix(in srgb, var(--group-color) 90%, black 10%);
+  --group-soft: hsl(var(--tab-group-indigo) / 0.12);
+  --group-line: color-mix(in srgb, var(--group-color) 80%, hsl(var(--content-area)) 20%);
+  --group-on: white;
+  display:inline-flex; align-items:flex-end; height:38px; gap:2px;
+  padding:0 4px; flex:0 0 auto; position:relative;
+}
+.tab-group-container[data-tone="emerald"]{ --group-color:hsl(var(--tab-group-emerald)); --group-soft:hsl(var(--tab-group-emerald)/0.12); }
+.tab-group-container[data-tone="amber"]{ --group-color:hsl(var(--tab-group-amber)); --group-soft:hsl(var(--tab-group-amber)/0.12); }
+.tab-group-container[data-tone="rose"]{ --group-color:hsl(var(--tab-group-rose)); --group-soft:hsl(var(--tab-group-rose)/0.12); }
+.tab-group-container[data-tone="slate"]{ --group-color:hsl(var(--tab-group-slate)); --group-soft:hsl(var(--tab-group-slate)/0.12); }
+
+/* soft colored band behind the whole group (continuous, rounded) */
+.tab-group-container::before {
+  content:""; position:absolute; left:2px; right:2px; top:6px; bottom:0;
+  background: var(--group-soft);
+  border-radius: 10px 10px 0 0;
+  z-index:0;
+}
+/* continuous colored underline at very bottom of the group */
+.tab-group-container::after {
+  content:""; position:absolute; left:2px; right:2px; bottom:0; height:2px;
+  background: var(--group-line); border-radius:999px; z-index:1;
+}
+
+.tab-group-container + .tab-group-container { margin-left:8px; }
+
+/* ---- solid colored label pill ---- */
+.tab-group-label {
+  display:inline-flex; align-items:center; gap:6px; height:26px; max-width:160px;
+  margin:0 4px 5px 0; padding:0 10px;
+  border:0; border-radius:8px;
+  background: var(--group-strong); color: var(--group-on);
+  cursor:pointer; font-size:12px; font-weight:600; line-height:1;
+  position:relative; z-index:3;
+  box-shadow: 0 1px 2px rgb(0 0 0 / .12);
+}
+.tab-group-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tab-group-count {
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:16px; height:16px; padding:0 4px; border-radius:6px;
+  background: rgb(255 255 255 / .26); color: var(--group-on);
+  font-size:10px; font-weight:700;
+}
+
+.tab-group-tabs { display:inline-flex; align-items:flex-end; height:36px; position:relative; z-index:2; }
+
+/* ---- tab item ---- */
+.tab-item {
+  display:flex; align-items:center; gap:7px; height:30px; margin-bottom:5px;
+  padding:0 12px; font-size:13px; color:hsl(var(--muted-foreground));
+  border:1px solid transparent; border-bottom:0;
+  border-radius: var(--control-radius) var(--control-radius) 0 0;
+  background:transparent; cursor:pointer; white-space:nowrap;
+  position:relative; z-index:1;
+}
+.tab-item::after {
+  content:""; position:absolute; right:0; top:50%; width:1px; height:14px;
+  border-radius:999px; background:hsl(var(--border)); transform:translateY(-50%);
+  pointer-events:none;
+}
+.tab-item:hover { background: hsl(var(--foreground) / .05); }
+.tab-item-title { display:inline-flex; min-width:0; max-width:150px; overflow:hidden; }
+.tab-item-title-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tab-item-close { width:18px; height:18px; display:flex; align-items:center; justify-content:center; border-radius:5px; opacity:.5; font-size:12px; }
+.tab-item:hover .tab-item-close, .tab-item.is-active .tab-item-close { opacity:1; }
+
+/* ---- ACTIVE tab: Chrome-style merge into content ---- */
+.tab-item.is-active {
+  height:36px; margin-bottom:-1px; padding-bottom:1px;
+  color: hsl(var(--foreground));
+  background: hsl(var(--content-area));
+  border-color: var(--group-line);
+  border-top: 2px solid var(--group-line);
+  border-bottom:0;
+  border-radius: var(--control-radius) var(--control-radius) 0 0;
+  z-index:10;
+}
+/* hide separators around active tab */
+.tab-item:has(+ .tab-item.is-active)::after,
+.tab-group-tabs .tab-item:not(.is-active):last-child::after,
+.tab-item.is-active::after { opacity:0; }
+
+/* bottom flares carved out of the titlebar, filled with content-area so the tab melts down */
+.tab-group-tabs .tab-item.is-active .flare {
+  content:""; position:absolute; bottom:0; width:8px; height:8px;
+  background: hsl(var(--content-area)); pointer-events:none; z-index:9;
+}
+.tab-group-tabs .tab-item.is-active .flare.l {
+  left:-8px; border-bottom: 0;
+  -webkit-mask-image: radial-gradient(circle at 0 0, transparent 8px, black 8.5px);
+          mask-image: radial-gradient(circle at 0 0, transparent 8px, black 8.5px);
+}
+.tab-group-tabs .tab-item.is-active .flare.r {
+  right:-8px;
+  -webkit-mask-image: radial-gradient(circle at 100% 0, transparent 8px, black 8.5px);
+          mask-image: radial-gradient(circle at 100% 0, transparent 8px, black 8.5px);
+}
+/* re-draw the colored line on top of the flares so it stays continuous beside the tab */
+.tab-group-tabs .tab-item.is-active .flare::after {
+  content:""; position:absolute; bottom:0; left:0; right:0; height:2px;
+  background: var(--group-line);
+}
+</style>
+</head>
+<body>
+<div class="frame">
+  <div class="workbench-titlebar">
+    <div class="tab-strip" role="tablist">
+      <button class="tab-note-btn">✎</button>
+
+      <div class="tab-group-container is-active" data-tone="indigo">
+        <button class="tab-group-label"><span class="tab-group-name">个人空间</span><span class="tab-group-count">2</span></button>
+        <div class="tab-group-tabs">
+          <div class="tab-item is-active">
+            <span class="flare l"></span>
+            <span class="tab-item-title"><span class="tab-item-title-text">测试邮件</span></span>
+            <span class="tab-item-close">×</span>
+            <span class="flare r"></span>
+          </div>
+          <div class="tab-item">
+            <span class="tab-item-title"><span class="tab-item-title-text">公司的考勤制度</span></span>
+            <span class="tab-item-close">×</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-group-container" data-tone="emerald">
+        <button class="tab-group-label"><span class="tab-group-name">CRM</span><span class="tab-group-count">2</span></button>
+        <div class="tab-group-tabs">
+          <div class="tab-item"><span class="tab-item-title"><span class="tab-item-title-text">客户 A 跟进</span></span><span class="tab-item-close">×</span></div>
+          <div class="tab-item"><span class="tab-item-title"><span class="tab-item-title-text">报价单</span></span><span class="tab-item-close">×</span></div>
+        </div>
+      </div>
+
+      <div class="tab-group-container" data-tone="rose">
+        <button class="tab-group-label"><span class="tab-group-name">品牌策划</span><span class="tab-group-count">1</span></button>
+        <div class="tab-group-tabs">
+          <div class="tab-item"><span class="tab-item-title"><span class="tab-item-title-text">小红书脚本</span></span><span class="tab-item-close">×</span></div>
+        </div>
+      </div>
+
+      <button class="tab-add-btn">＋</button>
+    </div>
+  </div>
+  <div class="content-demo">内容区 (content-area)</div>
+</div>
+
+<div class="frame" data-theme="dark" style="background:hsl(212 18% 11%)">
+  <div class="workbench-titlebar">
+    <div class="tab-strip" role="tablist">
+      <button class="tab-note-btn">✎</button>
+      <div class="tab-group-container is-active" data-tone="indigo">
+        <button class="tab-group-label"><span class="tab-group-name">个人空间</span><span class="tab-group-count">2</span></button>
+        <div class="tab-group-tabs">
+          <div class="tab-item is-active">
+            <span class="flare l"></span>
+            <span class="tab-item-title"><span class="tab-item-title-text">测试邮件</span></span>
+            <span class="tab-item-close">×</span>
+            <span class="flare r"></span>
+          </div>
+          <div class="tab-item"><span class="tab-item-title"><span class="tab-item-title-text">公司的考勤制度</span></span><span class="tab-item-close">×</span></div>
+        </div>
+      </div>
+      <div class="tab-group-container" data-tone="amber">
+        <button class="tab-group-label"><span class="tab-group-name">CRM</span><span class="tab-group-count">2</span></button>
+        <div class="tab-group-tabs">
+          <div class="tab-item"><span class="tab-item-title"><span class="tab-item-title-text">客户 A 跟进</span></span><span class="tab-item-close">×</span></div>
+          <div class="tab-item"><span class="tab-item-title"><span class="tab-item-title-text">报价单</span></span><span class="tab-item-close">×</span></div>
+        </div>
+      </div>
+      <button class="tab-add-btn">＋</button>
+    </div>
+  </div>
+  <div class="content-demo" style="color:hsl(212 10% 68%)">内容区 (content-area)</div>
+</div>
+</body>
+</html>

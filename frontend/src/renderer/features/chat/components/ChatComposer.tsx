@@ -310,7 +310,7 @@ export function ChatComposer({ controller }: ChatComposerProps) {
             onClick={(event) => syncSlashCommand(event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
             onKeyDown={handleKeyDown}
             onPaste={handleComposerPaste}
-            placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+            placeholder="输入消息，按已设置快捷键发送"
             ref={textareaRef}
             rows={1}
             value={draft}

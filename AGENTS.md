@@ -93,7 +93,7 @@
 
 ```text
 Project_R/
-├── .agents/skills/          # mattpocock/skills 已安装工程/生产力 skills
+├── .agents/skills/          # 项目级 Agent Skills
 ├── AGENTS.md                # Codex / 通用 Agent 工作规则
 ├── skills-lock.json         # skills 版本锁文件
 ├── backend/                 # FastAPI 后端
@@ -328,11 +328,12 @@ LLM Provider 约定：
 
 ## Agent Skills
 
-本项目基于 mattpocock/skills，通过 `skills-lock.json` 管理版本。
+本项目通过 `.agents/skills/` 保存项目级 Agent Skills，并用 `skills-lock.json` 管理版本。
 
 | 分类 | Skills |
 |---|---|
 | 工程 | `diagnose`、`grill-with-docs`、`improve-codebase-architecture`、`prototype`、`setup-matt-pocock-skills`、`tdd`、`to-issues`、`to-prd`、`triage`、`zoom-out` |
 | 生产力 | `caveman`、`grill-me`、`handoff`、`write-a-skill` |
+| 文档 | `documentation-writer` |
 
 Issue tracker、triage labels、domain docs 见 `docs/agents/`。

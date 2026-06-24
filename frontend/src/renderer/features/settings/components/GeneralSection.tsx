@@ -215,7 +215,7 @@ export function GeneralSection({
               <strong>界面语言</strong>
               <span>更多语言支持即将推出</span>
             </div>
-            <select disabled value="zh-CN">
+            <select className="settings-compact-select" disabled value="zh-CN">
               <option value="zh-CN">简体中文</option>
             </select>
           </div>
@@ -239,6 +239,7 @@ export function GeneralSection({
               <span>按最后更新时间清理侧栏会话</span>
             </div>
             <select
+              className="settings-compact-select"
               value={preferences.autoArchiveDays}
               onChange={(event) => updatePreference({ autoArchiveDays: event.target.value })}
             >
@@ -269,6 +270,7 @@ export function GeneralSection({
               <span>亮色、暗色或跟随系统</span>
             </div>
             <select
+              className="settings-compact-select"
               value={preferences.theme}
               onChange={(event) => updatePreference({ theme: event.target.value as PreferenceState["theme"] })}
             >

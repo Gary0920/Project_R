@@ -1,4 +1,7 @@
 import { parseApiDate } from "../../shared/utils/time";
+import { DEFAULT_SHORTCUTS, mergeShortcuts } from "./shortcutRegistry";
+
+export { DEFAULT_SHORTCUTS } from "./shortcutRegistry";
 
 export type PreferenceState = {
   completionSound: boolean;
@@ -10,18 +13,11 @@ export type PreferenceState = {
   shortcuts: Record<string, string>;
 };
 
-export const DEFAULT_SHORTCUTS: Record<string, string> = {
-  newChat: "Ctrl + N",
-  search: "Ctrl + K",
-  settings: "Ctrl + ,",
-  send: "Enter",
-  newline: "Shift + Enter",
-};
-
 export const PREFS_KEY = "project-r:settings-preferences";
 
 export function readPreferences(): PreferenceState {
   try {
+    const stored = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}");
     return {
       completionSound: false,
       autoArchiveDays: "disabled",
@@ -29,8 +25,8 @@ export function readPreferences(): PreferenceState {
       theme: "system",
       dingTalkWebhook: "",
       dingTalkToken: "",
-      shortcuts: DEFAULT_SHORTCUTS,
-      ...JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}"),
+      ...stored,
+      shortcuts: mergeShortcuts(stored.shortcuts),
     };
   } catch {
     return {

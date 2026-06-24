@@ -102,6 +102,9 @@ export function TabBar({
     const activeTab = visibleTabs.find((tab) => tab.id === activeTabId);
     return activeTab ? workspaceGroupId(activeTab.workspaceId) : "";
   }, [activeTabId, visibleTabs]);
+  const shouldShowGroupHeaders = useMemo(() => {
+    return tabGroups.length > 1 || tabGroups.some((group) => group.tabs.length > 1);
+  }, [tabGroups]);
 
   useEffect(() => {
     if (!activeGroupId) return;
@@ -168,7 +171,7 @@ export function TabBar({
           <NoteIcon />
         </button>
         {tabGroups.map((group) => {
-          if (group.tabs.length === 1) {
+          if (!shouldShowGroupHeaders) {
             return renderTab(group.tabs[0], group, true);
           }
 

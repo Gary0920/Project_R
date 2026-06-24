@@ -1,5 +1,7 @@
 import type { KeyboardEvent } from "react";
 
+import { DEFAULT_SHORTCUTS, PREFS_KEY } from "../settings/settingsPreferences";
+import { matchesShortcut, mergeShortcuts } from "../settings/shortcutRegistry";
 import type { SkillSlashCandidate, SlashCommandMatch } from "./slashCommands";
 
 type UseChatComposerShortcutsOptions = {
@@ -13,6 +15,17 @@ type UseChatComposerShortcutsOptions = {
   slashCandidates: SkillSlashCandidate[];
 };
 
+function readShortcuts(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(PREFS_KEY);
+    if (!raw) return DEFAULT_SHORTCUTS;
+    const prefs = JSON.parse(raw);
+    return mergeShortcuts(prefs.shortcuts);
+  } catch {
+    return DEFAULT_SHORTCUTS;
+  }
+}
+
 export function useChatComposerShortcuts({
   handleSend,
   insertSlashCandidate,
@@ -24,6 +37,7 @@ export function useChatComposerShortcuts({
   slashCandidates,
 }: UseChatComposerShortcutsOptions) {
   return function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    const shortcuts = readShortcuts();
     if (skillPanelVisible) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -47,7 +61,10 @@ export function useChatComposerShortcuts({
         return;
       }
     }
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (matchesShortcut(event.nativeEvent, shortcuts.newline)) {
+      return;
+    }
+    if (matchesShortcut(event.nativeEvent, shortcuts.send)) {
       event.preventDefault();
       void handleSend();
     }

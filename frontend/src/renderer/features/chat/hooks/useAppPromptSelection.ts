@@ -110,8 +110,16 @@ export function useAppPromptSelection({
 
   async function handleCreateUserPrompt(name: string, content: string) {
     const saved = await window.projectR?.prompts?.saveUser({ name, content });
-    if (!saved) return;
+    if (!saved) return null;
     setUserPrompts((prev) => [saved, ...prev.filter((item) => item.id !== saved.id)]);
+    return saved;
+  }
+
+  async function handleUpdateUserPrompt(id: string, name: string, content: string) {
+    const saved = await window.projectR?.prompts?.saveUser({ id, name, content });
+    if (!saved) return null;
+    setUserPrompts((prev) => [saved, ...prev.filter((item) => item.id !== saved.id)]);
+    return saved;
   }
 
   async function handleDeleteUserPrompt(id: string) {
@@ -132,6 +140,7 @@ export function useAppPromptSelection({
     handleCreateUserPrompt,
     handleDeleteUserPrompt,
     handleSelectPrompt,
+    handleUpdateUserPrompt,
     pendingPromptId,
     promptSelections,
     promptOptions,

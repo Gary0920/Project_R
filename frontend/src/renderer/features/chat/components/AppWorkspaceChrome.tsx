@@ -67,6 +67,7 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
     handleDeleteMessageContext,
     handleDeleteSession,
     handleDeleteUserPrompt,
+    handleUpdateUserPrompt,
     handleLogout,
     handleMarkAllNotificationsRead,
     handleMoveSession,
@@ -324,6 +325,7 @@ export function AppWorkspaceChrome({ controller }: AppWorkspaceChromeProps) {
             userPrompts={userPrompts}
             onSelect={handleSelectPrompt}
             onCreateUserPrompt={handleCreateUserPrompt}
+            onUpdateUserPrompt={handleUpdateUserPrompt}
             onDeleteUserPrompt={handleDeleteUserPrompt}
             onClose={() => setUtilityPanel(null)}
           />

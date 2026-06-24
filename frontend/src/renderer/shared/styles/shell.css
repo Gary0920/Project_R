@@ -890,8 +890,10 @@
   background: var(--group-line);
   box-shadow: none;
   opacity: 0.86;
+  pointer-events: none;
   transition: opacity 0.14s ease, background 0.14s ease, box-shadow 0.14s ease;
-  z-index: 0;
+  /* 抬到激活标签(z-index:10)与其小脚之上，让组底色线沿整组连续贯通、不被遮断 */
+  z-index: 11;
 }
 
 .tab-group-container + .tab-group-container::after {
@@ -929,13 +931,13 @@
 .tab-group-label {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   height: 28px;
   max-width: 152px;
   margin: 0 4px 4px 0;
-  padding: 0 9px;
+  padding: 0 10px;
   border: 1px solid var(--group-border);
-  border-radius: calc(var(--control-radius) - 3px);
+  border-radius: calc(var(--control-radius) - 2px);
   background: var(--group-soft);
   color: var(--group-foreground);
   cursor: pointer;
@@ -949,23 +951,23 @@
 
 .tab-group-label::before {
   content: "";
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   border-radius: 999px;
   background: var(--group-color);
-  box-shadow: 0 0 0 2px var(--group-soft);
+  box-shadow: 0 0 0 2.5px hsl(var(--content-area)), 0 0 0 3.5px var(--group-line-soft);
   flex: 0 0 auto;
 }
 
 .tab-group-label:hover {
   border-color: var(--group-color);
-  background: var(--group-soft);
+  background: color-mix(in srgb, var(--group-color) 16%, hsl(var(--content-area)) 84%);
   color: var(--group-foreground);
 }
 
 .tab-group-container.is-active .tab-group-label {
   border-color: var(--group-color);
-  background: var(--group-soft);
+  background: color-mix(in srgb, var(--group-color) 18%, hsl(var(--content-area)) 82%);
   color: var(--group-foreground);
 }
 
@@ -987,14 +989,16 @@
   min-width: 16px;
   height: 16px;
   padding: 0 4px;
-  border-radius: calc(var(--control-radius) - 5px);
-  background: hsl(var(--background));
+  border-radius: 999px;
+  background: hsl(var(--content-area));
+  border: 1px solid var(--group-border);
   color: hsl(var(--muted-foreground));
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .tab-group-container.is-active .tab-group-count {
+  border-color: var(--group-color);
   color: var(--group-foreground);
 }
 
@@ -1089,7 +1093,7 @@
   bottom: 0;
   width: 12px;
   height: 12px;
-  background: hsl(var(--background));
+  background: hsl(var(--content-area));
   border: 0;
   pointer-events: none;
   opacity: 1;

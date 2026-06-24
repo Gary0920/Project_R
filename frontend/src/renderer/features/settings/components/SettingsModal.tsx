@@ -4,18 +4,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { updateCurrentUser, uploadCurrentUserAvatar } from "../../auth/api";
 import { ApiError, apiRequest } from "../../../shared/api/client";
 import { listArchivedChatSessions, restoreChatSession } from "../../chat/api";
-import { listCompanyPrompts } from "../../prompts/api";
-import { listSkills } from "../../skills/api";
 import type {
   ChatSessionResponse,
-  CompanyPromptResponse,
   HealthResponse,
-  SkillResponse,
 } from "../../../shared/api/types";
 import { authTokenAtom, clearAuthAtom, currentUserAtom, refreshCurrentUserAtom } from "../../auth/state";
 import { serverUrlAtom, setServerUrlAtom } from "../../../shared/state/server";
-import { PROJECT_R_BUILTIN_PROMPT } from "../../prompts/constants";
 import { GeneralSection } from "./GeneralSection";
+import { TutorialSection } from "./TutorialSection";
+import { ShortcutSettingsSection } from "./ShortcutSettingsSection";
 import { AdminSettingsPanel } from "../../admin/components/AdminSettingsPanel";
 import { useSettingsAdminController, type AdminTab } from "../hooks/useSettingsAdminController";
 import {
@@ -28,7 +25,6 @@ import {
 } from "../settingsAdminHelpers";
 import {
   applyTheme,
-  DEFAULT_SHORTCUTS,
   formatDate,
   formatOptionalDate,
   PREFS_KEY,
@@ -37,7 +33,6 @@ import {
   type PreferenceState,
 } from "../settingsPreferences";
 import {
-  AgentIcon,
   ArchiveIcon,
   BrainIcon,
   CameraIcon,
@@ -47,7 +42,6 @@ import {
   MoreIcon,
   NoteIcon,
   PlusIcon,
-  PromptIcon,
   RefreshIcon,
   SearchIcon,
   SendIcon,
@@ -61,9 +55,7 @@ type ConnectionState = "idle" | "checking" | "ok" | "error";
 type SettingsSection =
   | "general"
   | "server"
-  | "prompts"
   | "archive"
-  | "agent"
   | "remote"
   | "tutorial"
   | "shortcuts"
@@ -72,9 +64,7 @@ type SettingsSection =
 const SECTION_LABELS: Record<SettingsSection, string> = {
   general: "通用设置",
   server: "服务器连接",
-  prompts: "提示词管理",
   archive: "归档管理",
-  agent: "Agent 配置",
   remote: "远程连接",
   tutorial: "软件教程",
   shortcuts: "快捷键管理",
@@ -115,10 +105,6 @@ export function SettingsModal({ isOpen, onClose, initialSection, initialAdminTab
   const [archivedSessions, setArchivedSessions] = useState<ChatSessionResponse[]>([]);
   const [archiveLoading, setArchiveLoading] = useState(false);
   const [restoringArchiveId, setRestoringArchiveId] = useState<number | null>(null);
-  const [skills, setSkills] = useState<SkillResponse[]>([]);
-  const [companyPrompts, setCompanyPrompts] = useState<CompanyPromptResponse[]>([]);
-  const [userPrompts, setUserPrompts] = useState<UserPromptRecord[]>([]);
-  const [promptDraft, setPromptDraft] = useState({ id: "", name: "", content: "" });
   const apiOptions = useMemo(
     () => ({ baseUrl: serverUrl, token, onUnauthorized: clearAuth }),
     [clearAuth, serverUrl, token],
@@ -178,13 +164,6 @@ export function SettingsModal({ isOpen, onClose, initialSection, initialAdminTab
       mounted = false;
     };
   }, [activeSection, apiOptions, isOpen]);
-
-
-  useEffect(() => {
-    listSkills(apiOptions).then(setSkills).catch(() => setSkills([]));
-    listCompanyPrompts(apiOptions).then(setCompanyPrompts).catch(() => setCompanyPrompts([]));
-    window.projectR?.prompts?.listUser().then(setUserPrompts).catch(() => setUserPrompts([]));
-  }, [serverUrl, token]);
 
   useEffect(() => {
     setProfileDraft({
@@ -296,21 +275,6 @@ export function SettingsModal({ isOpen, onClose, initialSection, initialAdminTab
     }
   }
 
-  async function handleSaveUserPrompt() {
-    const name = promptDraft.name.trim();
-    const content = promptDraft.content.trim();
-    if (!name || !content) return;
-    const saved = await window.projectR?.prompts?.saveUser({
-      id: promptDraft.id || undefined,
-      name,
-      content,
-    });
-    if (!saved) return;
-    const next = await window.projectR?.prompts?.listUser();
-    setUserPrompts(next ?? []);
-    setPromptDraft({ id: "", name: "", content: "" });
-  }
-
   async function handleAvatarImageUpload(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -355,18 +319,10 @@ export function SettingsModal({ isOpen, onClose, initialSection, initialAdminTab
     "✨", "🎯", "🏆", "🎨", "🎸", "🎮", "📚", "💻", "🔧", "🌈",
   ];
 
-  async function handleDeleteUserPrompt(id: string) {
-    const next = await window.projectR?.prompts?.deleteUser(id);
-    setUserPrompts(next ?? []);
-    if (promptDraft.id === id) setPromptDraft({ id: "", name: "", content: "" });
-  }
-
   const baseSections: Array<{ id: SettingsSection; label: string; icon: React.ReactNode }> = [
     { id: "general", label: "通用", icon: <SettingsIcon /> },
     { id: "server", label: "服务器", icon: <BrainIcon /> },
-    { id: "prompts", label: "提示词", icon: <PromptIcon /> },
     { id: "archive", label: "归档", icon: <ArchiveIcon /> },
-    { id: "agent", label: "Agent", icon: <AgentIcon /> },
     { id: "remote", label: "远程连接", icon: <SendIcon /> },
     { id: "tutorial", label: "教程", icon: <NoteIcon /> },
     { id: "shortcuts", label: "快捷键", icon: <EditIcon /> },
@@ -512,116 +468,6 @@ export function SettingsModal({ isOpen, onClose, initialSection, initialAdminTab
               </div>
             ) : null}
 
-            {activeSection === "prompts" ? (
-              <>
-                <div className="settings-section">
-                  <div className="settings-section-header">
-                    <h3>内置提示词</h3>
-                    <p>系统默认，只读</p>
-                  </div>
-                  <div className="settings-card">
-                    <div className="settings-card-row">
-                      <div className="settings-row-info">
-                        <strong>{PROJECT_R_BUILTIN_PROMPT.name}</strong>
-                        <span>Project_R 默认，只读</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="settings-section">
-                  <div className="settings-section-header">
-                    <h3>公司预设</h3>
-                    <p>后端预设，只读</p>
-                  </div>
-                  <div className="settings-card">
-                    {companyPrompts.map((prompt) => (
-                      <div className="settings-card-row" key={prompt.id}>
-                        <div className="settings-row-info">
-                          <strong>{prompt.name}</strong>
-                          <span>{prompt.description || "后端预设，只读"}</span>
-                        </div>
-                      </div>
-                    ))}
-                    {companyPrompts.length === 0 ? (
-                      <div className="settings-card-row">
-                        <span className="meta">暂无公司预设。</span>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="settings-section">
-                  <div className="settings-section-header">
-                    <h3>本机自定义</h3>
-                    <p>仅保存在本机，不上传后端</p>
-                  </div>
-                  <div className="settings-card">
-                    <div className="settings-card-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 10 }}>
-                      <input
-                        placeholder="提示词名称"
-                        value={promptDraft.name}
-                        onChange={(event) => setPromptDraft((prev) => ({ ...prev, name: event.target.value }))}
-                        style={{ width: "100%", height: 36, padding: "0 10px", border: "1px solid hsl(var(--border))", borderRadius: 8, background: "hsl(var(--background))", color: "hsl(var(--foreground))", fontSize: 13 }}
-                      />
-                      <textarea
-                        placeholder="输入系统提示词内容..."
-                        value={promptDraft.content}
-                        onChange={(event) => setPromptDraft((prev) => ({ ...prev, content: event.target.value }))}
-                        style={{ width: "100%", minHeight: 120, padding: 10, border: "1px solid hsl(var(--border))", borderRadius: 8, background: "hsl(var(--background))", color: "hsl(var(--foreground))", fontSize: 13, resize: "vertical", lineHeight: 1.6 }}
-                      />
-                      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                        <button disabled={!promptDraft.name.trim() || !promptDraft.content.trim()} onClick={() => void handleSaveUserPrompt()} type="button">
-                          {promptDraft.id ? "保存修改" : "新建提示词"}
-                        </button>
-                        {promptDraft.id ? (
-                          <button className="ghost-button" onClick={() => setPromptDraft({ id: "", name: "", content: "" })} type="button">取消编辑</button>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="settings-card" style={{ marginTop: 12 }}>
-                    {userPrompts.map((prompt) => (
-                      <div className="settings-card-row" key={prompt.id}>
-                        <div className="settings-row-info">
-                          <strong>{prompt.name}</strong>
-                          <span>{prompt.content}</span>
-                        </div>
-                        <div className="settings-row-control" style={{ gap: 6 }}>
-                          <button className="ghost-button" onClick={() => setPromptDraft({ id: prompt.id, name: prompt.name, content: prompt.content })} type="button">编辑</button>
-                          <button className="ghost-button" onClick={() => void handleDeleteUserPrompt(prompt.id)} type="button">删除</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </>
-            ) : null}
-
-            {activeSection === "agent" ? (
-              <div className="settings-section">
-                <div className="settings-section-header">
-                  <h3>Agent 配置</h3>
-                  <p>官方 Skills 与企业 Skills 只读展示，执行配置由后端统一管理</p>
-                </div>
-                <div className="settings-card">
-                  {skills.map((skill) => (
-                    <div className="settings-card-row" key={skill.name}>
-                      <div className="settings-row-info">
-                        <strong>{skill.display_name}</strong>
-                        <span>{skill.name} · {skill.category || "未分类"} · {skill.priority}</span>
-                      </div>
-                    </div>
-                  ))}
-                  {skills.length === 0 ? (
-                    <div className="settings-card-row">
-                      <span className="meta">暂无可用 Skill。</span>
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-
             {activeSection === "remote" ? (
               <div className="settings-section">
                 <div className="settings-section-header">
@@ -658,59 +504,11 @@ export function SettingsModal({ isOpen, onClose, initialSection, initialAdminTab
             ) : null}
 
             {activeSection === "tutorial" ? (
-              <div className="settings-section">
-                <div className="settings-section-header">
-                  <h3>软件教程</h3>
-                  <p>快速上手指南</p>
-                </div>
-                <div className="settings-card">
-                  <div className="settings-card-row" style={{ flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
-                    <strong>开始工作</strong>
-                      <span>创建或选择项目，在 Chat 中提问，在 Agent 中查看项目文件。</span>
-                  </div>
-                  <div className="settings-card-row" style={{ flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
-                    <strong>知识库问答</strong>
-                    <span>使用普通提问或 <code>/query</code> 固定知识库模式，回答会显示来源。</span>
-                  </div>
-                  <div className="settings-card-row" style={{ flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
-                    <strong>业务 Skill</strong>
-                    <span>例如选择"项目沟通风险分析"，系统会按业务 Skill 的结构输出分析结果。</span>
-                  </div>
-                </div>
-              </div>
+              <TutorialSection />
             ) : null}
 
             {activeSection === "shortcuts" ? (
-              <div className="settings-section">
-                <div className="settings-section-header">
-                  <h3>快捷键管理</h3>
-                  <p>自定义键盘快捷操作</p>
-                </div>
-                <div className="settings-card">
-                  {[
-                    ["newChat", "新建对话"],
-                    ["search", "搜索对话"],
-                    ["settings", "打开设置"],
-                    ["send", "发送消息"],
-                    ["newline", "换行"],
-                  ].map(([key, label]) => (
-                    <div className="settings-card-row" key={key}>
-                      <div className="settings-row-info">
-                        <strong>{label}</strong>
-                      </div>
-                      <div className="settings-row-control">
-                        <input
-                          value={preferences.shortcuts?.[key] ?? DEFAULT_SHORTCUTS[key]}
-                          onChange={(event) => updatePreference({
-                            shortcuts: { ...(preferences.shortcuts ?? DEFAULT_SHORTCUTS), [key]: event.target.value },
-                          })}
-                          style={{ width: 140, height: 34, padding: "0 10px", border: "1px solid hsl(var(--border))", borderRadius: 8, background: "hsl(var(--background))", color: "hsl(var(--foreground))", fontSize: 13, textAlign: "right" }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <ShortcutSettingsSection preferences={preferences} updatePreference={updatePreference} />
             ) : null}
 
             {activeSection === "admin" && currentUser?.role === "admin" ? (

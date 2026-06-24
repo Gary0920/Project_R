@@ -23,6 +23,7 @@ import minimizeUrl from "iconoir/icons/minus.svg";
 import moreUrl from "iconoir/icons/more-horiz.svg";
 import moveUrl from "iconoir/icons/data-transfer-both.svg";
 import noteUrl from "iconoir/icons/page-edit.svg";
+import openBookUrl from "iconoir/icons/open-book.svg";
 import arrowUpUrl from "iconoir/icons/nav-arrow-up.svg";
 import pinUrl from "iconoir/icons/pin.svg";
 import plusUrl from "iconoir/icons/plus.svg";
@@ -77,6 +78,7 @@ export function MoveIcon(props: IconProps) { return <IconoirIcon url={moveUrl} {
 export function SettingsIcon(props: IconProps) { return <IconoirIcon url={settingsUrl} {...props} />; }
 export function SplitIcon(props: IconProps) { return <IconoirIcon url={splitUrl} {...props} />; }
 export function PromptIcon(props: IconProps) { return <IconoirIcon url={textSquareUrl} {...props} />; }
+export function SkillIcon(props: IconProps) { return <IconoirIcon url={openBookUrl} {...props} />; }
 export function LogoutIcon(props: IconProps) { return <IconoirIcon url={logoutUrl} {...props} />; }
 export function MinimizeIcon(props: IconProps) { return <IconoirIcon url={minimizeUrl} {...props} />; }
 export function MaximizeIcon(props: IconProps) { return <IconoirIcon url={maximizeUrl} {...props} />; }
