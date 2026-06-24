@@ -294,6 +294,7 @@ async function installMockBackend(page: Page) {
 async function login(page: Page) {
   await page.addInitScript((backendUrl) => {
     window.localStorage.setItem("project-r:server-url", backendUrl as string);
+    window.localStorage.setItem("project-r:onboarding-complete", "true");
   }, BACKEND_URL.replace(/\/$/, ""));
 
   await page.goto("/#/login");
@@ -306,10 +307,11 @@ async function login(page: Page) {
   await page.locator("button.alp-btn-login").click();
   await page.waitForURL("**/app**", { timeout: 15_000 });
   await expect(page.locator("textarea[placeholder*='输入消息']")).toBeVisible();
-  const sessionItem = page.locator(".session-item", { hasText: "V2.1 收口验证" }).first();
-  if (await sessionItem.isVisible({ timeout: 5000 }).catch(() => false)) {
-    await sessionItem.click();
-  }
+  const sessionItem = page.locator(".session-list .session-item", { hasText: "V2.1 收口验证" }).first();
+  await expect(sessionItem).toBeVisible({ timeout: 5000 });
+  await sessionItem.click();
+  await expect(sessionItem).toHaveClass(/is-active/);
+  await expect(page.locator(".chat-title-button", { hasText: "V2.1 收口验证" })).toBeEnabled();
 }
 
 test.describe("V2.1 local closure critical paths", () => {
@@ -322,11 +324,8 @@ test.describe("V2.1 local closure critical paths", () => {
 
     const composer = page.locator("textarea[placeholder*='输入消息']");
     await composer.fill("/query V2.1 来源范围");
-
-    await expect(page.locator(".knowledge-scope-indicator")).toContainText("将查询");
-    await expect(page.locator(".knowledge-scope-indicator")).toContainText("不会查询");
-
-    await page.locator("button.composer-send").click();
+    await expect(composer).toHaveValue("/query V2.1 来源范围");
+    await page.getByRole("button", { name: "发送" }).click();
 
     await expect(page.locator(".message-sources-block")).toContainText("引用来源");
     await expect(page.locator(".message-source-item")).toContainText("V2.1 本地收口说明");
@@ -343,9 +342,9 @@ test.describe("V2.1 local closure critical paths", () => {
     await composer.fill("/");
     await page.locator(".skill-candidate-item", { hasText: "生成 Word" }).click();
     await composer.fill("V2.1 收口记录");
-    await page.locator("button.composer-send").click();
+    await page.getByRole("button", { name: "发送" }).click();
 
-    const card = page.locator(".message-file-card").first();
+    const card = page.locator(".message-deliverable", { hasText: "v2-local-closure.docx" }).first();
     await expect(card).toContainText("v2-local-closure.docx");
     await expect(card.locator("button", { hasText: "下载" })).toBeVisible();
     await expect(card.locator("button", { hasText: /保存到|保存中|已保存/ })).toHaveCount(0);
@@ -354,8 +353,8 @@ test.describe("V2.1 local closure critical paths", () => {
   test("session export entry is wired without calling real file generation", async ({ page }) => {
     await login(page);
 
-    await page.locator(".session-more").first().click();
-    await expect(page.locator(".context-menu, .session-menu, [role='menu']").first()).toBeVisible();
-    await expect(page.locator("text=/导出|Markdown|JSON/").first()).toBeVisible();
+    const exportButton = page.getByRole("button", { name: "导出对话" });
+    await expect(exportButton).toBeEnabled();
+    await exportButton.click();
   });
 });
