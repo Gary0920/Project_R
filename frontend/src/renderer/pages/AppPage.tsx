@@ -3,10 +3,9 @@ import { useAtom, useAtomValue, useSetAtom } from "jotai";
 
 import { ApiError, type ApiClientOptions } from "../shared/api/client";
 import { createApiOptions } from "../shared/api/options";
-import { createChatSession, fetchSessionAttachmentBlob, listChatMessages, listChatSessions, searchChatSessions } from "../features/chat/api";
+import { createChatSession, fetchSessionAttachmentBlob, listChatSessions } from "../features/chat/api";
 import { useChatDraft } from "../features/chat/useChatDraft";
 import type { NotificationView } from "../features/notifications/api";
-import { listSkills } from "../features/skills/api";
 import { authTokenAtom, clearAuthAtom, currentUserAtom } from "../features/auth/state";
 import { parseApiDate } from "../shared/utils/time";
 import {
@@ -97,6 +96,8 @@ import { useChatSessionManagement, type RenameScope } from "../features/chat/hoo
 import { useSlashCommandSelection } from "../features/chat/hooks/useSlashCommandSelection";
 import { useAppPromptSelection } from "../features/chat/hooks/useAppPromptSelection";
 import { useAppModelControls } from "../features/chat/hooks/useAppModelControls";
+import { useTabNavigation } from "../features/chat/hooks/useTabNavigation";
+import { usePageDataLoader } from "../features/chat/hooks/usePageDataLoader";
 type SplitPaneKey = "left" | "right";
 type UtilityPanel = "workspace" | "knowledge" | "customer-intelligence" | "prompt" | "skills" | "source" | "crm";
 type SettingsAdminTab = "overview" | "users" | "reviews" | "gbrain" | "templates" | "updates" | "audit";
@@ -160,6 +161,18 @@ export function AppPage() {
     () => createApiOptions(serverUrl, token, clearAuth),
     [clearAuth, serverUrl, token],
   );
+  // Must come before downstream hooks that consume selectSession
+  // (useNotificationCenter, useChatSessionManagement).
+  const { selectSession } = usePageDataLoader({
+    apiOptions, activeWorkspaceId, activeSessionId, messagesBySession,
+    setSessions, setIsLoading, setError, setActiveSessionId, clearAuth,
+    setMessagesBySession,
+    setSkills,
+    showSearch, searchTerm, setSearchResults,
+    activeTabId, setActiveTabId,
+    sideBySideOpen, activeSplitPane, setSplitPaneSessionIds,
+    setTabs, setShowScratchPad,
+  });
   const {
     modelConfigError,
     modelMenuOpen,
@@ -567,138 +580,23 @@ export function AppPage() {
     }
   }, [activeMessages]);
 
-  useEffect(() => {
-    if (utilityPanel === "source" && sourcePreview?.sessionId != null && sourcePreview.sessionId !== activeSessionId) {
-      setSourcePreview(null);
-      setUtilityPanel(null);
-    }
-  }, [activeSessionId, sourcePreview?.sessionId, utilityPanel]);
+  const {
+    handleSelectTab,
+    handleCloseTab,
+    handleWorkspaceChanged,
+    handleSwitchToAgent,
+  } = useTabNavigation({
+    tabs, setTabs,
+    activeTabId, setActiveTabId,
+    activeSessionId, setActiveSessionId,
+    activeWorkspaceId, setActiveWorkspaceId,
+    sideBySideOpen, activeSplitPane, setSplitPaneSessionIds,
+    utilityPanel, setUtilityPanel,
+    sourcePreview, setSourcePreview,
+    setShowScratchPad,
+    setMode,
+  });
 
-  useEffect(() => {
-    setTabs((current) => {
-      if (!current.some((tab) => tab.id === "scratch")) return current;
-      return current.filter((tab) => tab.id !== "scratch");
-    });
-    if (activeTabId === "scratch") {
-      setActiveTabId("");
-      setActiveSessionId(null);
-    }
-  }, [activeTabId, setActiveSessionId, setActiveTabId, setTabs]);
-
-  useEffect(() => {
-    let mounted = true;
-    setIsLoading(true);
-    setError(null);
-    setSessions([]);
-    setActiveSessionId(null);
-    if (!activeWorkspaceId) {
-      setIsLoading(false);
-      return;
-    }
-    listChatSessions(apiOptions, activeWorkspaceId)
-      .then((loadedSessions) => {
-        if (!mounted) return;
-        setSessions(loadedSessions);
-        setError(null);
-      })
-      .catch((loadError: unknown) => {
-        if (!mounted) return;
-        if (loadError instanceof ApiError && loadError.status === 401) {
-          clearAuth();
-          window.location.hash = "#/login";
-          return;
-        }
-        setError("无法加载会话列表，请确认后端正在运行。");
-      })
-      .finally(() => {
-        if (mounted) setIsLoading(false);
-      });
-    return () => {
-      mounted = false;
-    };
-  }, [activeWorkspaceId, apiOptions, clearAuth, setActiveSessionId, setError, setIsLoading, setSessions]);
-
-  useEffect(() => {
-    let mounted = true;
-    listSkills(apiOptions)
-      .then((items) => {
-        if (mounted) setSkills(items);
-      })
-      .catch(() => {
-        if (mounted) setSkills([]);
-      });
-    return () => {
-      mounted = false;
-    };
-  }, [apiOptions]);
-
-  useEffect(() => {
-    if (!activeSessionId || messagesBySession[activeSessionId]) return;
-    let mounted = true;
-    setIsLoading(true);
-    setError(null);
-    listChatMessages(apiOptions, activeSessionId)
-      .then((response) => {
-        if (!mounted) return;
-        setMessagesBySession((current) => ({ ...current, [activeSessionId]: response.items }));
-        setError(null);
-      })
-      .catch((loadError: unknown) => {
-        if (!mounted) return;
-        if (loadError instanceof ApiError && loadError.status === 401) {
-          clearAuth();
-          window.location.hash = "#/login";
-          return;
-        }
-        setError("无法读取消息历史，请稍后重试。");
-      })
-      .finally(() => {
-        if (mounted) setIsLoading(false);
-      });
-    return () => {
-      mounted = false;
-    };
-  }, [activeSessionId, apiOptions, clearAuth, messagesBySession, setError, setIsLoading, setMessagesBySession]);
-
-  useEffect(() => {
-    if (!showSearch || !searchTerm.trim()) {
-      setSearchResults([]);
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      searchChatSessions(apiOptions, searchTerm, activeWorkspaceId)
-        .then(setSearchResults)
-        .catch(() => setSearchResults([]));
-    }, 180);
-    return () => window.clearTimeout(timer);
-  }, [activeWorkspaceId, apiOptions, searchTerm, showSearch]);
-
-  function selectSession(session: ChatSessionResponse, openInNewTab = false) {
-    setShowScratchPad(false);
-    setActiveSessionId(session.id);
-    if (sideBySideOpen) {
-      setSplitPaneSessionIds((current) => ({ ...current, [activeSplitPane]: session.id }));
-    }
-    const tabId = `chat-${session.id}`;
-    setTabs((current) => {
-      const existing = current.find((tab) => tab.id === tabId);
-      if (existing) return current;
-      const nextTab = {
-        id: tabId,
-        sessionId: session.id,
-        workspaceId: session.workspace_id,
-        title: session.title,
-      };
-      const activeTab = current.find((tab) => tab.id === activeTabId);
-      if (activeTab?.sessionId === null && activeTab.id.startsWith("draft-")) {
-        return current.map((tab) => tab.id === activeTabId ? nextTab : tab);
-      }
-      if (openInNewTab || !activeTabId) return [...current, nextTab];
-      if (!current.some((tab) => tab.id === activeTabId)) return [...current, nextTab];
-      return current.map((tab) => tab.id === activeTabId ? nextTab : tab);
-    });
-    setActiveTabId(tabId);
-  }
 
   async function handleArchiveRestored(session: ChatSessionResponse) {
     const workspaceId = session.workspace_id ?? activeWorkspaceId;
@@ -783,56 +681,6 @@ export function AppPage() {
     window.location.hash = "#/login";
   }
 
-  function handleSelectTab(id: string) {
-    setShowScratchPad(false);
-    setActiveTabId(id);
-    const tab = tabs.find((item) => item.id === id);
-    if (tab?.sessionId) {
-      setActiveSessionId(tab.sessionId);
-      if (sideBySideOpen) {
-        setSplitPaneSessionIds((current) => ({ ...current, [activeSplitPane]: tab.sessionId ?? null }));
-      }
-      if (tab.workspaceId && tab.workspaceId !== activeWorkspaceId) {
-        setActiveWorkspaceId(tab.workspaceId);
-      }
-    } else if (tab) {
-      setActiveSessionId(null);
-      if (tab.workspaceId && tab.workspaceId !== activeWorkspaceId) {
-        setActiveWorkspaceId(tab.workspaceId);
-      }
-      if (sideBySideOpen) {
-        setSplitPaneSessionIds((current) => ({ ...current, [activeSplitPane]: null }));
-      }
-    }
-  }
-
-  function handleWorkspaceChanged(workspaceId: number | null) {
-    setActiveWorkspaceId(workspaceId);
-    const tab = tabs.find((item) => item.id === activeTabId);
-    if (tab?.sessionId && tab.workspaceId !== workspaceId) {
-      setActiveTabId("");
-      setActiveSessionId(null);
-    }
-  }
-
-  function handleCloseTab(id: string) {
-    const tab = tabs.find((item) => item.id === id);
-    if (!tab) return;
-    const nextTabs = tabs.filter((item) => item.id !== id);
-    setTabs(nextTabs);
-    if (activeTabId === id) {
-      const next = nextTabs[0];
-      if (next) handleSelectTab(next.id);
-      else {
-        setActiveTabId("");
-        setActiveSessionId(null);
-      }
-    }
-  }
-
-  function handleSwitchToAgent(_messageId: number) {
-    setMode("agent");
-  }
 
   function handleToggleSideBySide() {
     setSideBySideOpen((current) => {

@@ -92,11 +92,62 @@ from app.features.chat.schemas import (
 )
 from app.features.chat.send_message_service import SendMessagePorts, send_message_use_case
 from app.features.chat.transform_service import transform_chat_text
-from app.features.knowledge.sources import KnowledgeSources
 from app.shared.llm.client import LLMConfigurationError, LLMProviderError, get_llm_client
 from app.features.chat import attachments as session_attachments
 from app.features.chat.attachment_routes import router as attachment_router, create_session_attachment, delete_session_attachment, get_session_attachment_content, list_session_attachments, upload_session_attachment
+from app.features.chat.constants import (
+    ANSWER_CORRECTION_RATING_THRESHOLD,
+    ANSWER_CORRECTION_REVIEW_PREFIX,
+    GBRAIN_THINK_REVIEW_PREFIX,
+    GENERATED_FILES_ROOT,
+    GLOBAL_BASE_PROMPT_PATH,
+    MESSAGE_FEEDBACK_ROOT,
+    SESSION_ATTACHMENT_CLEANUP_INTERVAL,
+)
+from app.features.chat.knowledge_sources import KNOWLEDGE_SOURCES
 from app.features.chat.message_routes import router as message_router, activate_message_version, edit_message, exclude_message_context, regenerate_message, restore_excluded_messages
+from app.features.chat.internal import (
+    agent_status_for_skill_status as _agent_status_for_skill_status,
+    bind_attachments_to_message as _bind_attachments_to_message,
+    build_llm_messages as _build_llm_messages,
+    build_llm_messages_before as _build_llm_messages_before,
+    cleanup_inactive_session_attachments,
+    cleanup_inactive_session_attachments_if_due,
+    compose_system_prompt as _compose_system_prompt,
+    delete_session_attachments as _delete_session_attachments,
+    ensure_version_group as _ensure_version_group,
+    exclude_active_messages_after as _exclude_active_messages_after,
+    is_image_attachment as _is_image_attachment,
+    load_attachment_context as _load_attachment_context,
+    load_attachment_context_from_attachments as _load_attachment_context_from_attachments,
+    load_global_base_prompt as _load_global_base_prompt,
+    load_selected_session_attachments as _load_selected_session_attachments,
+    load_vision_image_inputs as _load_vision_image_inputs,
+    message_llm_content as _message_llm_content,
+    message_pair_delete_targets as _message_pair_delete_targets,
+    message_query as _message_query,
+    message_to_response_dict as _message_to_response_dict_core,
+    next_version_index as _next_version_index,
+    normalize_vision_image_media_type as _normalize_vision_image_media_type,
+    parse_knowledge_command as _parse_knowledge_command,
+    safe_event_detail as _safe_event_detail,
+    serialize_sources as _serialize_sources,
+    set_active_version as _set_active_version,
+    write_chat_audit as _write_chat_audit,
+    write_failed_assistant_message as _write_failed_assistant_message,
+    write_gbrain_think_agent_run as _write_gbrain_think_agent_run,
+    write_skill_agent_run as _write_skill_agent_run,
+)
+from app.features.chat.response_helpers import (
+    run_chat_text_skill_by_name as _run_chat_text_skill_by_name_core,
+    run_gbrain_think_response as _run_gbrain_think_response_core,
+)
+from app.features.chat.skill_dispatch import (
+    continue_active_skill_run as _continue_active_skill_run_core,
+    start_skill_run_by_name as _start_skill_run_by_name_core,
+    start_skill_run_from_chat as _start_skill_run_from_chat_core,
+    write_skill_assistant_response as _write_skill_assistant_response_core,
+)
 from app.features.skills.execution import execute_ready_run, generated_file_payload
 from app.features.skills.runner import SkillRunner, run_to_dict
 from app.features.prompts.system_prompt import (
@@ -132,26 +183,18 @@ FILE_COMMAND_FORMATS = {
     "/eml": "eml",
     "/email": "eml",
 }
+# Local path constants (API-layer specific, not used by feature modules)
 BASE_DIR = Path(__file__).resolve().parent.parent
 SESSION_ATTACHMENTS_ROOT = BASE_DIR / "session_attachments"
-GLOBAL_BASE_PROMPT_PATH = BASE_DIR / "prompt_presets" / "global-base-prompt.md"
 MAX_ATTACHMENT_BYTES = 256 * 1024
 MAX_ATTACHMENT_UPLOAD_MB = 20
 MAX_ATTACHMENT_UPLOAD_BYTES = MAX_ATTACHMENT_UPLOAD_MB * 1024 * 1024
+# Re-exports from feature layer (kept for backward compatibility within this file)
 MAX_ATTACHMENT_CONTEXT_CHARS = session_attachments.MAX_ATTACHMENT_CONTEXT_CHARS
 VISION_IMAGE_MIME_TYPES = session_attachments.VISION_IMAGE_MIME_TYPES
 SESSION_ATTACHMENT_RETENTION_DAYS = session_attachments.SESSION_ATTACHMENT_RETENTION_DAYS
-SESSION_ATTACHMENT_CLEANUP_INTERVAL = timedelta(hours=6)
 ATTACHMENT_TEXT_EXTENSIONS = session_attachments.ATTACHMENT_TEXT_EXTENSIONS
 ATTACHMENT_TEXT_MIME_TYPES = session_attachments.ATTACHMENT_TEXT_MIME_TYPES
-GENERATED_FILES_ROOT = Path(os.getenv("GENERATED_FILES_PATH", str(BASE_DIR / "generated_files")))
-MESSAGE_FEEDBACK_ROOT = Path(
-    os.getenv("MESSAGE_FEEDBACK_PATH", str(BASE_DIR / "feedback_data" / "message_ratings"))
-)
-ANSWER_CORRECTION_REVIEW_PREFIX = "gbrain_answer_correction:message:"
-GBRAIN_THINK_REVIEW_PREFIX = "gbrain_think_review:message:"
-ANSWER_CORRECTION_RATING_THRESHOLD = 2
-KNOWLEDGE_SOURCES = KnowledgeSources()
 router.include_router(message_router)
 router.include_router(attachment_router)
 
@@ -528,33 +571,6 @@ def send_message(
 ):
     return send_message_use_case(db, session_id, req, user, ports=_send_message_ports())
 
-from app.features.chat.internal import (
-    message_query as _message_query,
-    message_pair_delete_targets as _message_pair_delete_targets,
-    ensure_version_group as _ensure_version_group,
-    next_version_index as _next_version_index,
-    build_llm_messages_before as _build_llm_messages_before,
-    exclude_active_messages_after as _exclude_active_messages_after,
-    set_active_version as _set_active_version,
-    build_llm_messages as _build_llm_messages,
-    message_llm_content as _message_llm_content,
-    bind_attachments_to_message as _bind_attachments_to_message,
-    parse_knowledge_command as _parse_knowledge_command,
-    load_attachment_context as _load_attachment_context,
-    load_selected_session_attachments as _load_selected_session_attachments,
-    load_attachment_context_from_attachments as _load_attachment_context_from_attachments,
-    is_image_attachment as _is_image_attachment,
-    load_vision_image_inputs as _load_vision_image_inputs,
-    normalize_vision_image_media_type as _normalize_vision_image_media_type,
-    delete_session_attachments as _delete_session_attachments,
-    cleanup_inactive_session_attachments_if_due,
-    cleanup_inactive_session_attachments,
-)
-from app.features.chat.internal import (
-    message_to_response_dict as _message_to_response_dict_core,
-)
-
-
 def _message_to_response_dict(db: Session, message: ChatMessage) -> dict:
     return _message_to_response_dict_core(db, message, feedback_root=MESSAGE_FEEDBACK_ROOT)
 
@@ -607,20 +623,6 @@ def _write_document_generation_agent_run(
     )
 
 
-from app.features.chat.internal import (
-    write_skill_agent_run as _write_skill_agent_run,
-    write_gbrain_think_agent_run as _write_gbrain_think_agent_run,
-    agent_status_for_skill_status as _agent_status_for_skill_status,
-    safe_event_detail as _safe_event_detail,
-)
-from app.features.chat.skill_dispatch import (
-    start_skill_run_from_chat as _start_skill_run_from_chat_core,
-    start_skill_run_by_name as _start_skill_run_by_name_core,
-    continue_active_skill_run as _continue_active_skill_run_core,
-    write_skill_assistant_response as _write_skill_assistant_response_core,
-)
-
-
 def _start_skill_run_from_chat(db: Session, user_id: int, session_id: int, content: str) -> dict | None:
     return _start_skill_run_from_chat_core(db, user_id, session_id, content)
 
@@ -651,10 +653,6 @@ def _write_skill_assistant_response(
 
 
 
-from app.features.chat.response_helpers import (
-    run_gbrain_think_response as _run_gbrain_think_response_core,
-)
-
 
 def _run_gbrain_think_response(
     db: Session,
@@ -682,11 +680,6 @@ def _run_gbrain_think_response(
         llm_provider_error=LLMProviderError,
     )
 
-
-
-from app.features.chat.response_helpers import (
-    run_chat_text_skill_by_name as _run_chat_text_skill_by_name_core,
-)
 
 
 def _run_chat_text_skill_by_name(
@@ -773,15 +766,6 @@ def _search_knowledge_sources(
         forced_company_query=intent == IntentType.RAG_QUERY,
         reduce_knowledge_context=reduce_knowledge_context,
     )
-
-
-from app.features.chat.internal import (
-    serialize_sources as _serialize_sources,
-    compose_system_prompt as _compose_system_prompt,
-    load_global_base_prompt as _load_global_base_prompt,
-    write_failed_assistant_message as _write_failed_assistant_message,
-    write_chat_audit as _write_chat_audit,
-)
 
 
 

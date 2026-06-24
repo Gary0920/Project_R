@@ -9,6 +9,8 @@ from pathlib import Path
 from fastapi import UploadFile
 from starlette.datastructures import Headers
 
+from app.shared.errors import ProjectRError, ResourceNotFoundError
+
 os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.NamedTemporaryFile(delete=False).name}"
 
 import api.chat as chat_api
@@ -63,18 +65,22 @@ class FakeKnowledgeSources:
 
 class SessionAttachmentTests(unittest.TestCase):
     def setUp(self):
+        import app.features.chat.constants as chat_constants
         Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
         self.db = SessionLocal()
         self.temp_root = tempfile.TemporaryDirectory()
         self.prompt_root = tempfile.TemporaryDirectory()
         self.original_root = chat_api.SESSION_ATTACHMENTS_ROOT
-        self.original_global_base_prompt_path = chat_api.GLOBAL_BASE_PROMPT_PATH
+        self.original_global_base_prompt_path_chat = chat_api.GLOBAL_BASE_PROMPT_PATH
+        self.original_global_base_prompt_path_const = chat_constants.GLOBAL_BASE_PROMPT_PATH
         self.original_get_llm_client = chat_api.get_llm_client
         self.original_knowledge_sources = chat_api.KNOWLEDGE_SOURCES
         chat_api.SESSION_ATTACHMENTS_ROOT = Path(self.temp_root.name)
-        chat_api.GLOBAL_BASE_PROMPT_PATH = Path(self.prompt_root.name) / "global-base-prompt.md"
-        chat_api.GLOBAL_BASE_PROMPT_PATH.write_text("", encoding="utf-8")
+        temp_prompt_path = Path(self.prompt_root.name) / "global-base-prompt.md"
+        temp_prompt_path.write_text("", encoding="utf-8")
+        chat_api.GLOBAL_BASE_PROMPT_PATH = temp_prompt_path
+        chat_constants.GLOBAL_BASE_PROMPT_PATH = temp_prompt_path
         chat_api.KNOWLEDGE_SOURCES = FakeKnowledgeSources()
         self.client = FakeLLMClient()
         chat_api.get_llm_client = lambda provider=None: self.client
@@ -91,8 +97,10 @@ class SessionAttachmentTests(unittest.TestCase):
         self.db.refresh(self.session)
 
     def tearDown(self):
+        import app.features.chat.constants as chat_constants
         chat_api.SESSION_ATTACHMENTS_ROOT = self.original_root
-        chat_api.GLOBAL_BASE_PROMPT_PATH = self.original_global_base_prompt_path
+        chat_api.GLOBAL_BASE_PROMPT_PATH = self.original_global_base_prompt_path_chat
+        chat_constants.GLOBAL_BASE_PROMPT_PATH = self.original_global_base_prompt_path_const
         chat_api.get_llm_client = self.original_get_llm_client
         chat_api.KNOWLEDGE_SOURCES = self.original_knowledge_sources
         self.temp_root.cleanup()
@@ -338,9 +346,9 @@ class SessionAttachmentTests(unittest.TestCase):
 
         self.assertEqual(response.media_type, "text/plain")
         self.assertEqual(Path(response.path).read_text(encoding="utf-8"), "private")
-        with self.assertRaises(chat_api.HTTPException) as raised:
+        with self.assertRaises(ProjectRError) as raised:
             chat_api.get_session_attachment_content(self.session.id, attachment.id, self.other, self.db)
-        self.assertEqual(raised.exception.status_code, 404)
+        self.assertIsInstance(raised.exception, ResourceNotFoundError)
 
     def test_cleanup_inactive_session_attachments_after_retention_window(self):
         old_session = ChatSession(

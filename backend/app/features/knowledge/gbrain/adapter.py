@@ -458,6 +458,44 @@ def resolve_gbrain_source_paths(
     raise ValueError(f"unsupported GBrain source scope: {source_scope}")
 
 
+def _warn_if_source_repo_scope_mismatch(
+    *,
+    source_id: str,
+    repo_path: Path,
+    settings: GBrainSettings,
+) -> None:
+    """Log a warning when source_id and repo_path appear to belong to different scopes.
+
+    This is a soft check — it does not raise.  The hard guard lives in
+    sync_source(), which refuses to default repo_path for non-company sources.
+    """
+    import logging
+    _log = logging.getLogger("gbrain.adapter")
+
+    company_repo = resolve_gbrain_source_paths("company", settings=settings).gbrain_ready.resolve()
+    repo = repo_path.resolve()
+
+    is_project_source = source_id.startswith(f"{PROJECT_SOURCE_ID_PREFIX}-")
+    is_customer_source = source_id.startswith(f"{CUSTOMER_SOURCE_ID_PREFIX}-")
+
+    # Project source id pointing at company repo
+    if is_project_source and str(repo) == str(company_repo):
+        _log.warning(
+            "Possible source/repo mismatch: source_id='%s' looks like a project "
+            "source but repo_path points to the company gbrain-ready directory. "
+            "Use sync_project_source() to ensure correct repo resolution.",
+            source_id,
+        )
+    # Customer source id pointing at company repo
+    elif is_customer_source and str(repo) == str(company_repo):
+        _log.warning(
+            "Possible source/repo mismatch: source_id='%s' looks like a customer "
+            "source but repo_path points to the company gbrain-ready directory. "
+            "Use sync_customer_source() to ensure correct repo resolution.",
+            source_id,
+        )
+
+
 def _workspace_raw_root(workspace: Any, workspace_kind: str) -> Path:
     storage_path = str(getattr(workspace, "storage_path", "") or "").strip()
     if storage_path:
@@ -1968,11 +2006,36 @@ class GBrainAdapter:
         no_pull: bool = True,
         no_embed: bool = False,
     ) -> dict[str, Any]:
+        """Sync a GBrain source repo.
+
+        When source_id is omitted or matches the company source, repo_path
+        defaults to the company gbrain-ready directory.  For project or
+        customer sources you MUST pass repo_path explicitly — use
+        sync_project_source() / sync_customer_source() which do this for you.
+        """
         source_id = source_id or self.settings.company_source_id
-        default_repo = resolve_gbrain_source_paths("company", settings=self.settings).gbrain_ready
-        repo = (repo_path or default_repo).resolve()
-        # GBrain currently marks sync_brain as localOnly, so HTTP MCP may hide it.
-        # Try MCP first for future compatibility, then fall back to same-host CLI.
+
+        if repo_path is None:
+            if source_id != self.settings.company_source_id:
+                raise ValueError(
+                    f"repo_path is required for non-company source "
+                    f"'{source_id}'. Use sync_project_source() or "
+                    f"sync_customer_source() instead, or pass repo_path "
+                    f"explicitly."
+                )
+            repo_path = resolve_gbrain_source_paths(
+                "company", settings=self.settings
+            ).gbrain_ready
+
+        repo = repo_path.resolve()
+
+        # Safety net: if source_id and repo_path were both passed explicitly,
+        # warn (but don't block) when the repo looks like it belongs to a
+        # different scope than the source_id.
+        _warn_if_source_repo_scope_mismatch(
+            source_id=source_id, repo_path=repo, settings=self.settings
+        )
+
         mcp_response = self._call_mcp_tool(
             "sync_brain",
             {

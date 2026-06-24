@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api import admin, auth, chat, distillation, documents, health, notifications, prompts, rag, skills, updates, workspaces
 from app.features.knowledge.gbrain import ensure_gbrain_environment
 from app.features.knowledge.gbrain.maintenance.worker import start_gbrain_maintenance_worker, stop_gbrain_maintenance_worker
+from app.shared.error_handler import register_error_handlers
 from models import init_db
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -23,6 +24,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+register_error_handlers(app)
 
 app.include_router(health.router)
 app.include_router(admin.router)

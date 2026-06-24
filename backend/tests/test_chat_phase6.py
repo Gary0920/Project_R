@@ -19,6 +19,7 @@ from app.shared.llm.client import (
 )
 from app.shared.web_search.service import WebSearchResponse, WebSearchResult
 from fastapi import HTTPException
+from app.shared.errors import ProjectRError, ResourceNotFoundError, WorkspaceAccessDeniedError, WorkspaceNotFoundError
 from models import Base, SessionLocal, engine
 from models.attachment import SessionAttachment
 from models.audit_log import AuditLog
@@ -189,7 +190,9 @@ class ChatPhase6Tests(unittest.TestCase):
         self.original_knowledge_sources = chat_api.KNOWLEDGE_SOURCES
         self.original_generated_root = chat_api.GENERATED_FILES_ROOT
         self.original_skill_generated_root = skill_execution.GENERATED_FILES_ROOT
-        self.original_global_base_prompt_path = chat_api.GLOBAL_BASE_PROMPT_PATH
+        import app.features.chat.constants as chat_constants
+        self.original_global_base_prompt_path_chat = chat_api.GLOBAL_BASE_PROMPT_PATH
+        self.original_global_base_prompt_path_const = chat_constants.GLOBAL_BASE_PROMPT_PATH
         self.original_feedback_root = chat_api.MESSAGE_FEEDBACK_ROOT
         self.original_run_web_search_skill = chat_api._run_web_search_skill
         self.generated_root = tempfile.TemporaryDirectory()
@@ -197,19 +200,25 @@ class ChatPhase6Tests(unittest.TestCase):
         self.feedback_root = tempfile.TemporaryDirectory()
         chat_api.GENERATED_FILES_ROOT = Path(self.generated_root.name)
         skill_execution.GENERATED_FILES_ROOT = Path(self.generated_root.name)
-        chat_api.GLOBAL_BASE_PROMPT_PATH = Path(self.prompt_root.name) / "global-base-prompt.md"
-        chat_api.GLOBAL_BASE_PROMPT_PATH.write_text("", encoding="utf-8")
+        temp_prompt_path = Path(self.prompt_root.name) / "global-base-prompt.md"
+        temp_prompt_path.write_text("", encoding="utf-8")
+        # Patch both the api re-export and the constants module
+        # (internal.py now reads GLOBAL_BASE_PROMPT_PATH from constants.py directly)
+        chat_api.GLOBAL_BASE_PROMPT_PATH = temp_prompt_path
+        chat_constants.GLOBAL_BASE_PROMPT_PATH = temp_prompt_path
         chat_api.MESSAGE_FEEDBACK_ROOT = Path(self.feedback_root.name)
         chat_api.get_llm_client = lambda provider=None: FakeLLMClient()
         chat_api.KNOWLEDGE_SOURCES = FakeKnowledgeSources()
         SkillRunner._instance = None
 
     def tearDown(self):
+        import app.features.chat.constants as chat_constants
         chat_api.get_llm_client = self.original_get_llm_client
         chat_api.KNOWLEDGE_SOURCES = self.original_knowledge_sources
         chat_api.GENERATED_FILES_ROOT = self.original_generated_root
         skill_execution.GENERATED_FILES_ROOT = self.original_skill_generated_root
-        chat_api.GLOBAL_BASE_PROMPT_PATH = self.original_global_base_prompt_path
+        chat_api.GLOBAL_BASE_PROMPT_PATH = self.original_global_base_prompt_path_chat
+        chat_constants.GLOBAL_BASE_PROMPT_PATH = self.original_global_base_prompt_path_const
         chat_api.MESSAGE_FEEDBACK_ROOT = self.original_feedback_root
         chat_api._run_web_search_skill = self.original_run_web_search_skill
         self.generated_root.cleanup()
@@ -1421,10 +1430,10 @@ class ChatPhase6Tests(unittest.TestCase):
         self.db.commit()
         self.db.refresh(other)
 
-        with self.assertRaises(HTTPException) as exc:
+        with self.assertRaises(ProjectRError) as exc:
             chat_api.get_session(self.session.id, other, self.db)
 
-        self.assertEqual(exc.exception.status_code, 404)
+        self.assertIsInstance(exc.exception, ResourceNotFoundError)
 
     def test_create_session_assigns_workspace_when_user_is_member(self):
         workspace = Workspace(name="Design", slug="design", created_by=self.user.id)
@@ -1524,7 +1533,7 @@ class ChatPhase6Tests(unittest.TestCase):
         self.db.commit()
         self.db.refresh(session)
 
-        with self.assertRaises(HTTPException) as exc:
+        with self.assertRaises(ProjectRError) as exc:
             chat_api.update_session(
                 session.id,
                 chat_api.UpdateSessionRequest(workspace_id=workspace.id),
@@ -1532,7 +1541,7 @@ class ChatPhase6Tests(unittest.TestCase):
                 self.db,
             )
 
-        self.assertEqual(exc.exception.status_code, 403)
+        self.assertIsInstance(exc.exception, WorkspaceAccessDeniedError)
 
     def test_delete_session_deletes_messages_and_blocks_future_access(self):
         chat_api.send_message(
@@ -1549,9 +1558,9 @@ class ChatPhase6Tests(unittest.TestCase):
             self.db.query(ChatMessage).filter(ChatMessage.session_id == self.session.id).count(),
             0,
         )
-        with self.assertRaises(HTTPException) as exc:
+        with self.assertRaises(ProjectRError) as exc:
             chat_api.get_session(self.session.id, self.user, self.db)
-        self.assertEqual(exc.exception.status_code, 404)
+        self.assertIsInstance(exc.exception, ResourceNotFoundError)
 
     def test_stream_persistence_uses_fresh_db_session_after_request_session_closes(self):
         chat_api.get_llm_client = lambda provider=None: FakeStreamingLLMClient()

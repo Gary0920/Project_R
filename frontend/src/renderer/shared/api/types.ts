@@ -1,3 +1,7 @@
+// ==========================================================================
+// Shared / infrastructure types
+// ==========================================================================
+
 export type ApiErrorPayload = {
   detail?: string;
 };
@@ -53,6 +57,10 @@ export type LoginResponse = {
 };
 
 export type CurrentUserResponse = Omit<LoginResponse, "token">;
+
+// ==========================================================================
+// Chat
+// ==========================================================================
 
 export type ChatSessionResponse = {
   id: number;
@@ -339,6 +347,10 @@ export type ChatSourceResponse = {
   source_page?: number | null;
   source_locator?: string | null;
 };
+
+// ==========================================================================
+// Workspace / Files / Meetings
+// ==========================================================================
 
 export type WorkspaceResponse = {
   id: number;
@@ -707,6 +719,10 @@ export type SkillRunResponse = {
   updated_at: string;
 };
 
+// ==========================================================================
+// Admin
+// ==========================================================================
+
 export type AdminUserResponse = {
   id: number;
   username: string;
@@ -780,6 +796,10 @@ export type AdminTemplateStatusResponse = {
     references: string[];
   }>;
 };
+
+// ==========================================================================
+// Knowledge / GBrain
+// ==========================================================================
 
 export type KnowledgeStatusResponse = {
   source_dirs: string[];

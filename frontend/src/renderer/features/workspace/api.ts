@@ -1,11 +1,9 @@
 import { ApiError, apiRequest, type ApiClientOptions } from "../../shared/api/client";
 import type {
-  DistillationSuggestionResponse,
   MeetingFolderResponse,
   MeetingGenerateResponse,
   MeetingRetryResponse,
   MediaPreflightResponse,
-  NotificationsListResponse,
   SaveMeetingTranscriptResponse,
   MeetingSpeakersResponse,
   MeetingIngestResponse,
@@ -511,39 +509,3 @@ export function retryMeetingOperation(
   });
 }
 
-// Notifications
-export function listNotifications(options: ApiClientOptions) {
-  return apiRequest<NotificationsListResponse>(options, "/notifications");
-}
-
-export function markNotificationRead(options: ApiClientOptions, notificationId: number) {
-  return apiRequest<{ ok: boolean }>(options, `/notifications/${notificationId}/read`, {
-    method: "POST",
-  });
-}
-
-export function markAllNotificationsRead(options: ApiClientOptions) {
-  return apiRequest<{ ok: boolean }>(options, "/notifications/read-all", {
-    method: "POST",
-  });
-}
-
-// Distillation
-export function listDistillationSuggestions(options: ApiClientOptions, workspaceId: number) {
-  return apiRequest<DistillationSuggestionResponse[]>(
-    options,
-    `/distillation/suggestions?workspace_id=${workspaceId}`,
-  );
-}
-
-export function reviewDistillationSuggestion(
-  options: ApiClientOptions,
-  suggestionId: number,
-  status: "approved" | "rejected",
-  comment = "",
-) {
-  return apiRequest<{ ok: boolean }>(options, `/distillation/suggestions/${suggestionId}/review`, {
-    method: "POST",
-    body: JSON.stringify({ status, review_comment: comment }),
-  });
-}

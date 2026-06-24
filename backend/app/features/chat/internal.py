@@ -13,11 +13,31 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.features.chat import attachment_api as chat_attachment_api
+from app.features.chat.attachments import (
+    MAX_ATTACHMENT_CONTEXT_CHARS,
+    SESSION_ATTACHMENT_RETENTION_DAYS,
+    VISION_IMAGE_MIME_TYPES,
+)
+from app.features.chat.constants import (
+    BACKEND_ROOT,
+    MESSAGE_FEEDBACK_ROOT,
+    SESSION_ATTACHMENT_CLEANUP_INTERVAL,
+)
+from app.features.chat.gbrain_agent_run import (
+    write_gbrain_think_agent_run as _write_gbrain_think_agent_run_base,
+)
 from app.features.chat.intent import IntentType
+from app.features.chat.knowledge_sources import KNOWLEDGE_SOURCES
 from app.features.chat.message_serialization import (
     attachment_only_prompt as _attachment_only_prompt,
     message_attachments as _message_attachments,
     message_to_response_dict as _message_to_response_dict_base,
+)
+from app.features.chat.skill_agent_run import (
+    write_skill_agent_run as _write_skill_agent_run_base,
+)
+from app.features.chat.skill_text import (
+    missing_input_instruction as _missing_input_instruction,
 )
 from app.features.prompts import system_prompt as _system_prompt
 from models.audit_log import AuditLog
@@ -28,8 +48,6 @@ from models.session import ChatSession
 logger = logging.getLogger(__name__)
 
 HISTORY_LIMIT = 20
-SESSION_ATTACHMENT_RETENTION_DAYS = 7
-SESSION_ATTACHMENT_CLEANUP_INTERVAL = 6
 
 
 # ── Message query / versioning ──────────────────────────────────────────
@@ -101,7 +119,7 @@ def next_version_index(db: Session, message: ChatMessage) -> int:
 
 def message_to_response_dict(db: Session, message: ChatMessage, feedback_root: Path | None = None) -> dict:
     if feedback_root is None:
-        from api.chat import MESSAGE_FEEDBACK_ROOT as feedback_root
+        feedback_root = MESSAGE_FEEDBACK_ROOT
     return _message_to_response_dict_base(db, message, feedback_root=feedback_root)
 
 
@@ -230,10 +248,9 @@ def parse_knowledge_command(content: str, prefix: str = "/query") -> tuple[bool,
 def load_attachment_context(
     db: Session, user_id: int, session_id: int, attachment_ids: list[str],
 ) -> str:
-    from api.chat import MAX_ATTACHMENT_CONTEXT_CHARS as _max_chars
     return chat_attachment_api.load_attachment_context(
         db, user_id, session_id, attachment_ids,
-        supports_vision=False, max_chars=_max_chars, logger=logger,
+        supports_vision=False, max_chars=MAX_ATTACHMENT_CONTEXT_CHARS, logger=logger,
     )
 
 
@@ -246,9 +263,8 @@ def load_selected_session_attachments(
 def load_attachment_context_from_attachments(
     attachments: list[SessionAttachment], *, supports_vision: bool,
 ) -> str:
-    from api.chat import MAX_ATTACHMENT_CONTEXT_CHARS as _max_chars
     return chat_attachment_api.load_attachment_context_from_attachments(
-        attachments, supports_vision=supports_vision, max_chars=_max_chars, logger=logger,
+        attachments, supports_vision=supports_vision, max_chars=MAX_ATTACHMENT_CONTEXT_CHARS, logger=logger,
     )
 
 
@@ -261,13 +277,11 @@ def is_audio_video_attachment(attachment: SessionAttachment) -> bool:
 
 
 def load_vision_image_inputs(attachments: list[SessionAttachment]) -> list[dict[str, str]]:
-    from api.chat import VISION_IMAGE_MIME_TYPES as _allowed
-    return chat_attachment_api.load_vision_image_inputs(attachments, allowed_mime_types=_allowed)
+    return chat_attachment_api.load_vision_image_inputs(attachments, allowed_mime_types=VISION_IMAGE_MIME_TYPES)
 
 
 def normalize_vision_image_media_type(attachment: SessionAttachment) -> str:
-    from api.chat import VISION_IMAGE_MIME_TYPES as _allowed
-    return chat_attachment_api.normalize_vision_image_media_type(attachment, allowed_mime_types=_allowed)
+    return chat_attachment_api.normalize_vision_image_media_type(attachment, allowed_mime_types=VISION_IMAGE_MIME_TYPES)
 
 
 # ── Agent run wrappers ──────────────────────────────────────────────────
@@ -275,13 +289,12 @@ def normalize_vision_image_media_type(attachment: SessionAttachment) -> str:
 def write_skill_agent_run(
     db: Session, *, user_id: int, session: ChatSession, message_id: int, skill_response: dict,
 ):
-    from api.chat import _write_skill_agent_run_base, _safe_event_detail, _agent_status_for_skill_status, _missing_input_instruction
     return _write_skill_agent_run_base(
         db, user_id=user_id, session=session, message_id=message_id,
         skill_response=skill_response,
-        safe_event_detail=_safe_event_detail,
+        safe_event_detail=safe_event_detail,
         missing_input_instruction=_missing_input_instruction,
-        agent_status_for_skill_status=_agent_status_for_skill_status,
+        agent_status_for_skill_status=agent_status_for_skill_status,
     )
 
 
@@ -289,11 +302,10 @@ def write_gbrain_think_agent_run(
     db: Session, *, user_id: int, session: ChatSession, message_id: int,
     query: str, think_result: dict, response_sources: list[dict],
 ):
-    from api.chat import _write_gbrain_think_agent_run_base, _safe_event_detail
     return _write_gbrain_think_agent_run_base(
         db, user_id=user_id, session=session, message_id=message_id,
         query=query, think_result=think_result, response_sources=response_sources,
-        safe_event_detail=_safe_event_detail,
+        safe_event_detail=safe_event_detail,
     )
 
 
@@ -358,7 +370,8 @@ def serialize_sources(rag_sources: list[dict]) -> list[dict]:
 # ── System prompt composition ────────────────────────────────────────────
 
 def load_global_base_prompt() -> str:
-    from api.chat import GLOBAL_BASE_PROMPT_PATH as _path
+    # Lazy import so tests can monkey-patch constants.GLOBAL_BASE_PROMPT_PATH
+    from app.features.chat.constants import GLOBAL_BASE_PROMPT_PATH as _path
     try:
         return _path.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
@@ -434,13 +447,11 @@ def write_chat_audit(
 
 def load_skill_prompt(skill, base_dir: Path | None = None) -> str:
     from app.features.chat.skill_policy import load_skill_prompt as _base
-    from api.chat import BASE_DIR as _chat_base_dir
-    return _base(skill, base_dir=base_dir or _chat_base_dir)
+    return _base(skill, base_dir=base_dir or BACKEND_ROOT)
 
 
 def search_workspace_sources(db: Session, workspace_id: int | None, content: str) -> list[dict]:
-    from api.chat import KNOWLEDGE_SOURCES as _ks
-    return _ks.search_workspace_sources(db, workspace_id, content)
+    return KNOWLEDGE_SOURCES.search_workspace_sources(db, workspace_id, content)
 
 
 def should_reduce_knowledge_context(selected_prompt_id: str | None, forced_knowledge: bool) -> bool:
@@ -456,8 +467,7 @@ def search_knowledge_sources(
     *,
     reduce_knowledge_context: bool = False,
 ) -> list[dict]:
-    from api.chat import KNOWLEDGE_SOURCES as _ks
-    return _ks.search(
+    return KNOWLEDGE_SOURCES.search(
         db,
         content,
         workspace_id=workspace_id,
@@ -473,22 +483,17 @@ def delete_session_attachments(db: Session, user_id: int, session_id: int) -> No
 
 
 def cleanup_inactive_session_attachments_if_due(db: Session) -> int:
-    from api.chat import SESSION_ATTACHMENT_CLEANUP_INTERVAL as _interval
-    from api.chat import SESSION_ATTACHMENT_RETENTION_DAYS as _days
-
     return chat_attachment_api.cleanup_inactive_session_attachments_if_due(
         db,
-        cleanup_interval=_interval,
-        retention_days=_days,
+        cleanup_interval=SESSION_ATTACHMENT_CLEANUP_INTERVAL,
+        retention_days=SESSION_ATTACHMENT_RETENTION_DAYS,
         logger=logger,
     )
 
 
 def cleanup_inactive_session_attachments(db: Session | None = None) -> int:
-    from api.chat import SESSION_ATTACHMENT_RETENTION_DAYS as _days
-
     return chat_attachment_api.cleanup_inactive_session_attachments(
         db,
-        retention_days=_days,
+        retention_days=SESSION_ATTACHMENT_RETENTION_DAYS,
         logger=logger,
     )

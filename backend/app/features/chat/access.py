@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.shared.errors import (
+    ResourceNotFoundError,
+    WorkspaceAccessDeniedError,
+    WorkspaceNotFoundError,
+)
 from models.session import ChatSession
 from models.user import User
 from models.workspace import Workspace, WorkspaceGroupAccess, WorkspaceMember
@@ -15,7 +19,7 @@ def get_user_session(db: Session, user_id: int, session_id: int) -> ChatSession:
         .first()
     )
     if not session:
-        raise HTTPException(status_code=404, detail="会话不存在")
+        raise ResourceNotFoundError("会话不存在")
     return session
 
 
@@ -45,27 +49,29 @@ def has_workspace_group_access(db: Session, user: User, workspace_id: int) -> bo
 
 
 def ensure_workspace_access(db: Session, user: User, workspace_id: int) -> None:
-    workspace = db.query(Workspace).filter(Workspace.id == workspace_id, Workspace.is_archived == False).first()
+    workspace = db.query(Workspace).filter(
+        Workspace.id == workspace_id, Workspace.is_archived == False
+    ).first()
     if not workspace:
-        raise HTTPException(status_code=404, detail="工作区不存在")
+        raise WorkspaceNotFoundError("工作区不存在")
     member = workspace_membership(db, user.id, workspace_id)
     if workspace.workspace_kind == "user":
         if member:
             return
-        raise HTTPException(status_code=403, detail="你尚未加入该项目")
+        raise WorkspaceAccessDeniedError("你尚未加入该项目")
     if user.role == "admin":
         return
     if workspace.workspace_kind == "customer":
         if member or has_workspace_group_access(db, user, workspace_id):
             return
-        raise HTTPException(status_code=403, detail="你尚未加入该项目")
+        raise WorkspaceAccessDeniedError("你尚未加入该项目")
     if not workspace.is_hidden:
         return
     if member or has_workspace_group_access(db, user, workspace_id):
         return
-    raise HTTPException(status_code=403, detail="你尚未加入该项目")
+    raise WorkspaceAccessDeniedError("你尚未加入该项目")
 
 
 def ensure_workspace_member(db: Session, user_id: int, workspace_id: int) -> None:
     if not workspace_membership(db, user_id, workspace_id):
-        raise HTTPException(status_code=403, detail="你尚未加入该项目")
+        raise WorkspaceAccessDeniedError("你尚未加入该项目")
